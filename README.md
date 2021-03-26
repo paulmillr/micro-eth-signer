@@ -107,3 +107,5 @@ You can use either of those to initialize new `Transaction`. There are a few met
 ## License
 
 MIT License
+
+Copyright (c) 2021 Paul Miller (https://paulmillr.com)
