@@ -2,8 +2,6 @@
 
 Create, sign and validate Ethereum transactions & addresses with minimum deps.
 
-Supports Berlin (Apr 2021) typed transactions as per [EIP-2930](https://eips.ethereum.org/EIPS/eip-2930).
-
 Uses three dependencies (SHA-3, RLP & secp256k1); all libraries bundled are 12KB gzipped.
 
 ## Usage
