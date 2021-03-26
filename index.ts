@@ -4,6 +4,9 @@ import { keccak256 } from 'js-sha3';
 import * as rlp from 'micro-rlp';
 import * as secp256k1 from 'noble-secp256k1';
 
+// `micro-rlp` is forked from the most recent `rlp` and has two changes:
+// 1. All dependencies have been removed. 2. Browser support has been added
+
 export const CHAIN_TYPES = { mainnet: 1, ropsten: 3, rinkeby: 4, goerli: 5, kovan: 42 };
 
 export function add0x(hex: string) {
