@@ -18,7 +18,7 @@ import { Address, Transaction } from "micro-eth-signer";
   const tx = new Transaction({
     nonce: "0x01",
     gasLimit: "0x5208", // 21000
-    gasPrice: "0x02540be400" // 100 gwei or (100 * 10 ** 9).toString(16)
+    gasPrice: "0x02540be400", // 100 gwei or (100 * 10 ** 9).toString(16)
     to: "0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e",
     value: "0x2386f26fc10000" // 0.01 eth or (10n ** 18n / 100).toString(16)
   });
