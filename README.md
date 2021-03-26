@@ -18,14 +18,15 @@ const { Address, Transaction } = require("micro-eth-signer");
     to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
     gasPrice: 100n * 10n ** 9n, // 100 gwei in wei
     value: 1n ** 18n, // 1 eth in wei
-    nonce: 1,
+    nonce: 1
   });
-  // Alternative
+  // Another way
   // tx = new Transaction('0xeb018502540be40082520894df90dea0e0bf5ca6d2a7f0cb86874ba6714f463e872386f26fc1000080808080');
 
   // hex string or Uint8Array
   const privateKey = '6b911fd37cdf5c81d4c0adb1ab7fa822ed253ab0ad9aa18d77257c88b29b718e';
   const signedTx = await tx.sign(privateKey);
+  const {hash, hex} = signedTx;
   const addr = Address.fromPrivateKey(privateKey);
   const pubKey = signedTx.recoverSenderPublicKey();
 
