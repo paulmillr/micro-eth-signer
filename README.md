@@ -2,7 +2,7 @@
 
 Create, sign and validate Ethereum transactions & addresses with minimum deps.
 
-Uses three dependencies (SHA-3, RLP & secp256k1); all libraries bundled are 12KB gzipped.
+Library's size is 4.7KB minified. Uses three dependencies (SHA-3, RLP & secp256k1), all libraries combined are 12KB gzipped.
 
 ## Usage
 
@@ -59,7 +59,7 @@ Address.fromPublicKey("030fba7ba5cfbf8b00dd6f3024153fc44ddda93727da58c99326eb0ed
 
 Represents unsigned & signed ETH transactions. They are serialized & deserialized using RLP. Here's an example of the same transaction in raw state, and serialized state:
 
-```
+```js
 // raw
 {
   "nonce": "0x01", "gasLimit": "0x5208", "gasPrice": "0x02540be400",
