@@ -50,12 +50,37 @@ const FIELDS = ['nonce', 'gasPrice', 'gasLimit', 'to', 'value', 'data', 'v', 'r'
 function mapToArray(input) {
     return FIELDS.map((key) => input[key]);
 }
+function normalizeField(field, value) {
+    if (['nonce', 'gasPrice', 'gasLimit', 'value'].includes(field)) {
+        if (typeof value === 'string') {
+            if (value === '0x')
+                value = '';
+        }
+        else if (typeof value === 'number' || typeof value === 'bigint') {
+            value = value.toString(16);
+        }
+        else {
+            throw new TypeError('Invalid type');
+        }
+    }
+    if (field === 'gasLimit' && !value) {
+        value = '0x5208';
+    }
+    if (['nonce', 'gasPrice', 'value'].includes(field) && !value) {
+        throw new TypeError('The field must have non-zero value');
+    }
+    if (typeof value !== 'string')
+        throw new TypeError('Invalid type');
+    return value;
+}
 function rawToSerialized(input) {
     let array = Array.isArray(input) ? input : mapToArray(input);
     for (let i = 0; i < array.length; i++) {
+        const field = FIELDS[i];
         const value = array[i];
+        const adjusted = normalizeField(field, value);
         if (typeof value === 'string')
-            array[i] = add0x(value);
+            array[i] = add0x(adjusted);
     }
     return add0x(bytesToHex(rlp.encode(array)));
 }

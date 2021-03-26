@@ -8,27 +8,31 @@ Library's size is 4.7KB minified. Uses three dependencies (SHA-3, RLP & secp256k
 
 > npm install micro-eth-signer
 
-Supports all major browsers. If you're looking for a fully-contained single-file version, check out Releases page on GitHub.
+Supports Node.js & all major browsers. If you're looking for a fully-contained single-file version, check out Releases page on GitHub.
 
 ```js
-import { Address, Transaction } from "micro-eth-signer";
+const { Address, Transaction } = require("micro-eth-signer");
 
 (async () => {
-  const privateKey = "6b911fd37cdf5c81d4c0adb1ab7fa822ed253ab0ad9aa18d77257c88b29b718e";
   const tx = new Transaction({
-    nonce: "0x01",
-    gasLimit: "0x5208", // 21000
-    gasPrice: "0x02540be400", // 100 gwei or (100 * 10 ** 9).toString(16)
-    to: "0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e",
-    value: "0x2386f26fc10000" // 0.01 eth or (10n ** 18n / 100).toString(16)
+    to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
+    gasPrice: 100n * 10n ** 9n, // 100 gwei in wei
+    value: 1n ** 18n, // 1 eth in wei
+    nonce: 1,
   });
-  const signedTx = await tx.sign(privateKey);
+  // Alternative
+  // tx = new Transaction('0xeb018502540be40082520894df90dea0e0bf5ca6d2a7f0cb86874ba6714f463e872386f26fc1000080808080');
 
+  // hex string or Uint8Array
+  const privateKey = '6b911fd37cdf5c81d4c0adb1ab7fa822ed253ab0ad9aa18d77257c88b29b718e';
+  const signedTx = await tx.sign(privateKey);
   const addr = Address.fromPrivateKey(privateKey);
-  console.log('verified', Address.verifyChecksum(addr));
+  const pubKey = signedTx.recoverSenderPublicKey();
+
+  console.log('Verified', Address.verifyChecksum(addr));
   console.log(tx);
-  console.log("Need wei", tx.upfrontCost);
-  console.log(signedTx.sender, signedTx.sender == addr)
+  console.log('Need wei', tx.upfrontCost);
+  console.log('addr is correct', signedTx.sender, signedTx.sender == addr);
   console.log(signedTx);
 })();
 ```

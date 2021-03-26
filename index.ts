@@ -66,11 +66,33 @@ function mapToArray(input: RawTxMap): RawTx {
   return FIELDS.map((key) => input[key as Field]) as RawTx;
 }
 
+function normalizeField(field: Field, value: string | number | bigint): string {
+  if (['nonce', 'gasPrice', 'gasLimit', 'value'].includes(field)) {
+    if (typeof value === 'string') {
+      if (value === '0x') value = '';
+    } else if (typeof value === 'number' || typeof value === 'bigint') {
+      value = value.toString(16);
+    } else {
+      throw new TypeError('Invalid type');
+    }
+  }
+  if (field === 'gasLimit' && !value) {
+    value = '0x5208'; // 21000, default / minimum
+  }
+  if (['nonce', 'gasPrice', 'value'].includes(field) && !value) {
+    throw new TypeError('The field must have non-zero value');
+  }
+  if (typeof value !== 'string') throw new TypeError('Invalid type');
+  return value;
+}
+
 function rawToSerialized(input: RawTx | RawTxMap) {
   let array = Array.isArray(input) ? input : mapToArray(input);
   for (let i = 0; i < array.length; i++) {
+    const field = FIELDS[i];
     const value = array[i];
-    if (typeof value === 'string') array[i] = add0x(value);
+    const adjusted = normalizeField(field, value);
+    if (typeof value === 'string') array[i] = add0x(adjusted);
   }
   return add0x(bytesToHex(rlp.encode(array)));
 }
