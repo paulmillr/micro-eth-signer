@@ -19,10 +19,9 @@
     }
   },
   "author": "Paul Miller (https://paulmillr.com)",
-  "homepage": "https://paulmillr.com/posts/noble-secp256k1-fast-ecc/",
   "repository": {
     "type": "git",
-    "url": "https://github.com/paulmillr/noble-secp256k1.git"
+    "url": "https://github.com/paulmillr/micro-eth-signer.git"
   },
   "license": "MIT",
   "keywords": [
