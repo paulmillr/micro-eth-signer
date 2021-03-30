@@ -11,7 +11,7 @@ Library's size is 4.7KB minified. Uses three dependencies (SHA-3, RLP & secp256k
 Supports Node.js & all major browsers. If you're looking for a fully-contained single-file version, check out Releases page on GitHub.
 
 ```js
-const { Address, Transaction } = require("micro-eth-signer");
+const { Address, Transaction } = require('micro-eth-signer');
 
 (async () => {
   const tx = new Transaction({
