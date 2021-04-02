@@ -17,7 +17,7 @@ const { Address, Transaction } = require('micro-eth-signer');
   const tx = new Transaction({
     to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
     gasPrice: 100n * 10n ** 9n, // 100 gwei in wei
-    value: 1n ** 18n, // 1 eth in wei
+    value: 10n ** 18n, // 1 eth in wei
     nonce: 1
   });
   // Another way
