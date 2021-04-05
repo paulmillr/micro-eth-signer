@@ -82,7 +82,8 @@ function normalizeField(field: Field, value: string | number | bigint): string {
   if (['nonce', 'gasPrice', 'value'].includes(field) && !value) {
     throw new TypeError('The field must have non-zero value');
   }
-  if (typeof value !== 'string') throw new TypeError('Invalid type');
+  if (['v', 'r', 's'].includes(field) && !value) return '';
+  if (typeof value !== 'string') throw new TypeError(`Invalid type for field ${field}`);
   return value;
 }
 

@@ -69,8 +69,10 @@ function normalizeField(field, value) {
     if (['nonce', 'gasPrice', 'value'].includes(field) && !value) {
         throw new TypeError('The field must have non-zero value');
     }
+    if (['v', 'r', 's'].includes(field) && !value)
+        return '';
     if (typeof value !== 'string')
-        throw new TypeError('Invalid type');
+        throw new TypeError(`Invalid type for field ${field}`);
     return value;
 }
 function rawToSerialized(input) {
