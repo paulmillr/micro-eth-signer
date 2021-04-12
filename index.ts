@@ -68,10 +68,11 @@ function mapToArray(input: RawTxMap): RawTx {
 
 function normalizeField(field: Field, value: string | number | bigint): string {
   if (['nonce', 'gasPrice', 'gasLimit', 'value'].includes(field)) {
-    if (typeof value === 'string') {
-      if (value === '0x') value = '';
-    } else if (typeof value === 'number' || typeof value === 'bigint') {
+    if (typeof value === 'number' || typeof value === 'bigint') {
       value = value.toString(16);
+    }
+    if (typeof value === 'string') {
+      if (['0', '00', '0x', '0x00'].includes(value)) value = '';
     } else {
       throw new TypeError('Invalid type');
     }
@@ -79,7 +80,7 @@ function normalizeField(field: Field, value: string | number | bigint): string {
   if (field === 'gasLimit' && !value) {
     value = '0x5208'; // 21000, default / minimum
   }
-  if (['nonce', 'gasPrice', 'value'].includes(field) && !value) {
+  if (['gasPrice', 'value'].includes(field) && !value) {
     throw new TypeError('The field must have non-zero value');
   }
   if (['v', 'r', 's'].includes(field) && !value) return '';
