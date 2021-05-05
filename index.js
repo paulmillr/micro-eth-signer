@@ -66,7 +66,7 @@ function normalizeField(field, value) {
     if (field === 'gasLimit' && !value) {
         value = '0x5208';
     }
-    if (['gasPrice', 'value'].includes(field) && !value) {
+    if (['gasPrice'].includes(field) && !value) {
         throw new TypeError('The field must have non-zero value');
     }
     if (['v', 'r', 's'].includes(field) && !value)

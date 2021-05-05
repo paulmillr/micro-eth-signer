@@ -80,7 +80,7 @@ function normalizeField(field: Field, value: string | number | bigint): string {
   if (field === 'gasLimit' && !value) {
     value = '0x5208'; // 21000, default / minimum
   }
-  if (['gasPrice', 'value'].includes(field) && !value) {
+  if (['gasPrice'].includes(field) && !value) {
     throw new TypeError('The field must have non-zero value');
   }
   if (['v', 'r', 's'].includes(field) && !value) return '';
