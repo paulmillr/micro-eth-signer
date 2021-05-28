@@ -51,6 +51,9 @@ function mapToArray(input) {
     return FIELDS.map((key) => input[key]);
 }
 function normalizeField(field, value) {
+    if (field === 'gasLimit' && !value) {
+        value = '0x5208';
+    }
     if (['nonce', 'gasPrice', 'gasLimit', 'value'].includes(field)) {
         if (typeof value === 'number' || typeof value === 'bigint') {
             value = value.toString(16);
@@ -60,16 +63,13 @@ function normalizeField(field, value) {
                 value = '';
         }
         else {
-            throw new TypeError('Invalid type');
+            throw new TypeError(`Invalid type for field ${field}`);
         }
-    }
-    if (field === 'gasLimit' && !value) {
-        value = '0x5208';
     }
     if (['gasPrice'].includes(field) && !value) {
         throw new TypeError('The field must have non-zero value');
     }
-    if (['v', 'r', 's'].includes(field) && !value)
+    if (['v', 'r', 's', 'data'].includes(field) && !value)
         return '';
     if (typeof value !== 'string')
         throw new TypeError(`Invalid type for field ${field}`);
@@ -104,6 +104,8 @@ exports.Address = {
     },
     checksum(nonChecksummedAddress) {
         const addr = strip0x(nonChecksummedAddress.toLowerCase());
+        if (addr.length !== 40)
+            throw new Error('Invalid address, must have 40 chars');
         const hash = strip0x(js_sha3_1.keccak256(addr));
         let checksummed = '';
         for (let i = 0; i < addr.length; i++) {
@@ -117,6 +119,8 @@ exports.Address = {
     },
     verifyChecksum(address) {
         const addr = strip0x(address);
+        if (addr.length !== 40)
+            throw new Error('Invalid address, must have 40 chars');
         if (addr === addr.toLowerCase() || addr === addr.toUpperCase())
             return true;
         const hash = js_sha3_1.keccak256(addr.toLowerCase());
@@ -255,5 +259,5 @@ class Transaction {
     }
 }
 exports.Transaction = Transaction;
-Transaction.DEFAULT_HARDFORK = 'muirGlacier';
+Transaction.DEFAULT_HARDFORK = 'berlin';
 Transaction.DEFAULT_CHAIN = 'mainnet';
