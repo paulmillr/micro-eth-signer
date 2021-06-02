@@ -78,6 +78,19 @@ const secp = require('noble-secp256k1');
     }
   });
 
+  should('getMessageToSign data should equal in signed/unsigned', async () => {
+    const tx = new Transaction({
+      to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
+      gasPrice: 100n * 10n ** 9n, // 100 gwei in wei
+      value: 10n ** 18n, // 1 eth in wei
+      nonce: 1
+    });
+    const privateKey = '6b911fd37cdf5c81d4c0adb1ab7fa822ed253ab0ad9aa18d77257c88b29b718e';
+    const signedTx = await tx.sign(privateKey); // Uint8Array is also accepted
+    const addr = Address.fromPrivateKey(privateKey);
+    assert.equal(signedTx.sender, addr)
+  })
+
   // console.log(12345, new Transaction(eip155[0].rlp));
 
   // 0.01 eth

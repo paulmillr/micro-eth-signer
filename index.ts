@@ -89,14 +89,9 @@ function normalizeField(field: Field, value: string | number | bigint): string {
 }
 
 function rawToSerialized(input: RawTx | RawTxMap) {
-  let array = Array.isArray(input) ? input : mapToArray(input);
-  for (let i = 0; i < array.length; i++) {
-    const field = FIELDS[i];
-    const value = array[i];
-    const adjusted = normalizeField(field, value);
-    if (typeof value === 'string') array[i] = add0x(adjusted);
-  }
-  return add0x(bytesToHex(rlp.encode(array)));
+  const initial = Array.isArray(input) ? input : mapToArray(input);
+  const normalized = initial.map((value, i) => add0x(normalizeField(FIELDS[i], value)))
+  return add0x(bytesToHex(rlp.encode(normalized)));
 }
 
 export const Address = {
