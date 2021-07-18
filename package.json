@@ -1,6 +1,6 @@
 {
   "name": "micro-eth-signer",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Create, sign and validate Ethereum transactions & addresses with minimum deps. Supports London & Berlin txs",
   "main": "index.js",
   "files": [
