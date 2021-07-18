@@ -4,6 +4,8 @@ Create, sign and validate Ethereum transactions & addresses with minimum deps.
 
 Library's size is 4.7KB minified. Uses three dependencies (SHA-3, RLP & secp256k1), all libraries combined are 12KB gzipped.
 
+Validated with over 3 MB of ethers.js test vectors!
+
 ## Usage
 
 > npm install micro-eth-signer
@@ -31,11 +33,11 @@ const { Address, Transaction } = require('micro-eth-signer');
 
   // Various tx properties
   console.log('Need wei', tx.upfrontCost); // also, tx.fee, tx.amount, tx.sender, etc
-  
+
   // Address manipulation
   const addr = Address.fromPrivateKey(privateKey);
   const pubKey = signedTx.recoverSenderPublicKey();
-  console.log('Verified', Address.verifyChecksum(addr));  
+  console.log('Verified', Address.verifyChecksum(addr));
   console.log('addr is correct', signedTx.sender, signedTx.sender == addr);
   console.log(signedTx);
 })();

@@ -178,7 +178,7 @@ const secp = require('noble-secp256k1');
   });
 
   should('handle EIP1559 & EIP-2930 test vectors', async () => {
-    const eip1559 = require('./eip1559.json');
+    const eip1559 = require('./ethers-eip1559.json');
     for (let tx of eip1559) {
       // empty gasLimit unsupported (21000 forced)
       if (!tx.tx.gasLimit) continue;
