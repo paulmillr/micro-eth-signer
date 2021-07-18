@@ -10,9 +10,8 @@
       "gasLimit": "0x5208",
       "gasPrice": "0x02540be400",
       "to": "0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e",
-      "value": "2386f26fc10000",
-      "data": "0x",
-      "chainId": 3
+      "value": "0x2386f26fc10000",
+      "data": "0x"
     }
   }
 ]

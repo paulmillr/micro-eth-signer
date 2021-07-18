@@ -8,6 +8,7 @@ import * as secp256k1 from 'noble-secp256k1';
 // 1. All dependencies have been removed. 2. Browser support has been added
 
 export const CHAIN_TYPES = { mainnet: 1, ropsten: 3, rinkeby: 4, goerli: 5, kovan: 42 };
+export const TRANSACTION_TYPES = { legacy: 0, eip2930: 1, eip1559: 2 };
 
 export function add0x(hex: string) {
   return /^0x/i.test(hex) ? hex : `0x${hex}`;
@@ -15,6 +16,19 @@ export function add0x(hex: string) {
 
 export function strip0x(hex: string) {
   return hex.replace(/^0x/i, '');
+}
+
+function cloneDeep<T>(obj: T): T {
+  if (Array.isArray(obj)) {
+    return obj.map((i) => cloneDeep(i)) as unknown as T;
+  } else if (typeof obj === 'bigint') {
+    return BigInt(obj) as unknown as T;
+  } else if (typeof obj === 'object') {
+    // should be last, so it won't catch other types
+    let res: any = {};
+    for (let key in obj) res[key] = cloneDeep(obj[key]);
+    return res;
+  } else return obj;
 }
 
 function bytesToHex(uint8a: Uint8Array): string {
@@ -26,19 +40,16 @@ function bytesToHex(uint8a: Uint8Array): string {
   return hex;
 }
 
+const padHex = (hex: string): string => (hex.length & 1 ? `0${hex}` : hex);
+
 function hexToBytes(hex: string): Uint8Array {
-  hex = strip0x(hex);
-  if (hex.length & 1) hex = `0${hex}`;
+  hex = padHex(strip0x(hex));
   const array = new Uint8Array(hex.length / 2);
   for (let i = 0; i < array.length; i++) {
     const j = i * 2;
     array[i] = Number.parseInt(hex.slice(j, j + 2), 16);
   }
   return array;
-}
-
-function hexToBytesUnpadded(num: string) {
-  return num === '0x' || BigInt(num) === 0n ? new Uint8Array() : hexToBytes(num);
 }
 
 function numberToHex(num: number | bigint, padToBytes: number = 0): string {
@@ -55,43 +66,207 @@ function hexToNumber(hex: string): bigint {
 }
 
 type Chain = keyof typeof CHAIN_TYPES;
+type Type = keyof typeof TRANSACTION_TYPES;
 
 // The order is important.
 const FIELDS = ['nonce', 'gasPrice', 'gasLimit', 'to', 'value', 'data', 'v', 'r', 's'] as const;
-export type Field = typeof FIELDS[number];
-export type RawTx = [string, string, string, string, string, string, string, string, string];
-export type RawTxMap = Record<Field, string>;
+// prettier-ignore
+const FIELDS2930 = ['chainId', 'nonce', 'gasPrice', 'gasLimit', 'to', 'value', 'data', 'accessList',
+  'yParity', 'r', 's'] as const;
+// prettier-ignore
+const FIELDS1559 = ['chainId', 'nonce', 'maxPriorityFeePerGas', 'maxFeePerGas', 'gasLimit', 'to', 'value',
+  'data', 'accessList', 'yParity', 'r', 's'] as const;
 
-function mapToArray(input: RawTxMap): RawTx {
-  return FIELDS.map((key) => input[key as Field]) as RawTx;
-}
+const TypeToFields = {
+  legacy: FIELDS,
+  eip2930: FIELDS2930,
+  eip1559: FIELDS1559,
+};
 
-function normalizeField(field: Field, value: string | number | bigint): string {
-  if (field === 'gasLimit' && !value) {
-    value = '0x5208'; // 21000, default / minimum
+export type Field =
+  | typeof FIELDS[number]
+  | typeof FIELDS2930[number]
+  | typeof FIELDS1559[number]
+  | 'address'
+  | 'storageKey';
+
+// These types will should be serializable by rlp as is
+export type RawTxLegacy = [string, string, string, string, string, string, string, string, string];
+// prettier-ignore
+export type RawTx2930 = [string, string, string, string, string, string, [string, string[]][], string, string, string];
+// prettier-ignore
+export type RawTx1559 = [string, string, string, string, string, string, string, [string, string[]][], string, string, string];
+
+export type RawTx = RawTxLegacy | RawTx2930 | RawTx1559;
+
+export type RawTxMap = {
+  chainId?: string;
+  nonce: string;
+  gasPrice?: string;
+  maxPriorityFeePerGas?: string;
+  maxFeePerGas?: string;
+  gasLimit: string;
+  to: string;
+  value: string;
+  data: string;
+  accessList?: [string, string[]][];
+  yParity?: string;
+  v?: string;
+  r: string;
+  s: string;
+};
+
+// Normalizes field to format which can easily be serialized by rlp (strings & arrays)
+// prettier-ignore
+const FIELD_NUMBER = new Set(['chainId', 'nonce', 'gasPrice', 'maxPriorityFeePerGas', 'maxFeePerGas',
+  'gasLimit', 'value', 'v', 'yParity', 'r', 's']);
+const FIELD_DATA = new Set(['data', 'to', 'storageKey', 'address']);
+function normalizeField(
+  field: Field,
+  value:
+    | string
+    | number
+    | bigint
+    | Uint8Array
+    | Record<string, string[]>
+    | [string, string[]][]
+    | { address: string; storageKeys: string[] }[]
+): string | [string, string[]][] {
+  // can be number, bignumber, decimal number in string (123), hex number in string (0x123)
+  if (FIELD_NUMBER.has(field)) {
+    // bytes
+    if (value instanceof Uint8Array) value = add0x(bytesToHex(value));
+    if (field === 'yParity' && typeof value === 'boolean') value = value ? '0x1' : '0x0';
+    // '123' -> 0x7b (handles both hex and non-hex numbers)
+    if (typeof value === 'string') value = BigInt(value === '0x' ? '0x0' : value);
+    // 123 -> '0x7b' && 1 -> 0x01
+    if (typeof value === 'number' || typeof value === 'bigint')
+      value = add0x(padHex(value.toString(16)));
+    // 21000, default / minimum
+    if (field === 'gasLimit' && (!value || BigInt(value as string) === 0n)) value = '0x5208';
+    if (typeof value !== 'string') throw new TypeError(`Invalid type for field ${field}`);
+    // should be hex string starting with '0x' at this point.
+    if (field === 'gasPrice' && BigInt(value) === 0n)
+      throw new TypeError('The gasPrice must have non-zero value');
+    // '0x00' and '' serializes differently
+    return BigInt(value) === 0n ? '' : value;
   }
-  if (['nonce', 'gasPrice', 'gasLimit', 'value'].includes(field)) {
-    if (typeof value === 'number' || typeof value === 'bigint') {
-      value = value.toString(16);
-    }
-    if (typeof value === 'string') {
-      if (['0', '00', '0x', '0x00'].includes(value)) value = '';
+  // Can be string or Uint8Array
+  if (FIELD_DATA.has(field)) {
+    if (!value) value = '';
+    if (value instanceof Uint8Array) value = bytesToHex(value);
+    if (typeof value !== 'string') throw new TypeError(`Invalid type for field ${field}`);
+    value = add0x(value);
+    return value === '0x' ? '' : value;
+  }
+  if (field === 'accessList') {
+    if (!value) return [];
+    let res: Record<string, Set<string>> = {};
+    if (Array.isArray(value)) {
+      for (let access of value) {
+        if (Array.isArray(access)) {
+          // [string, string[]][]
+          if (access.length !== 2 || !Array.isArray(access[1]))
+            throw new TypeError(`Invalid type for field ${field}`);
+          const key = normalizeField('address', access[0]) as string;
+          if (!res[key]) res[key] = new Set();
+          for (let i of access[1]) res[key].add(normalizeField('storageKey', i) as string);
+        } else {
+          // {address: string, storageKeys: string[]}[]
+          if (
+            typeof access !== 'object' ||
+            access === null ||
+            !access.address ||
+            !Array.isArray(access.storageKeys)
+          )
+            throw new TypeError(`Invalid type for field ${field}`);
+          const key = normalizeField('address', access.address) as string;
+          if (!res[key]) res[key] = new Set();
+          for (let i of access.storageKeys) res[key].add(normalizeField('storageKey', i) as string);
+        }
+      }
     } else {
-      throw new TypeError(`Invalid type for field ${field}`);
+      // {[address]: string[]}
+      if (typeof value !== 'object' || value === null || value instanceof Uint8Array)
+        throw new TypeError(`Invalid type for field ${field}`);
+      for (let k in value) {
+        const key = normalizeField('address', k) as string;
+        // undefined/empty allowed
+        if (!value[k]) continue;
+        if (!Array.isArray(value[k])) throw new TypeError(`Invalid type for field ${field}`);
+        res[key] = new Set(value[k].map((i) => normalizeField('storageKey', i) as string));
+      }
     }
+    return Object.keys(res).map((i) => [i, Array.from(res[i])]) as [string, string[]][];
   }
-  if (['gasPrice'].includes(field) && !value) {
-    throw new TypeError('The field must have non-zero value');
-  }
-  if (['v', 'r', 's', 'data'].includes(field) && !value) return '';
-  if (typeof value !== 'string') throw new TypeError(`Invalid type for field ${field}`);
-  return value;
+  throw new TypeError(`Invalid type for field ${field}`);
 }
 
-function rawToSerialized(input: RawTx | RawTxMap) {
-  const initial = Array.isArray(input) ? input : mapToArray(input);
-  const normalized = initial.map((value, i) => add0x(normalizeField(FIELDS[i], value)))
-  return add0x(bytesToHex(rlp.encode(normalized)));
+function possibleTypes(input: RawTxMap) {
+  let types: Set<Type> = new Set(Object.keys(TRANSACTION_TYPES) as Type[]);
+  const keys = new Set(Object.keys(input));
+  if (keys.has('maxPriorityFeePerGas') || keys.has('maxFeePerGas')) {
+    types.delete('legacy');
+    types.delete('eip2930');
+  }
+  if (keys.has('accessList') || keys.has('yParity')) types.delete('legacy');
+  if (keys.has('gasPrice')) types.delete('eip1559');
+  return types;
+}
+
+const RawTxLength: Record<number, Type> = { 9: 'legacy', 11: 'eip2930', 12: 'eip1559' };
+const RawTxLengthRev: Record<Type, number> = { legacy: 9, eip2930: 11, eip1559: 12 };
+function rawToSerialized(input: RawTx | RawTxMap, chain?: Chain, type?: Type): string {
+  let chainId;
+  if (chain) chainId = CHAIN_TYPES[chain];
+  if (Array.isArray(input)) {
+    if (!type) type = RawTxLength[input.length];
+    if (!type || RawTxLengthRev[type] !== input.length)
+      throw new Error(`Invalid fields length for ${type}`);
+  } else {
+    const types = possibleTypes(input);
+    if (type && !types.has(type)) {
+      throw new Error(
+        `Invalid type=${type}. Possible types with current fields: ${Array.from(types)}`
+      );
+    }
+    if (!type) {
+      if (types.has('legacy')) type = 'legacy';
+      else if (!types.size) throw new Error('Impossible fields set');
+      else type = Array.from(types)[0];
+    }
+    if (input.chainId) {
+      if (chain) {
+        const fromChain = normalizeField('chainId', CHAIN_TYPES[chain]);
+        const fromInput = normalizeField('chainId', input.chainId);
+        if (fromChain !== fromInput) {
+          throw new Error(
+            `Both chain=${chain}(${fromChain}) and chainId=${input.chainId}(${fromInput}) specified at same time`
+          );
+        }
+      }
+      chainId = input.chainId;
+    } else input.chainId = chainId as any;
+    input = (TypeToFields[type] as unknown as Field[]).map((key) => (input as any)[key]) as RawTx;
+  }
+  if (input) {
+    const sign = input.slice(-3);
+    // remove signature if any of fields is empty
+    if (!sign[0] || !sign[1] || !sign[2]) {
+      input = input.slice(0, -3) as any;
+      // EIP-155
+      if (type === 'legacy' && chainId)
+        (input as any).push(normalizeField('chainId', chainId), '', '');
+    }
+  }
+  let normalized = (input as Field[]).map((value, i) =>
+    normalizeField(TypeToFields[type as Type][i], value)
+  );
+  if (chainId) chainId = normalizeField('chainId', chainId);
+  if (type !== 'legacy' && chainId && normalized[0] !== chainId)
+    throw new Error(`ChainId=${normalized[0]} incompatible with Chain=${chainId}`);
+  const tNum = TRANSACTION_TYPES[type];
+  return (tNum ? `0x0${tNum}` : '0x') + bytesToHex(rlp.encode(normalized));
 }
 
 export const Address = {
@@ -113,7 +288,7 @@ export const Address = {
   // NOTE: it hashes *string*, not a bytearray: keccak('beef') not keccak([0xbe, 0xef])
   checksum(nonChecksummedAddress: string): string {
     const addr = strip0x(nonChecksummedAddress.toLowerCase());
-    if (addr.length !== 40) throw new Error('Invalid address, must have 40 chars')
+    if (addr.length !== 40) throw new Error('Invalid address, must have 40 chars');
     const hash = strip0x(keccak256(addr));
     let checksummed = '';
     for (let i = 0; i < addr.length; i++) {
@@ -128,7 +303,7 @@ export const Address = {
 
   verifyChecksum(address: string): boolean {
     const addr = strip0x(address);
-    if (addr.length !== 40) throw new Error('Invalid address, must have 40 chars')
+    if (addr.length !== 40) throw new Error('Invalid address, must have 40 chars');
     if (addr === addr.toLowerCase() || addr === addr.toUpperCase()) return true;
     const hash = keccak256(addr.toLowerCase());
     for (let i = 0; i < 40; i++) {
@@ -143,16 +318,19 @@ export const Address = {
 };
 
 export class Transaction {
-  static DEFAULT_HARDFORK = 'berlin';
+  static DEFAULT_HARDFORK = 'london';
   static DEFAULT_CHAIN: Chain = 'mainnet';
+  static DEFAULT_TYPE: Type = 'legacy';
   readonly hex: string;
   readonly raw: RawTxMap;
   readonly isSigned: boolean;
+  readonly type: Type;
 
   constructor(
     data: string | Uint8Array | RawTx | RawTxMap,
-    readonly chain: Chain = Transaction.DEFAULT_CHAIN,
-    readonly hardfork = Transaction.DEFAULT_HARDFORK
+    chain?: Chain,
+    readonly hardfork = Transaction.DEFAULT_HARDFORK,
+    type?: Type
   ) {
     let norm;
     if (typeof data === 'string') {
@@ -160,19 +338,39 @@ export class Transaction {
     } else if (data instanceof Uint8Array) {
       norm = bytesToHex(data);
     } else if (Array.isArray(data) || (typeof data === 'object' && data != null)) {
-      norm = rawToSerialized(data);
+      norm = rawToSerialized(data, chain, type);
     } else {
       throw new TypeError('Expected valid serialized tx');
     }
     if (norm.length <= 6) throw new Error('Invalid tx length');
-    this.hex = norm;
-    const ui8a = rlp.decode(add0x(norm)) as Uint8Array[];
-    const arr = ui8a.map(bytesToHex).map((i) => (i ? add0x(i) : i)) as RawTx;
-    this.raw = arr.reduce((res, value, i) => {
-      const name = FIELDS[i];
-      res[name] = value;
+    this.hex = add0x(norm);
+    let txData;
+    const prevType = type;
+    if (this.hex.startsWith('0x01')) [txData, type] = [add0x(this.hex.slice(4)), 'eip2930'];
+    else if (this.hex.startsWith('0x02')) [txData, type] = [add0x(this.hex.slice(4)), 'eip1559'];
+    else [txData, type] = [this.hex, 'legacy'];
+    if (prevType && prevType !== type) throw new Error('Invalid transaction type');
+    this.type = type;
+    const ui8a = rlp.decode(txData) as Uint8Array[];
+    this.raw = ui8a.reduce((res: any, value: any, i: number) => {
+      const name = TypeToFields[type!][i];
+      if (!name) return res;
+      res[name] = normalizeField(name, value);
       return res;
     }, {} as RawTxMap);
+    if (!this.raw.chainId) {
+      // Unsigned transaction with EIP-155
+      if (type === 'legacy' && !this.raw.r && !this.raw.s) {
+        this.raw.chainId = this.raw.v;
+        this.raw.v = '';
+      }
+    }
+    if (!this.raw.chainId) {
+      this.raw.chainId = normalizeField(
+        'chainId',
+        CHAIN_TYPES[chain || Transaction.DEFAULT_CHAIN]
+      ) as string;
+    }
     this.isSigned = !!(this.raw.r && this.raw.r !== '0x');
   }
 
@@ -182,6 +380,11 @@ export class Transaction {
 
   equals(other: Transaction) {
     return this.getMessageToSign() === other.getMessageToSign();
+  }
+
+  get chain(): Chain | undefined {
+    for (let k in CHAIN_TYPES)
+      if (CHAIN_TYPES[k as Chain] === Number(this.raw.chainId!)) return k as Chain;
   }
 
   get sender(): string {
@@ -197,7 +400,9 @@ export class Transaction {
 
   // Total fee in wei
   get fee(): bigint {
-    return BigInt(this.raw.gasPrice) * BigInt(this.raw.gasLimit);
+    // maxFeePerGas: Represents the maximum amount that a user is willing to pay for their tx (inclusive of baseFeePerGas and maxPriorityFeePerGas)
+    if (this.type === 'eip1559') return BigInt(this.raw.maxFeePerGas!) * BigInt(this.raw.gasLimit!);
+    return BigInt(this.raw.gasPrice!) * BigInt(this.raw.gasLimit!);
   }
 
   // Amount + fee in wei
@@ -215,45 +420,38 @@ export class Transaction {
     return Number.parseInt(this.raw.nonce, 16) || 0;
   }
 
-  private prepare(): Uint8Array[] {
-    return [
-      hexToBytesUnpadded(this.raw.nonce),
-      hexToBytesUnpadded(this.raw.gasPrice),
-      hexToBytesUnpadded(this.raw.gasLimit),
-      hexToBytes(this.raw.to),
-      hexToBytesUnpadded(this.raw.value),
-      hexToBytesUnpadded(this.raw.data),
-      hexToBytesUnpadded(this.raw.v),
-      hexToBytesUnpadded(this.raw.r),
-      hexToBytesUnpadded(this.raw.s),
-    ];
-  }
-
   private supportsReplayProtection() {
     const properBlock = !['chainstart', 'homestead', 'dao', 'tangerineWhistle'].includes(
       this.hardfork
     );
     if (!this.isSigned) return true; // Unsigned, supports EIP155
-    const v = Number(hexToNumber(this.raw.v));
-    const chainId = CHAIN_TYPES[this.chain];
+    const v = Number(hexToNumber(this.raw.v!));
+    const chainId = Number(this.raw.chainId!);
     const meetsConditions = v === chainId * 2 + 35 || v === chainId * 2 + 36;
+
     return properBlock && meetsConditions;
   }
 
-  getMessageToSign(): string {
-    const values = this.prepare().slice(0, 6);
-    if (this.supportsReplayProtection()) {
-      values.push(hexToBytes(numberToHex(CHAIN_TYPES[this.chain])));
-      values.push(new Uint8Array());
-      values.push(new Uint8Array());
+  getMessageToSign(signed: boolean = false): string {
+    let values = (TypeToFields[this.type] as any).map((i: any) => (this.raw as any)[i]);
+    if (!signed) {
+      // TODO: merge with line #252 somehow? (same strip & EIP-155)
+      // Strip signature (last 3 values)
+      values = values.slice(0, -3);
+      // EIP-155
+      if (this.type === 'legacy' && this.supportsReplayProtection())
+        values.push(this.raw.chainId! as any, '', '');
     }
-    return keccak256(rlp.encode(values));
+    let encoded = rlp.encode(values);
+    if (this.type !== 'legacy')
+      encoded = new Uint8Array([TRANSACTION_TYPES[this.type], ...Array.from(encoded)]);
+    return keccak256(encoded);
   }
 
   // Used in block explorers etc
   get hash(): string {
     if (!this.isSigned) throw new Error('Expected signed transaction');
-    return keccak256(rlp.encode(this.prepare()));
+    return this.getMessageToSign(true);
   }
 
   async sign(privateKey: string | Uint8Array): Promise<Transaction> {
@@ -264,25 +462,28 @@ export class Transaction {
       canonical: true,
     });
     const signature = secp256k1.Signature.fromHex(hex);
-    const chainId = CHAIN_TYPES[this.chain];
-    const vv = chainId ? recovery + (chainId * 2 + 35) : recovery + 27;
+    const chainId = Number(this.raw.chainId!);
+    const vv =
+      this.type === 'legacy' ? (chainId ? recovery + (chainId * 2 + 35) : recovery + 27) : recovery;
     const [v, r, s] = [vv, signature.r, signature.s].map((n) => add0x(numberToHex(n)));
-    const signedRaw: RawTxMap = Object.assign({}, this.raw, { v, r, s });
-    return new Transaction(signedRaw, this.chain, this.hardfork);
+    const signedRaw: RawTxMap =
+      this.type === 'legacy'
+        ? { ...this.raw, v, r, s }
+        : { ...cloneDeep(this.raw), yParity: v, r, s };
+    return new Transaction(signedRaw, this.chain, this.hardfork, this.type);
   }
 
   recoverSenderPublicKey(): string | undefined {
-    if (!this.isSigned) {
+    if (!this.isSigned)
       throw new Error('Expected signed transaction: cannot recover sender of unsigned tx');
-    }
-    const [vv, r, s] = [this.raw.v, this.raw.r, this.raw.s].map((n) => hexToNumber(n));
+    const [r, s] = [this.raw.r, this.raw.s].map((n) => hexToNumber(n));
     if (this.hardfork !== 'chainstart' && s && s > secp256k1.CURVE.n / 2n) {
       throw new Error('Invalid signature: s is invalid');
     }
     const signature = new secp256k1.Signature(r, s).toHex();
-    const chainId = CHAIN_TYPES[this.chain];
-    const v = Number(vv);
-    const recovery = chainId ? v - (chainId * 2 + 35) : v - 27;
+    const v = Number(hexToNumber(this.type === 'legacy' ? this.raw.v! : this.raw.yParity!));
+    const chainId = Number(this.raw.chainId!);
+    const recovery = this.type === 'legacy' ? (chainId ? v - (chainId * 2 + 35) : v - 27) : v;
     return secp256k1.recoverPublicKey(this.getMessageToSign(), signature, recovery);
   }
 }
