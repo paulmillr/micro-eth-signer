@@ -49,6 +49,21 @@ const { Address, Transaction } = require('micro-eth-signer');
     value: 10n ** 18n, // 1 eth in wei
     nonce: 1
   }, undefined, undefined, 'eip1559');
+
+  const berlinTx = new Transaction({
+    to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
+    maxFeePerGas: 100n * 10n ** 9n, // 100 gwei in wei
+    maxPriorityFeePerGas: 1n * 10n ** 9n, // 1 gwei in wei
+    value: 10n ** 18n, // 1 eth in wei
+    nonce: 1,
+    // the field can also be used in eip1559 txs
+    accessList: [{
+      "address": "0x123456789a123456789a123456789a123456789a",
+      "storageKeys": [
+        "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+      ]
+    }]
+  }, undefined, undefined, 'eip2930');
 })();
 ```
 
