@@ -95,18 +95,22 @@ You can use either of those to initialize new `Transaction`. There are a few met
 
 - `new Transaction(serialized[, chain, hardfork])` - creates transaction from Raw TX string.
     - `chain`: optional argument (default is `mainnet`; `ropsten`, `rinkeby`, `goerli`, `kovan` etc)
-    - `hardfork`: optional argument (default is `berlin`). The only place we're checking for `hardfork`
+    - `hardfork`: optional argument (default is `london`). The only place we're checking for `hardfork`
       is the replay protection code. There are very old transactions that don't support replay protection,
       you'll probably won't need them
-- `new Transaction(rawTx[, chain, hardfork])` - creates transaction from Raw TX data.
-    - `rawTx` must have fields `to`, `value`, `nonce`, `gasPrice`, `gasLimit`
-    - It could optionally specify `data`
+    - `type`: optional argument (default is `legacy`). Can be either `legacy`, `eip2930`, or `eip1559` (Berlin and London style transactions with access lists and maxFeePerGas/maxPriorityFeePerGas)
+- `new Transaction(rawTx[, chain, hardfork, type])` - creates transaction from Raw TX data.
+    - `rawTx` must have fields `to`, `value`, `nonce`, `gasLimit`
+    - `rawTx` must have `maxFeePerGas` (eip1559 txs) or `gasPrice` (berlin & legacy txs)
     - `to` is recipient's address
     - `value` is amount to send in wei
     - `nonce` is sender's nonce in number
     - `gasLimit` is transaction's Gas Limit in wei (minimum is `21000`)
-    - `gasPrice` is transaction's Gas Price in wei (100 gwei is `100 * 10 ** 9`)
+    - `maxFeePerGas` is eip1559 transaction's max acceptable gas price in wei (100 gwei is `100 * 10 ** 9`). Not applicable to legacy transactions
+    - `maxPriorityFeePerGas` is eip1559 transaction's max acceptable tip in wei. Not applicable to legacy transactions
+    - `gasPrice` is legacy transaction's Gas Price in wei. Not applicable to eip1559 transactions
     - `data` is transaction's data if it's calling some smart contracts
+    - `accessList` is transaction's Access List, a list of addresses that its smart contract call touches. Basically an array of strings: `["0x123...", "0x456..."]`. Not applicable to legacy transactions
 - `Transaction#sign(privateKey: string | Uint8Array): Promise<Transaction>` —
   creates new transaction with same data, but signed by following private key
 - `Transaction#recoverSenderPublicKey(): string` — recovers sender's public key from **signed transaction**
@@ -115,7 +119,7 @@ You can use either of those to initialize new `Transaction`. There are a few met
 
 - `isSigned: boolean` - whether tx is signed with private key
 - `amount: bigint` - amount (aka `value`) in wei
-- `fee: bigint` - fee in wei (`gasLimit` * `gasPrice`)
+- `fee: bigint` - fee in wei (`maxFeePerGas` * `gasLimit` or `gasPrice` * `gasLimit`)
 - `upfrontCost: bigint` - amount + fee in wei, combined
 - `to: string` - address that receives the tx
 - `nonce: number` - account's nonce
