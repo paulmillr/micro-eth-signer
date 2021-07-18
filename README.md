@@ -40,6 +40,15 @@ const { Address, Transaction } = require('micro-eth-signer');
   console.log('Verified', Address.verifyChecksum(addr));
   console.log('addr is correct', signedTx.sender, signedTx.sender == addr);
   console.log(signedTx);
+
+  // London style txs, EIP 1559
+  const londonTx = new Transaction({
+    to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
+    maxFeePerGas: 100n * 10n ** 9n, // 100 gwei in wei
+    maxPriorityFeePerGas: 1n * 10n ** 9n, // 1 gwei in wei
+    value: 10n ** 18n, // 1 eth in wei
+    nonce: 1
+  }, undefined, undefined, 'eip1559');
 })();
 ```
 
