@@ -2,9 +2,9 @@
 
 Create, sign and validate Ethereum transactions & addresses with minimum deps.
 
-Library's size is 4.7KB minified. Uses three dependencies (SHA-3, RLP & secp256k1), all libraries combined are 12KB gzipped.
+Library's size <500 lines of code, or 3KiB gzipped (8.7KiB minified). Uses three dependencies (SHA-3, RLP & secp256k1), four libraries combined are 13KiB gzipped (37KiB minified).
 
-Validated with over 3 MB of ethers.js test vectors!
+Validated with over 3MiB of ethers.js test vectors!
 
 ## Usage
 
