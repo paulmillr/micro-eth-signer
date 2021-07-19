@@ -108,12 +108,13 @@ Represents unsigned & signed ETH transactions. They are serialized & deserialize
 
 You can use either of those to initialize new `Transaction`. There are a few methods available:
 
-- `new Transaction(serialized[, chain, hardfork])` - creates transaction from Raw TX string.
+- `new Transaction(serialized[, chain, hardfork, type])` - creates transaction from Raw TX string.
     - `chain`: optional argument (default is `mainnet`; `ropsten`, `rinkeby`, `goerli`, `kovan` etc)
     - `hardfork`: optional argument (default is `london`). The only place we're checking for `hardfork`
       is the replay protection code. There are very old transactions that don't support replay protection,
       you'll probably won't need them
-    - `type`: optional argument (default is `legacy`). Can be either `legacy`, `eip2930`, or `eip1559` (Berlin and London style transactions with access lists and maxFeePerGas/maxPriorityFeePerGas)
+    - `type`: optional argument (default is `legacy`). Can be either `legacy`, `eip2930`, or `eip1559`
+      (Berlin and London style transactions with access lists and `maxFeePerGas`/`maxPriorityFeePerGas`)
 - `new Transaction(rawTx[, chain, hardfork, type])` - creates transaction from Raw TX data.
     - `rawTx` must have fields `to`, `value`, `nonce`, `gasLimit`
     - `rawTx` must have `maxFeePerGas` (eip1559 txs) or `gasPrice` (berlin & legacy txs)
