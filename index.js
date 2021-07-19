@@ -48,10 +48,8 @@ function hexToBytes(hex) {
     }
     return array;
 }
-function numberToHex(num, padToBytes = 0) {
-    const hex = num.toString(16);
-    const p1 = hex.length & 1 ? `0${hex}` : hex;
-    return p1.padStart(padToBytes * 2, '0');
+function numberToHex(num) {
+    return padHex(num.toString(16));
 }
 function hexToNumber(hex) {
     if (typeof hex !== 'string') {
@@ -60,17 +58,23 @@ function hexToNumber(hex) {
     return hex ? BigInt(add0x(hex)) : 0n;
 }
 const FIELDS = ['nonce', 'gasPrice', 'gasLimit', 'to', 'value', 'data', 'v', 'r', 's'];
-const FIELDS2930 = ['chainId', 'nonce', 'gasPrice', 'gasLimit', 'to', 'value', 'data', 'accessList',
-    'yParity', 'r', 's'];
-const FIELDS1559 = ['chainId', 'nonce', 'maxPriorityFeePerGas', 'maxFeePerGas', 'gasLimit', 'to', 'value',
-    'data', 'accessList', 'yParity', 'r', 's'];
+const FIELDS2930 = [
+    'chainId', 'nonce', 'gasPrice', 'gasLimit',
+    'to', 'value', 'data', 'accessList', 'yParity', 'r', 's'
+];
+const FIELDS1559 = [
+    'chainId', 'nonce', 'maxPriorityFeePerGas', 'maxFeePerGas', 'gasLimit',
+    'to', 'value', 'data', 'accessList', 'yParity', 'r', 's'
+];
 const TypeToFields = {
     legacy: FIELDS,
     eip2930: FIELDS2930,
     eip1559: FIELDS1559,
 };
-const FIELD_NUMBER = new Set(['chainId', 'nonce', 'gasPrice', 'maxPriorityFeePerGas', 'maxFeePerGas',
-    'gasLimit', 'value', 'v', 'yParity', 'r', 's']);
+const FIELD_NUMBER = new Set([
+    'chainId', 'nonce', 'gasPrice', 'maxPriorityFeePerGas', 'maxFeePerGas',
+    'gasLimit', 'value', 'v', 'yParity', 'r', 's'
+]);
 const FIELD_DATA = new Set(['data', 'to', 'storageKey', 'address']);
 function normalizeField(field, value) {
     if (FIELD_NUMBER.has(field)) {
@@ -117,7 +121,7 @@ function normalizeField(field, value) {
                 }
                 else {
                     if (typeof access !== 'object' ||
-                        access === null ||
+                        access == null ||
                         !access.address ||
                         !Array.isArray(access.storageKeys))
                         throw new TypeError(`Invalid type for field ${field}`);
@@ -130,7 +134,7 @@ function normalizeField(field, value) {
             }
         }
         else {
-            if (typeof value !== 'object' || value === null || value instanceof Uint8Array)
+            if (typeof value !== 'object' || value == null || value instanceof Uint8Array)
                 throw new TypeError(`Invalid type for field ${field}`);
             for (let k in value) {
                 const key = normalizeField('address', k);

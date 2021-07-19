@@ -19,9 +19,11 @@ declare const FIELDS: readonly ["nonce", "gasPrice", "gasLimit", "to", "value", 
 declare const FIELDS2930: readonly ["chainId", "nonce", "gasPrice", "gasLimit", "to", "value", "data", "accessList", "yParity", "r", "s"];
 declare const FIELDS1559: readonly ["chainId", "nonce", "maxPriorityFeePerGas", "maxFeePerGas", "gasLimit", "to", "value", "data", "accessList", "yParity", "r", "s"];
 export declare type Field = typeof FIELDS[number] | typeof FIELDS2930[number] | typeof FIELDS1559[number] | 'address' | 'storageKey';
-export declare type RawTxLegacy = [string, string, string, string, string, string, string, string, string];
-export declare type RawTx2930 = [string, string, string, string, string, string, [string, string[]][], string, string, string];
-export declare type RawTx1559 = [string, string, string, string, string, string, string, [string, string[]][], string, string, string];
+declare type str = string;
+export declare type AccessList = [str, str[]][];
+export declare type RawTxLegacy = [str, str, str, str, str, str, str, str, str];
+export declare type RawTx2930 = [str, str, str, str, str, str, AccessList, str, str, str];
+export declare type RawTx1559 = [str, str, str, str, str, str, str, AccessList, str, str, str];
 export declare type RawTx = RawTxLegacy | RawTx2930 | RawTx1559;
 export declare type RawTxMap = {
     chainId?: string;
@@ -33,7 +35,7 @@ export declare type RawTxMap = {
     to: string;
     value: string;
     data: string;
-    accessList?: [string, string[]][];
+    accessList?: AccessList;
     yParity?: string;
     v?: string;
     r: string;

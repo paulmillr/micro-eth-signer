@@ -52,10 +52,8 @@ function hexToBytes(hex: string): Uint8Array {
   return array;
 }
 
-function numberToHex(num: number | bigint, padToBytes: number = 0): string {
-  const hex = num.toString(16);
-  const p1 = hex.length & 1 ? `0${hex}` : hex;
-  return p1.padStart(padToBytes * 2, '0');
+function numberToHex(num: number | bigint): string {
+  return padHex(num.toString(16));
 }
 
 function hexToNumber(hex: string): bigint {
@@ -71,11 +69,15 @@ type Type = keyof typeof TRANSACTION_TYPES;
 // The order is important.
 const FIELDS = ['nonce', 'gasPrice', 'gasLimit', 'to', 'value', 'data', 'v', 'r', 's'] as const;
 // prettier-ignore
-const FIELDS2930 = ['chainId', 'nonce', 'gasPrice', 'gasLimit', 'to', 'value', 'data', 'accessList',
-  'yParity', 'r', 's'] as const;
+const FIELDS2930 = [
+  'chainId', 'nonce', 'gasPrice', 'gasLimit',
+  'to', 'value', 'data', 'accessList', 'yParity', 'r', 's'
+] as const;
 // prettier-ignore
-const FIELDS1559 = ['chainId', 'nonce', 'maxPriorityFeePerGas', 'maxFeePerGas', 'gasLimit', 'to', 'value',
-  'data', 'accessList', 'yParity', 'r', 's'] as const;
+const FIELDS1559 = [
+  'chainId', 'nonce', 'maxPriorityFeePerGas', 'maxFeePerGas', 'gasLimit',
+  'to', 'value', 'data', 'accessList', 'yParity', 'r', 's'
+] as const;
 
 const TypeToFields = {
   legacy: FIELDS,
@@ -90,15 +92,13 @@ export type Field =
   | 'address'
   | 'storageKey';
 
+type str = string;
+export type AccessList = [str, str[]][];
 // These types will should be serializable by rlp as is
-export type RawTxLegacy = [string, string, string, string, string, string, string, string, string];
-// prettier-ignore
-export type RawTx2930 = [string, string, string, string, string, string, [string, string[]][], string, string, string];
-// prettier-ignore
-export type RawTx1559 = [string, string, string, string, string, string, string, [string, string[]][], string, string, string];
-
+export type RawTxLegacy = [str, str, str, str, str, str, str, str, str];
+export type RawTx2930 = [str, str, str, str, str, str, AccessList, str, str, str];
+export type RawTx1559 = [str, str, str, str, str, str, str, AccessList, str, str, str];
 export type RawTx = RawTxLegacy | RawTx2930 | RawTx1559;
-
 export type RawTxMap = {
   chainId?: string;
   nonce: string;
@@ -109,7 +109,7 @@ export type RawTxMap = {
   to: string;
   value: string;
   data: string;
-  accessList?: [string, string[]][];
+  accessList?: AccessList;
   yParity?: string;
   v?: string;
   r: string;
@@ -118,20 +118,22 @@ export type RawTxMap = {
 
 // Normalizes field to format which can easily be serialized by rlp (strings & arrays)
 // prettier-ignore
-const FIELD_NUMBER = new Set(['chainId', 'nonce', 'gasPrice', 'maxPriorityFeePerGas', 'maxFeePerGas',
-  'gasLimit', 'value', 'v', 'yParity', 'r', 's']);
+const FIELD_NUMBER = new Set([
+  'chainId', 'nonce', 'gasPrice', 'maxPriorityFeePerGas', 'maxFeePerGas',
+  'gasLimit', 'value', 'v', 'yParity', 'r', 's'
+]);
 const FIELD_DATA = new Set(['data', 'to', 'storageKey', 'address']);
 function normalizeField(
   field: Field,
   value:
-    | string
     | number
     | bigint
+    | string
     | Uint8Array
     | Record<string, string[]>
-    | [string, string[]][]
+    | AccessList
     | { address: string; storageKeys: string[] }[]
-): string | [string, string[]][] {
+): string | AccessList {
   // can be number, bignumber, decimal number in string (123), hex number in string (0x123)
   if (FIELD_NUMBER.has(field)) {
     // bytes
@@ -165,7 +167,7 @@ function normalizeField(
     if (Array.isArray(value)) {
       for (let access of value) {
         if (Array.isArray(access)) {
-          // [string, string[]][]
+          // AccessList
           if (access.length !== 2 || !Array.isArray(access[1]))
             throw new TypeError(`Invalid type for field ${field}`);
           const key = normalizeField('address', access[0]) as string;
@@ -175,7 +177,7 @@ function normalizeField(
           // {address: string, storageKeys: string[]}[]
           if (
             typeof access !== 'object' ||
-            access === null ||
+            access == null ||
             !access.address ||
             !Array.isArray(access.storageKeys)
           )
@@ -187,7 +189,7 @@ function normalizeField(
       }
     } else {
       // {[address]: string[]}
-      if (typeof value !== 'object' || value === null || value instanceof Uint8Array)
+      if (typeof value !== 'object' || value == null || value instanceof Uint8Array)
         throw new TypeError(`Invalid type for field ${field}`);
       for (let k in value) {
         const key = normalizeField('address', k) as string;
@@ -197,12 +199,12 @@ function normalizeField(
         res[key] = new Set(value[k].map((i) => normalizeField('storageKey', i) as string));
       }
     }
-    return Object.keys(res).map((i) => [i, Array.from(res[i])]) as [string, string[]][];
+    return Object.keys(res).map((i) => [i, Array.from(res[i])]) as AccessList;
   }
   throw new TypeError(`Invalid type for field ${field}`);
 }
 
-function possibleTypes(input: RawTxMap) {
+function possibleTypes(input: RawTxMap): Set<Type> {
   let types: Set<Type> = new Set(Object.keys(TRANSACTION_TYPES) as Type[]);
   const keys = new Set(Object.keys(input));
   if (keys.has('maxPriorityFeePerGas') || keys.has('maxFeePerGas')) {
