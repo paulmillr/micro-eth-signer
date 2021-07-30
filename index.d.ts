@@ -61,6 +61,10 @@ export declare class Transaction {
     equals(other: Transaction): boolean;
     get chain(): Chain | undefined;
     get sender(): string;
+    get gasPrice(): bigint;
+    get maxFeePerGas(): bigint;
+    get maxPriorityFeePerGas(): bigint;
+    get gasLimit(): bigint;
     get amount(): bigint;
     get fee(): bigint;
     get upfrontCost(): bigint;

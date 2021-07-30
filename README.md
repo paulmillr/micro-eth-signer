@@ -134,6 +134,8 @@ You can use either of those to initialize new `Transaction`. There are a few met
 ##### Transaction Properties
 
 - `isSigned: boolean` - whether tx is signed with private key
+- `gasPrice: bigint` - legacy wei/gas
+- `maxFeePerGas: bigint`, `maxPriorityFeePerGas: bigint` - eip1559 wei/gas
 - `amount: bigint` - amount (aka `value`) in wei
 - `fee: bigint` - fee in wei (`maxFeePerGas` * `gasLimit` or `gasPrice` * `gasLimit`)
 - `upfrontCost: bigint` - amount + fee in wei, combined

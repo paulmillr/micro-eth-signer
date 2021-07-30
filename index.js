@@ -332,13 +332,30 @@ class Transaction {
             throw new Error('Invalid signed transaction');
         return exports.Address.fromPublicKey(sender);
     }
+    get gasPrice() {
+        if (this.type === 'eip1559')
+            throw new Error('Field only available for "legacy" transactions');
+        return BigInt(this.raw.gasPrice);
+    }
+    get maxFeePerGas() {
+        if (this.type !== 'eip1559')
+            throw new Error('Field only available for "eip1559" transactions');
+        return BigInt(this.raw.maxFeePerGas);
+    }
+    get maxPriorityFeePerGas() {
+        if (this.type !== 'eip1559')
+            throw new Error('Field only available for "eip1559" transactions');
+        return BigInt(this.raw.maxPriorityFeePerGas);
+    }
+    get gasLimit() {
+        return BigInt(this.raw.gasLimit);
+    }
     get amount() {
         return BigInt(this.raw.value);
     }
     get fee() {
-        if (this.type === 'eip1559')
-            return BigInt(this.raw.maxFeePerGas) * BigInt(this.raw.gasLimit);
-        return BigInt(this.raw.gasPrice) * BigInt(this.raw.gasLimit);
+        const price = this.type === 'eip1559' ? this.maxFeePerGas : this.gasPrice;
+        return price * this.gasLimit;
     }
     get upfrontCost() {
         return this.amount + this.fee;

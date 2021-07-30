@@ -395,16 +395,34 @@ export class Transaction {
     return Address.fromPublicKey(sender);
   }
 
+  get gasPrice(): bigint {
+    if (this.type === 'eip1559') throw new Error('Field only available for "legacy" transactions');
+    return BigInt(this.raw.gasPrice!);
+  }
+
+  // maxFeePerGas: Represents the maximum amount that a user is willing to pay for their tx (inclusive of baseFeePerGas and maxPriorityFeePerGas)
+  get maxFeePerGas() {
+    if (this.type !== 'eip1559') throw new Error('Field only available for "eip1559" transactions');
+    return BigInt(this.raw.maxFeePerGas!);
+  }
+
+  get maxPriorityFeePerGas() {
+    if (this.type !== 'eip1559') throw new Error('Field only available for "eip1559" transactions');
+    return BigInt(this.raw.maxPriorityFeePerGas!);
+  }
+
+  get gasLimit(): bigint {
+    return BigInt(this.raw.gasLimit!);
+  }
+
   // Amount in wei
   get amount(): bigint {
     return BigInt(this.raw.value);
   }
-
   // Total fee in wei
   get fee(): bigint {
-    // maxFeePerGas: Represents the maximum amount that a user is willing to pay for their tx (inclusive of baseFeePerGas and maxPriorityFeePerGas)
-    if (this.type === 'eip1559') return BigInt(this.raw.maxFeePerGas!) * BigInt(this.raw.gasLimit!);
-    return BigInt(this.raw.gasPrice!) * BigInt(this.raw.gasLimit!);
+    const price = this.type === 'eip1559' ? this.maxFeePerGas : this.gasPrice;
+    return price * this.gasLimit;
   }
 
   // Amount + fee in wei
