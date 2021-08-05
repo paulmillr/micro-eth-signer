@@ -322,7 +322,7 @@ export const Address = {
 export class Transaction {
   static DEFAULT_HARDFORK = 'london';
   static DEFAULT_CHAIN: Chain = 'mainnet';
-  static DEFAULT_TYPE: Type = 'legacy';
+  static DEFAULT_TYPE: Type = 'eip1559';
   readonly hex: string;
   readonly raw: RawTxMap;
   readonly isSigned: boolean;

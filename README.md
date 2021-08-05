@@ -18,7 +18,7 @@ const { Address, Transaction } = require('micro-eth-signer');
 (async () => {
   const tx = new Transaction({
     to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
-    gasPrice: 100n * 10n ** 9n, // 100 gwei in wei
+    maxFeePerGas: 100n * 10n ** 9n, // 100 gwei in wei
     value: 10n ** 18n, // 1 eth in wei
     nonce: 1
   });
@@ -42,13 +42,12 @@ const { Address, Transaction } = require('micro-eth-signer');
   console.log(signedTx);
 
   // London style txs, EIP 1559
-  const londonTx = new Transaction({
+  const legacyTx = new Transaction({
     to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
-    maxFeePerGas: 100n * 10n ** 9n, // 100 gwei in wei
-    maxPriorityFeePerGas: 1n * 10n ** 9n, // 1 gwei in wei
+    gasPrice: 100n * 10n ** 9n, // 100 gwei in wei
     value: 10n ** 18n, // 1 eth in wei
     nonce: 1
-  }, undefined, undefined, 'eip1559');
+  }, undefined, undefined, 'legacy');
 
   const berlinTx = new Transaction({
     to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
@@ -113,7 +112,7 @@ You can use either of those to initialize new `Transaction`. There are a few met
     - `hardfork`: optional argument (default is `london`). The only place we're checking for `hardfork`
       is the replay protection code. There are very old transactions that don't support replay protection,
       you'll probably won't need them
-    - `type`: optional argument (default is `legacy`). Can be either `legacy`, `eip2930`, or `eip1559`
+    - `type`: optional argument (default is `eip1559`). Can be either `legacy`, `eip2930`, or `eip1559`
       (Berlin and London style transactions with access lists and `maxFeePerGas`/`maxPriorityFeePerGas`)
 - `new Transaction(rawTx[, chain, hardfork, type])` - creates transaction from Raw TX data.
     - `rawTx` must have fields `to`, `value`, `nonce`, `gasLimit`

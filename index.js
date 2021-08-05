@@ -427,4 +427,4 @@ class Transaction {
 exports.Transaction = Transaction;
 Transaction.DEFAULT_HARDFORK = 'london';
 Transaction.DEFAULT_CHAIN = 'mainnet';
-Transaction.DEFAULT_TYPE = 'legacy';
+Transaction.DEFAULT_TYPE = 'eip1559';
