@@ -1,6 +1,7 @@
 /*! micro-eth-signer - MIT License (c) Paul Miller (paulmillr.com) */
 
 import { keccak_256 } from 'noble-hashes/lib/sha3';
+import { bytesToHex } from 'noble-hashes/lib/utils';
 import * as secp256k1 from 'noble-secp256k1';
 import * as rlp from 'micro-rlp';
 
@@ -29,15 +30,6 @@ function cloneDeep<T>(obj: T): T {
     for (let key in obj) res[key] = cloneDeep(obj[key]);
     return res;
   } else return obj;
-}
-
-function bytesToHex(uint8a: Uint8Array): string {
-  // pre-caching chars could speed this up 6x.
-  let hex = '';
-  for (let i = 0; i < uint8a.length; i++) {
-    hex += uint8a[i].toString(16).padStart(2, '0');
-  }
-  return hex;
 }
 
 const padHex = (hex: string): string => (hex.length & 1 ? `0${hex}` : hex);

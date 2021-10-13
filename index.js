@@ -3,6 +3,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.Transaction = exports.Address = exports.strip0x = exports.add0x = exports.TRANSACTION_TYPES = exports.CHAIN_TYPES = void 0;
 const sha3_1 = require("noble-hashes/lib/sha3");
+const utils_1 = require("noble-hashes/lib/utils");
 const secp256k1 = require("noble-secp256k1");
 const rlp = require("micro-rlp");
 exports.CHAIN_TYPES = { mainnet: 1, ropsten: 3, rinkeby: 4, goerli: 5, kovan: 42 };
@@ -30,13 +31,6 @@ function cloneDeep(obj) {
     }
     else
         return obj;
-}
-function bytesToHex(uint8a) {
-    let hex = '';
-    for (let i = 0; i < uint8a.length; i++) {
-        hex += uint8a[i].toString(16).padStart(2, '0');
-    }
-    return hex;
 }
 const padHex = (hex) => (hex.length & 1 ? `0${hex}` : hex);
 function hexToBytes(hex) {
@@ -79,7 +73,7 @@ const FIELD_DATA = new Set(['data', 'to', 'storageKey', 'address']);
 function normalizeField(field, value) {
     if (FIELD_NUMBER.has(field)) {
         if (value instanceof Uint8Array)
-            value = add0x(bytesToHex(value));
+            value = add0x(utils_1.bytesToHex(value));
         if (field === 'yParity' && typeof value === 'boolean')
             value = value ? '0x1' : '0x0';
         if (typeof value === 'string')
@@ -98,7 +92,7 @@ function normalizeField(field, value) {
         if (!value)
             value = '';
         if (value instanceof Uint8Array)
-            value = bytesToHex(value);
+            value = utils_1.bytesToHex(value);
         if (typeof value !== 'string')
             throw new TypeError(`Invalid type for field ${field}`);
         value = add0x(value);
@@ -215,7 +209,7 @@ function rawToSerialized(input, chain, type) {
     if (type !== 'legacy' && chainId && normalized[0] !== chainId)
         throw new Error(`ChainId=${normalized[0]} incompatible with Chain=${chainId}`);
     const tNum = exports.TRANSACTION_TYPES[type];
-    return (tNum ? `0x0${tNum}` : '0x') + bytesToHex(rlp.encode(normalized));
+    return (tNum ? `0x0${tNum}` : '0x') + utils_1.bytesToHex(rlp.encode(normalized));
 }
 exports.Address = {
     fromPrivateKey(key) {
@@ -230,14 +224,14 @@ exports.Address = {
         if (![33, 65].includes(len))
             throw new Error(`Invalid key with length "${len}"`);
         const pub = len === 65 ? key : secp256k1.Point.fromHex(key).toRawBytes(false);
-        const addr = bytesToHex(sha3_1.keccak_256(pub.slice(1, 65))).slice(24);
+        const addr = utils_1.bytesToHex(sha3_1.keccak_256(pub.slice(1, 65))).slice(24);
         return exports.Address.checksum(addr);
     },
     checksum(nonChecksummedAddress) {
         const addr = strip0x(nonChecksummedAddress.toLowerCase());
         if (addr.length !== 40)
             throw new Error('Invalid address, must have 40 chars');
-        const hash = strip0x(bytesToHex(sha3_1.keccak_256(addr)));
+        const hash = strip0x(utils_1.bytesToHex(sha3_1.keccak_256(addr)));
         let checksummed = '';
         for (let i = 0; i < addr.length; i++) {
             const nth = Number.parseInt(hash[i], 16);
@@ -254,9 +248,9 @@ exports.Address = {
             throw new Error('Invalid address, must have 40 chars');
         if (addr === addr.toLowerCase() || addr === addr.toUpperCase())
             return true;
-        const hash = sha3_1.keccak_256(addr.toLowerCase());
+        const hash = utils_1.bytesToHex(sha3_1.keccak_256(addr.toLowerCase()));
         for (let i = 0; i < 40; i++) {
-            const nth = hash[i];
+            const nth = Number.parseInt(hash[i], 16);
             const char = addr[i];
             if (nth > 7 && char.toUpperCase() !== char)
                 return false;
@@ -274,7 +268,7 @@ class Transaction {
             norm = data;
         }
         else if (data instanceof Uint8Array) {
-            norm = bytesToHex(data);
+            norm = utils_1.bytesToHex(data);
         }
         else if (Array.isArray(data) || (typeof data === 'object' && data != null)) {
             norm = rawToSerialized(data, chain, type);
@@ -385,7 +379,7 @@ class Transaction {
         let encoded = rlp.encode(values);
         if (this.type !== 'legacy')
             encoded = new Uint8Array([exports.TRANSACTION_TYPES[this.type], ...Array.from(encoded)]);
-        return bytesToHex(sha3_1.keccak_256(encoded));
+        return utils_1.bytesToHex(sha3_1.keccak_256(encoded));
     }
     get hash() {
         if (!this.isSigned)
