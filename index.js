@@ -2,9 +2,9 @@
 /*! micro-eth-signer - MIT License (c) Paul Miller (paulmillr.com) */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.Transaction = exports.Address = exports.strip0x = exports.add0x = exports.TRANSACTION_TYPES = exports.CHAIN_TYPES = void 0;
-const js_sha3_1 = require("js-sha3");
-const rlp = require("micro-rlp");
+const sha3_1 = require("noble-hashes/lib/sha3");
 const secp256k1 = require("noble-secp256k1");
+const rlp = require("micro-rlp");
 exports.CHAIN_TYPES = { mainnet: 1, ropsten: 3, rinkeby: 4, goerli: 5, kovan: 42 };
 exports.TRANSACTION_TYPES = { legacy: 0, eip2930: 1, eip1559: 2 };
 function add0x(hex) {
@@ -230,14 +230,14 @@ exports.Address = {
         if (![33, 65].includes(len))
             throw new Error(`Invalid key with length "${len}"`);
         const pub = len === 65 ? key : secp256k1.Point.fromHex(key).toRawBytes(false);
-        const addr = js_sha3_1.keccak256(pub.slice(1, 65)).slice(24);
+        const addr = bytesToHex(sha3_1.keccak_256(pub.slice(1, 65))).slice(24);
         return exports.Address.checksum(addr);
     },
     checksum(nonChecksummedAddress) {
         const addr = strip0x(nonChecksummedAddress.toLowerCase());
         if (addr.length !== 40)
             throw new Error('Invalid address, must have 40 chars');
-        const hash = strip0x(js_sha3_1.keccak256(addr));
+        const hash = strip0x(bytesToHex(sha3_1.keccak_256(addr)));
         let checksummed = '';
         for (let i = 0; i < addr.length; i++) {
             const nth = Number.parseInt(hash[i], 16);
@@ -254,9 +254,9 @@ exports.Address = {
             throw new Error('Invalid address, must have 40 chars');
         if (addr === addr.toLowerCase() || addr === addr.toUpperCase())
             return true;
-        const hash = js_sha3_1.keccak256(addr.toLowerCase());
+        const hash = sha3_1.keccak_256(addr.toLowerCase());
         for (let i = 0; i < 40; i++) {
-            const nth = Number.parseInt(hash[i], 16);
+            const nth = hash[i];
             const char = addr[i];
             if (nth > 7 && char.toUpperCase() !== char)
                 return false;
@@ -385,7 +385,7 @@ class Transaction {
         let encoded = rlp.encode(values);
         if (this.type !== 'legacy')
             encoded = new Uint8Array([exports.TRANSACTION_TYPES[this.type], ...Array.from(encoded)]);
-        return js_sha3_1.keccak256(encoded);
+        return bytesToHex(sha3_1.keccak_256(encoded));
     }
     get hash() {
         if (!this.isSigned)

@@ -1,8 +1,8 @@
 /*! micro-eth-signer - MIT License (c) Paul Miller (paulmillr.com) */
 
-import { keccak256 } from 'js-sha3';
-import * as rlp from 'micro-rlp';
+import { keccak_256 } from 'noble-hashes/lib/sha3';
 import * as secp256k1 from 'noble-secp256k1';
+import * as rlp from 'micro-rlp';
 
 // `micro-rlp` is forked from the most recent `rlp` and has two changes:
 // 1. All dependencies have been removed. 2. Browser support has been added
@@ -282,7 +282,7 @@ export const Address = {
     const len = key.length;
     if (![33, 65].includes(len)) throw new Error(`Invalid key with length "${len}"`);
     const pub = len === 65 ? key : secp256k1.Point.fromHex(key).toRawBytes(false);
-    const addr = keccak256(pub.slice(1, 65)).slice(24);
+    const addr = bytesToHex(keccak_256(pub.slice(1, 65))).slice(24);
     return Address.checksum(addr);
   },
 
@@ -291,7 +291,7 @@ export const Address = {
   checksum(nonChecksummedAddress: string): string {
     const addr = strip0x(nonChecksummedAddress.toLowerCase());
     if (addr.length !== 40) throw new Error('Invalid address, must have 40 chars');
-    const hash = strip0x(keccak256(addr));
+    const hash = strip0x(bytesToHex(keccak_256(addr)));
     let checksummed = '';
     for (let i = 0; i < addr.length; i++) {
       // If ith character is 9 to f then make it uppercase
@@ -307,7 +307,7 @@ export const Address = {
     const addr = strip0x(address);
     if (addr.length !== 40) throw new Error('Invalid address, must have 40 chars');
     if (addr === addr.toLowerCase() || addr === addr.toUpperCase()) return true;
-    const hash = keccak256(addr.toLowerCase());
+    const hash = bytesToHex(keccak_256(addr.toLowerCase()));
     for (let i = 0; i < 40; i++) {
       // the nth letter should be uppercase if the nth digit of casemap is 1
       const nth = Number.parseInt(hash[i], 16);
@@ -465,7 +465,7 @@ export class Transaction {
     let encoded = rlp.encode(values);
     if (this.type !== 'legacy')
       encoded = new Uint8Array([TRANSACTION_TYPES[this.type], ...Array.from(encoded)]);
-    return keccak256(encoded);
+    return bytesToHex(keccak_256(encoded));
   }
 
   // Used in block explorers etc

@@ -40,8 +40,8 @@
     "signer"
   ],
   "dependencies": {
-    "js-sha3": "0.8.0",
     "micro-rlp": "2.2.9",
+    "noble-hashes": "^0.1.1",
     "noble-secp256k1": "^1.2.7"
   },
   "devDependencies": {
