@@ -41,8 +41,8 @@
   ],
   "dependencies": {
     "micro-rlp": "2.2.9",
-    "noble-hashes": "^0.1.1",
-    "noble-secp256k1": "^1.2.7"
+    "noble-hashes": "^0.2.0",
+    "noble-secp256k1": "^1.2.13"
   },
   "devDependencies": {
     "@rollup/plugin-commonjs": "^17.1.0",
