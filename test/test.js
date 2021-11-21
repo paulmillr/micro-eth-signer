@@ -1,6 +1,6 @@
 const assert = require('assert').strict;
 const { should } = require('micro-should');
-const secp = require('noble-secp256k1');
+const secp = require('@noble/secp256k1');
 
 (async () => {
   const txs = require('./transactions.json');
