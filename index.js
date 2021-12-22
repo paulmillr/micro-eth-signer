@@ -2,8 +2,8 @@
 /*! micro-eth-signer - MIT License (c) Paul Miller (paulmillr.com) */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.Transaction = exports.Address = exports.strip0x = exports.add0x = exports.TRANSACTION_TYPES = exports.CHAIN_TYPES = void 0;
-const sha3_1 = require("@noble/hashes/lib/sha3");
-const utils_1 = require("@noble/hashes/lib/utils");
+const sha3_1 = require("@noble/hashes/sha3");
+const utils_1 = require("@noble/hashes/utils");
 const secp256k1 = require("@noble/secp256k1");
 const rlp = require("micro-rlp");
 exports.CHAIN_TYPES = { mainnet: 1, ropsten: 3, rinkeby: 4, goerli: 5, kovan: 42 };

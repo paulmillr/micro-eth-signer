@@ -1,7 +1,7 @@
 /*! micro-eth-signer - MIT License (c) Paul Miller (paulmillr.com) */
 
-import { keccak_256 } from '@noble/hashes/lib/sha3';
-import { bytesToHex } from '@noble/hashes/lib/utils';
+import { keccak_256 } from '@noble/hashes/sha3';
+import { bytesToHex } from '@noble/hashes/utils';
 import * as secp256k1 from '@noble/secp256k1';
 import * as rlp from 'micro-rlp';
 
