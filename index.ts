@@ -489,10 +489,12 @@ export class Transaction {
     if (!this.isSigned)
       throw new Error('Expected signed transaction: cannot recover sender of unsigned tx');
     const [r, s] = [this.raw.r, this.raw.s].map((n) => hexToNumber(n));
-    if (this.hardfork !== 'chainstart' && s && s > secp256k1.CURVE.n / 2n) {
+    const sig = new secp256k1.Signature(r, s);
+    // @ts-ignore
+    if (this.hardfork !== 'chainstart' && sig.hasHighS()) {
       throw new Error('Invalid signature: s is invalid');
     }
-    const signature = new secp256k1.Signature(r, s).toHex();
+    const signature = sig.toHex();
     const v = Number(hexToNumber(this.type === 'legacy' ? this.raw.v! : this.raw.yParity!));
     const chainId = Number(this.raw.chainId!);
     const recovery = this.type === 'legacy' ? (chainId ? v - (chainId * 2 + 35) : v - 27) : v;
