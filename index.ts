@@ -485,7 +485,7 @@ export class Transaction {
     return new Transaction(signedRaw, this.chain, this.hardfork, this.type);
   }
 
-  recoverSenderPublicKey(): string | undefined {
+  recoverSenderPublicKey(): Uint8Array | undefined {
     if (!this.isSigned)
       throw new Error('Expected signed transaction: cannot recover sender of unsigned tx');
     const [r, s] = [this.raw.r, this.raw.s].map((n) => hexToNumber(n));

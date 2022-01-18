@@ -74,6 +74,6 @@ export declare class Transaction {
     getMessageToSign(signed?: boolean): string;
     get hash(): string;
     sign(privateKey: string | Uint8Array): Promise<Transaction>;
-    recoverSenderPublicKey(): string | undefined;
+    recoverSenderPublicKey(): Uint8Array | undefined;
 }
 export {};
