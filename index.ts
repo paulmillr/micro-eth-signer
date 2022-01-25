@@ -3,7 +3,7 @@
 import { keccak_256 } from '@noble/hashes/sha3';
 import { bytesToHex } from '@noble/hashes/utils';
 import * as secp256k1 from '@noble/secp256k1';
-import * as rlp from 'micro-rlp';
+import RLP from 'rlp';
 
 // `micro-rlp` is forked from the most recent `rlp` and has two changes:
 // 1. All dependencies have been removed. 2. Browser support has been added
@@ -260,7 +260,7 @@ function rawToSerialized(input: RawTx | RawTxMap, chain?: Chain, type?: Type): s
   if (type !== 'legacy' && chainId && normalized[0] !== chainId)
     throw new Error(`ChainId=${normalized[0]} incompatible with Chain=${chainId}`);
   const tNum = TRANSACTION_TYPES[type];
-  return (tNum ? `0x0${tNum}` : '0x') + bytesToHex(rlp.encode(normalized));
+  return (tNum ? `0x0${tNum}` : '0x') + bytesToHex(RLP.encode(normalized));
 }
 
 export const Address = {
@@ -345,7 +345,7 @@ export class Transaction {
     else [txData, type] = [this.hex, 'legacy'];
     if (prevType && prevType !== type) throw new Error('Invalid transaction type');
     this.type = type;
-    const ui8a = rlp.decode(txData) as Uint8Array[];
+    const ui8a = RLP.decode(txData) as Uint8Array[];
     this.raw = ui8a.reduce((res: any, value: any, i: number) => {
       const name = TypeToFields[type!][i];
       if (!name) return res;
@@ -454,7 +454,7 @@ export class Transaction {
       if (this.type === 'legacy' && this.supportsReplayProtection())
         values.push(this.raw.chainId! as any, '', '');
     }
-    let encoded = rlp.encode(values);
+    let encoded = RLP.encode(values);
     if (this.type !== 'legacy')
       encoded = new Uint8Array([TRANSACTION_TYPES[this.type], ...Array.from(encoded)]);
     return bytesToHex(keccak_256(encoded));
@@ -471,7 +471,6 @@ export class Transaction {
     if (typeof privateKey === 'string') privateKey = strip0x(privateKey);
     const [hex, recovery] = await secp256k1.sign(this.getMessageToSign(), privateKey, {
       recovered: true,
-      canonical: true,
     });
     const signature = secp256k1.Signature.fromHex(hex);
     const chainId = Number(this.raw.chainId!);

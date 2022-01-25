@@ -40,9 +40,9 @@
     "signer"
   ],
   "dependencies": {
-    "@noble/hashes": "^1.0.0",
-    "@noble/secp256k1": "^1.5.0",
-    "micro-rlp": "2.2.9"
+    "@noble/hashes": "~1.0.0",
+    "@noble/secp256k1": "~1.5.0",
+    "rlp": "3.0.0"
   },
   "devDependencies": {
     "@rollup/plugin-commonjs": "^17.1.0",

@@ -5,7 +5,7 @@ exports.Transaction = exports.Address = exports.strip0x = exports.add0x = export
 const sha3_1 = require("@noble/hashes/sha3");
 const utils_1 = require("@noble/hashes/utils");
 const secp256k1 = require("@noble/secp256k1");
-const rlp = require("micro-rlp");
+const rlp_1 = require("rlp");
 exports.CHAIN_TYPES = { mainnet: 1, ropsten: 3, rinkeby: 4, goerli: 5, kovan: 42 };
 exports.TRANSACTION_TYPES = { legacy: 0, eip2930: 1, eip1559: 2 };
 function add0x(hex) {
@@ -209,7 +209,7 @@ function rawToSerialized(input, chain, type) {
     if (type !== 'legacy' && chainId && normalized[0] !== chainId)
         throw new Error(`ChainId=${normalized[0]} incompatible with Chain=${chainId}`);
     const tNum = exports.TRANSACTION_TYPES[type];
-    return (tNum ? `0x0${tNum}` : '0x') + (0, utils_1.bytesToHex)(rlp.encode(normalized));
+    return (tNum ? `0x0${tNum}` : '0x') + (0, utils_1.bytesToHex)(rlp_1.default.encode(normalized));
 }
 exports.Address = {
     fromPrivateKey(key) {
@@ -290,7 +290,7 @@ class Transaction {
         if (prevType && prevType !== type)
             throw new Error('Invalid transaction type');
         this.type = type;
-        const ui8a = rlp.decode(txData);
+        const ui8a = rlp_1.default.decode(txData);
         this.raw = ui8a.reduce((res, value, i) => {
             const name = TypeToFields[type][i];
             if (!name)
@@ -376,7 +376,7 @@ class Transaction {
             if (this.type === 'legacy' && this.supportsReplayProtection())
                 values.push(this.raw.chainId, '', '');
         }
-        let encoded = rlp.encode(values);
+        let encoded = rlp_1.default.encode(values);
         if (this.type !== 'legacy')
             encoded = new Uint8Array([exports.TRANSACTION_TYPES[this.type], ...Array.from(encoded)]);
         return (0, utils_1.bytesToHex)((0, sha3_1.keccak_256)(encoded));
@@ -393,7 +393,6 @@ class Transaction {
             privateKey = strip0x(privateKey);
         const [hex, recovery] = await secp256k1.sign(this.getMessageToSign(), privateKey, {
             recovered: true,
-            canonical: true,
         });
         const signature = secp256k1.Signature.fromHex(hex);
         const chainId = Number(this.raw.chainId);
