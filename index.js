@@ -386,13 +386,14 @@ class Transaction {
             throw new Error('Expected signed transaction');
         return this.getMessageToSign(true);
     }
-    async sign(privateKey) {
+    async sign(privateKey, extraEntropy = false) {
         if (this.isSigned)
             throw new Error('Expected unsigned transaction');
         if (typeof privateKey === 'string')
             privateKey = strip0x(privateKey);
         const [hex, recovery] = await secp256k1.sign(this.getMessageToSign(), privateKey, {
             recovered: true,
+            extraEntropy: extraEntropy === false ? undefined : true
         });
         const signature = secp256k1.Signature.fromHex(hex);
         const chainId = Number(this.raw.chainId);

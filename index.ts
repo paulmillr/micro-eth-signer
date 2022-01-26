@@ -466,11 +466,12 @@ export class Transaction {
     return this.getMessageToSign(true);
   }
 
-  async sign(privateKey: string | Uint8Array): Promise<Transaction> {
+  async sign(privateKey: string | Uint8Array, extraEntropy = false): Promise<Transaction> {
     if (this.isSigned) throw new Error('Expected unsigned transaction');
     if (typeof privateKey === 'string') privateKey = strip0x(privateKey);
     const [hex, recovery] = await secp256k1.sign(this.getMessageToSign(), privateKey, {
       recovered: true,
+      extraEntropy: extraEntropy === false ? undefined : true
     });
     const signature = secp256k1.Signature.fromHex(hex);
     const chainId = Number(this.raw.chainId!);

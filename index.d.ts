@@ -73,7 +73,7 @@ export declare class Transaction {
     private supportsReplayProtection;
     getMessageToSign(signed?: boolean): string;
     get hash(): string;
-    sign(privateKey: string | Uint8Array): Promise<Transaction>;
+    sign(privateKey: string | Uint8Array, extraEntropy?: boolean): Promise<Transaction>;
     recoverSenderPublicKey(): Uint8Array | undefined;
 }
 export {};
