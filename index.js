@@ -393,7 +393,7 @@ class Transaction {
             privateKey = strip0x(privateKey);
         const [hex, recovery] = await secp256k1.sign(this.getMessageToSign(), privateKey, {
             recovered: true,
-            extraEntropy: extraEntropy === false ? undefined : true
+            extraEntropy: extraEntropy === false ? undefined : true,
         });
         const signature = secp256k1.Signature.fromHex(hex);
         const chainId = Number(this.raw.chainId);
