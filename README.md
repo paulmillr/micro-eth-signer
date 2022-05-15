@@ -20,8 +20,11 @@ const { Address, Transaction } = require('micro-eth-signer');
     to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
     maxFeePerGas: 100n * 10n ** 9n, // 100 gwei in wei
     value: 10n ** 18n, // 1 eth in wei
-    nonce: 1
+    nonce: 1,
+    maxPriorityFeePerGas: 0,
+    chainId: 1
   });
+
   const privateKey = '6b911fd37cdf5c81d4c0adb1ab7fa822ed253ab0ad9aa18d77257c88b29b718e';
   const signedTx = await tx.sign(privateKey); // Uint8Array is also accepted
   const {hash, hex} = signedTx;
