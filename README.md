@@ -147,6 +147,14 @@ You can use either of those to initialize new `Transaction`. There are a few met
 - `hash: string` - signed tx hash used in block explorers. Example: `50b6e7b58320c885ab7b2ee0d0b5813a697268bd2494a06de792790b13668c08`
 - `raw: Object` - raw transaction's data with fields encoded as strings
 
+## Performance
+
+Transaction signature matches `noble-secp256k1` `sign()` speed, which means over 4000 times per second on M1 Mac.
+
+The first call of `sign` will take 20ms+ due to noble-secp256k1 `utils.precompute`.
+
+To run benchmarks, execute `npm run bench`.
+
 ## License
 
 MIT License
