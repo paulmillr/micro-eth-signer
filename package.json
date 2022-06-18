@@ -1,6 +1,6 @@
 {
   "name": "micro-eth-signer",
-  "version": "0.4.7",
+  "version": "0.4.8",
   "description": "Create, sign and validate Ethereum transactions & addresses with minimum deps. Supports EIP1559",
   "main": "index.js",
   "files": [
