@@ -6,10 +6,9 @@
     "noImplicitAny": true,
     "removeComments": true,
     "preserveConstEnums": true,
-    "resolveJsonModule": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true
   },
-  "include": ["index.ts"],
+  "include": ["index.ts", "formatters.ts", "tx-validator.ts"],
   "exclude": ["node_modules"]
 }

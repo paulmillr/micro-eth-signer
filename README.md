@@ -149,6 +149,23 @@ You can use either of those to initialize new `Transaction`. There are a few met
 - `hash: string` - signed tx hash used in block explorers. Example: `50b6e7b58320c885ab7b2ee0d0b5813a697268bd2494a06de792790b13668c08`
 - `raw: Object` - raw transaction's data with fields encoded as strings
 
+### Additional modules
+
+Those are optional:
+
+```ts
+import * as formatters from 'micro-eth-signer/formatters';
+import { validateField, validateFields } from 'micro-eth-signer/tx-validator'
+
+// formatters:
+export function parseDecimal(s: string, precision: number): bigint;
+export function formatDecimal(n: bigint, precision: number): string;
+export function perCentDecimal(precision: number, price: number): bigint;
+export function roundDecimal(n: bigint, roundPrecision: number, precision?: number, price?: number): bigint;
+export function fromWei(wei: string | number | bigint): string;
+export function formatUSD(amount: number): string;
+```
+
 ## Performance
 
 Transaction signature matches `noble-secp256k1` `sign()` speed, which means over 4000 times per second on M1 Mac.

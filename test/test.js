@@ -1,11 +1,13 @@
 const assert = require('assert').strict;
 const { should } = require('micro-should');
-const secp = require('@noble/secp256k1');
+const { deepStrictEqual } = assert;
 
 (async () => {
   const txs = require('./transactions.json');
   const eip155 = require('./eip155.json').slice(1);
   const { Address, Transaction } = require('../index');
+  const validate = require('../tx-validator');
+  const utils = require('../formatters');
 
   // for (let txr of txs) {
   const expected = txs[0];
@@ -220,6 +222,191 @@ const secp = require('@noble/secp256k1');
       );
       assert.deepStrictEqual(constructedTx.hex, tx.unsigned, 'constructedTx.hex');
     }
+  });
+
+  should('tx-validator/parseUnit', () => {
+    // https://eth-converter.com
+    // as string
+    assert.deepStrictEqual(validate.parseUnit('1.23', 'eth'), 1230000000000000000n);
+    assert.deepStrictEqual(validate.parseUnit('1.23', 'gwei'), 1230000000n);
+    assert.throws(() => validate.parseUnit('1.23', 'wei'));
+    assert.deepStrictEqual(validate.parseUnit('1', 'wei'), 1n);
+    assert.deepStrictEqual(validate.parseUnit('2', 'wei'), 2n);
+    assert.deepStrictEqual(validate.parseUnit('5', 'wei'), 5n);
+    // as number
+    assert.deepStrictEqual(validate.parseUnit(1.23, 'eth'), 1230000000000000000n);
+    assert.deepStrictEqual(validate.parseUnit(1.23, 'gwei'), 1230000000n);
+    assert.throws(() => validate.parseUnit(1.23, 'wei'));
+    assert.deepStrictEqual(validate.parseUnit(1, 'wei'), 1n);
+    assert.deepStrictEqual(validate.parseUnit(2, 'wei'), 2n);
+    assert.deepStrictEqual(validate.parseUnit(5, 'wei'), 5n);
+    // as hex string
+    assert.deepStrictEqual(validate.parseUnit('0x123', 'eth'), 291000000000000000000n);
+    assert.deepStrictEqual(validate.parseUnit('0x123', 'gwei'), 291000000000n);
+    assert.deepStrictEqual(validate.parseUnit('0x123', 'wei'), 291n);
+    // as big int
+    assert.deepStrictEqual(validate.parseUnit(123n, 'eth'), 123000000000000000000n);
+    assert.deepStrictEqual(validate.parseUnit(123n, 'gwei'), 123000000000n);
+    assert.deepStrictEqual(validate.parseUnit(123n, 'wei'), 123n);
+  });
+
+  should('tx-validator/createTxMapFromFields', () => {
+    const tx = {
+      to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
+      value: 1,
+      amountUnit: 'eth',
+      nonce: 1,
+      maxFeePerGas: 100n,
+      maxFeePerGasUnit: 'gwei',
+      maxPriorityFeePerGas: 2n,
+      maxPriorityFeePerGasUnit: 'gwei',
+    };
+    assert.throws(
+      () =>
+        validate.createTxMapFromFields({
+          ...tx,
+          from: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
+        }),
+      'to===from'
+    );
+    assert.deepStrictEqual(new Transaction(validate.createTxMapFromFields(tx)).raw, {
+      chainId: '0x01',
+      nonce: '0x01',
+      maxPriorityFeePerGas: '0x77359400', // 2 gwei
+      maxFeePerGas: '0x174876e800', // 100 gwei
+      gasLimit: '0x5208',
+      to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
+      value: '0x0de0b6b3a7640000', // 1 eth
+      data: '',
+      accessList: [],
+    });
+  });
+
+  should('utils: parseDecimal', () => {
+    deepStrictEqual(utils.parseDecimal('6.30880845', 8), 630880845n);
+    deepStrictEqual(utils.parseDecimal('6.308', 8), 630800000n);
+    deepStrictEqual(utils.parseDecimal('6.00008', 8), 600008000n);
+    deepStrictEqual(utils.parseDecimal('10', 8), 1000000000n);
+    deepStrictEqual(utils.parseDecimal('200', 8), 20000000000n);
+  });
+
+  should('utils: formatDecimal', () => {
+    const { formatDecimal, parseDecimal } = utils;
+    const cases = [
+      '6.30880845',
+      '6.308',
+      '6.00008',
+      '10',
+      '200',
+      '0.1',
+      '0.01',
+      '0.001',
+      '0.0001',
+      '19.0001',
+      '99999999',
+      '-6.30880845',
+      '-6.308',
+      '-6.00008',
+      '-10',
+      '-200',
+      '-0.1',
+      '-0.01',
+      '-0.001',
+      '-0.0001',
+      '-19.0001',
+      '-99999999',
+    ];
+    for (let c of cases) deepStrictEqual(formatDecimal(parseDecimal(c, 8), 8), c);
+    // Round number if precision is smaller than fraction part length
+    deepStrictEqual(parseDecimal('22.11111111111111111', 2), 2211n);
+    deepStrictEqual(parseDecimal('222222.11111111111111111', 2), 22222211n);
+    deepStrictEqual(formatDecimal(parseDecimal('22.1111', 2), 2), '22.11');
+    deepStrictEqual(formatDecimal(parseDecimal('22.9999', 2), 2), '22.99');
+    // Doesn't affect integer part
+    deepStrictEqual(
+      formatDecimal(parseDecimal('222222222222222222222222222.9999', 2), 2),
+      '222222222222222222222222222.99'
+    );
+  });
+
+  should('utils: perCentDecimal', () => {
+    const { perCentDecimal, formatDecimal } = utils;
+    const t = (prec, price, exp) =>
+      assert.deepStrictEqual(+formatDecimal(perCentDecimal(prec, price), prec) * price, exp);
+    t(4, 0.5, 0.01);
+    t(8, 0.5, 0.01);
+    t(8, 70, 0.0099995);
+    t(18, 70, 0.00999999999999994);
+    t(8, 1000, 0.01);
+    t(8, 53124, 0.00956232);
+    t(18, 53124, 0.009999999999950064);
+    t(18, 0.03456799, 0.01);
+    t(18, 0.0123456, 0.01);
+    t(256, 0.0123456, 0.01);
+  });
+
+  should('utils: roundDecimal', () => {
+    const { roundDecimal, formatDecimal, parseDecimal } = utils;
+    const cases = [
+      [[1n, 1], 1n],
+      [[1n, 100], 1n],
+      [[5n, 1], 5n],
+      [[6123n, 1], 6000n],
+      [[699999n, 1], 600000n],
+      [[6123n, 2], 6100n],
+      [[699999n, 2], 690000n],
+      [[6123n, 3], 6120n],
+      [[699999n, 3], 699000n],
+      [[6123n, 4], 6123n],
+      [[699999n, 4], 699900n],
+      [[6123n, 5], 6123n],
+      [[699999n, 5], 699990n],
+      [[6123n, 6], 6123n],
+      [[699999n, 6], 699999n],
+      [[699999n, 123456789], 699999n],
+    ];
+    for (let c of cases) {
+      const [[num, prec], res] = c;
+      assert.deepStrictEqual(roundDecimal(num, prec), res);
+    }
+    // with prices
+    const t = (value, prec, roundPrec, price, exp) =>
+      assert.deepStrictEqual(
+        formatDecimal(roundDecimal(parseDecimal(value, prec), roundPrec, prec, price), prec),
+        exp
+      );
+    t('123456.000001', 18, 3, 1000, '123000');
+    // strips to 5 significant characters
+    t('1.23456', 18, 5, 1000, '1.2345');
+    // but 0.0005 < $0.01
+    t('1.23456', 18, 5, 10, '1.234');
+    // 0.0004 < $0.01 (0.01==$0.01 here)
+    t('1.23456', 18, 5, 1, '1.23');
+    t('1.23456', 18, 5, 0.1, '1.2'); // 0.03 < $0.01
+    // $0.01 == 0.0000001886
+    t('1.23456', 10, 8, 53000, '1.23456');
+    t('0.123456', 10, 8, 53000, '0.123456');
+    t('0.0123456', 10, 8, 53000, '0.0123456');
+    // $0.01 == 0.0000001886
+    // value    0.0012345600
+    //          0.0000005000 > $0.01
+    //          0.0000000600 < $0.01
+    t('0.00123456', 10, 8, 53000, '0.0012345');
+    // same as before
+    t('0.000123456', 10, 8, 53000, '0.0001234');
+    // Real test case (0.01 slightly more than $0.01):
+    t('1.234567', 6, 5, 1.0000037334781642, '1.234');
+    t('1.234567', 6, 5, 1.0012057324289945, '1.234');
+    // But:
+    t('1.234567', 6, 5, 1, '1.23');
+    t('1.234567', 6, 5, 1, '1.23');
+  });
+
+  should('utils: formatUSD', () => {
+    const { formatUSD } = utils;
+    assert.deepStrictEqual(formatUSD(100), '$100');
+    assert.deepStrictEqual(formatUSD(123456789.987654321), '$123,456,789.99');
+    assert.deepStrictEqual(formatUSD(0.012345), '$0.01');
   });
 
   // console.log(12345, new Transaction(eip155[0].rlp));

@@ -1,12 +1,9 @@
 /*! micro-eth-signer - MIT License (c) Paul Miller (paulmillr.com) */
 
 import { keccak_256 } from '@noble/hashes/sha3';
-import { bytesToHex } from '@noble/hashes/utils';
+import { bytesToHex, hexToBytes as _hexToBytes } from '@noble/hashes/utils';
 import * as secp256k1 from '@noble/secp256k1';
 import RLP from 'rlp';
-
-// `micro-rlp` is forked from the most recent `rlp` and has two changes:
-// 1. All dependencies have been removed. 2. Browser support has been added
 
 export const CHAIN_TYPES = { mainnet: 1, ropsten: 3, rinkeby: 4, goerli: 5, kovan: 42 };
 export const TRANSACTION_TYPES = { legacy: 0, eip2930: 1, eip1559: 2 };
@@ -19,9 +16,26 @@ export function strip0x(hex: string) {
   return hex.replace(/^0x/i, '');
 }
 
+export function hexToBytes(hex: string): Uint8Array {
+  return _hexToBytes(strip0x(hex));
+}
+
+export function numberTo0xHex(num: number | bigint): string {
+  const hex = num.toString(16);
+  const x2 = hex.length & 1 ? `0${hex}` : hex;
+  return add0x(x2);
+}
+
+function hexToNumber(hex: string): bigint {
+  if (typeof hex !== 'string') {
+    throw new TypeError('hexToNumber: expected string, got ' + typeof hex);
+  }
+  return hex ? BigInt(add0x(hex)) : 0n;
+}
+
 function cloneDeep<T>(obj: T): T {
   if (Array.isArray(obj)) {
-    return obj.map((i) => cloneDeep(i)) as unknown as T;
+    return obj.map(cloneDeep) as unknown as T;
   } else if (typeof obj === 'bigint') {
     return BigInt(obj) as unknown as T;
   } else if (typeof obj === 'object') {
@@ -30,29 +44,6 @@ function cloneDeep<T>(obj: T): T {
     for (let key in obj) res[key] = cloneDeep(obj[key]);
     return res;
   } else return obj;
-}
-
-const padHex = (hex: string): string => (hex.length & 1 ? `0${hex}` : hex);
-
-function hexToBytes(hex: string): Uint8Array {
-  hex = padHex(strip0x(hex));
-  const array = new Uint8Array(hex.length / 2);
-  for (let i = 0; i < array.length; i++) {
-    const j = i * 2;
-    array[i] = Number.parseInt(hex.slice(j, j + 2), 16);
-  }
-  return array;
-}
-
-function numberToHex(num: number | bigint): string {
-  return padHex(num.toString(16));
-}
-
-function hexToNumber(hex: string): bigint {
-  if (typeof hex !== 'string') {
-    throw new TypeError('hexToNumber: expected string, got ' + typeof hex);
-  }
-  return hex ? BigInt(add0x(hex)) : 0n;
 }
 
 type Chain = keyof typeof CHAIN_TYPES;
@@ -135,7 +126,7 @@ function normalizeField(
     if (typeof value === 'string') value = BigInt(value === '0x' ? '0x0' : value);
     // 123 -> '0x7b' && 1 -> 0x01
     if (typeof value === 'number' || typeof value === 'bigint')
-      value = add0x(padHex(value.toString(16)));
+      value = numberTo0xHex(value);
     // 21000, default / minimum
     if (field === 'gasLimit' && (!value || BigInt(value as string) === 0n)) value = '0x5208';
     if (typeof value !== 'string') throw new TypeError(`Invalid type for field ${field}`);
@@ -477,7 +468,7 @@ export class Transaction {
     const chainId = Number(this.raw.chainId!);
     const vv =
       this.type === 'legacy' ? (chainId ? recovery + (chainId * 2 + 35) : recovery + 27) : recovery;
-    const [v, r, s] = [vv, signature.r, signature.s].map((n) => add0x(numberToHex(n)));
+    const [v, r, s] = [vv, signature.r, signature.s].map(numberTo0xHex);
     const signedRaw: RawTxMap =
       this.type === 'legacy'
         ? { ...this.raw, v, r, s }
@@ -488,7 +479,7 @@ export class Transaction {
   recoverSenderPublicKey(): Uint8Array | undefined {
     if (!this.isSigned)
       throw new Error('Expected signed transaction: cannot recover sender of unsigned tx');
-    const [r, s] = [this.raw.r, this.raw.s].map((n) => hexToNumber(n));
+    const [r, s] = [this.raw.r, this.raw.s].map(hexToNumber);
     const sig = new secp256k1.Signature(r, s);
     // @ts-ignore
     if (this.hardfork !== 'chainstart' && sig.hasHighS()) {
