@@ -13,6 +13,8 @@ export declare const TRANSACTION_TYPES: {
 };
 export declare function add0x(hex: string): string;
 export declare function strip0x(hex: string): string;
+export declare function hexToBytes(hex: string): Uint8Array;
+export declare function numberTo0xHex(num: number | bigint): string;
 declare type Chain = keyof typeof CHAIN_TYPES;
 declare type Type = keyof typeof TRANSACTION_TYPES;
 declare const FIELDS: readonly ["nonce", "gasPrice", "gasLimit", "to", "value", "data", "v", "r", "s"];

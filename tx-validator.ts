@@ -1,5 +1,5 @@
-import { Address, RawTxMap } from './index.js';
-import { add0x, parseDecimal, numberToHexUnpadded } from './utils.js';
+import { Address, RawTxMap, add0x } from './index.js';
+import { parseDecimal } from './formatters.js';
 
 export type Unit = 'eth' | 'wei' | 'gwei';
 type SNB = string | number | bigint;
@@ -147,6 +147,12 @@ function hasOwnProperty<X extends {}, Y extends PropertyKey>(
   prop: Y
 ): obj is X & Record<Y, unknown> {
   return obj.hasOwnProperty(prop);
+}
+
+function numberToHexUnpadded(num: number | bigint): string {
+  let hex = num.toString(16);
+  hex = hex.length & 1 ? `0${hex}` : hex;
+  return hex;
 }
 
 function dataToString(snb: SNB) {

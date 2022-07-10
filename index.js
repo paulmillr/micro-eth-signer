@@ -1,7 +1,7 @@
 "use strict";
 /*! micro-eth-signer - MIT License (c) Paul Miller (paulmillr.com) */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.Transaction = exports.Address = exports.strip0x = exports.add0x = exports.TRANSACTION_TYPES = exports.CHAIN_TYPES = void 0;
+exports.Transaction = exports.Address = exports.numberTo0xHex = exports.hexToBytes = exports.strip0x = exports.add0x = exports.TRANSACTION_TYPES = exports.CHAIN_TYPES = void 0;
 const sha3_1 = require("@noble/hashes/sha3");
 const utils_1 = require("@noble/hashes/utils");
 const secp256k1 = require("@noble/secp256k1");
@@ -16,9 +16,25 @@ function strip0x(hex) {
     return hex.replace(/^0x/i, '');
 }
 exports.strip0x = strip0x;
+function hexToBytes(hex) {
+    return (0, utils_1.hexToBytes)(strip0x(hex));
+}
+exports.hexToBytes = hexToBytes;
+function numberTo0xHex(num) {
+    const hex = num.toString(16);
+    const x2 = hex.length & 1 ? `0${hex}` : hex;
+    return add0x(x2);
+}
+exports.numberTo0xHex = numberTo0xHex;
+function hexToNumber(hex) {
+    if (typeof hex !== 'string') {
+        throw new TypeError('hexToNumber: expected string, got ' + typeof hex);
+    }
+    return hex ? BigInt(add0x(hex)) : 0n;
+}
 function cloneDeep(obj) {
     if (Array.isArray(obj)) {
-        return obj.map((i) => cloneDeep(i));
+        return obj.map(cloneDeep);
     }
     else if (typeof obj === 'bigint') {
         return BigInt(obj);
@@ -31,25 +47,6 @@ function cloneDeep(obj) {
     }
     else
         return obj;
-}
-const padHex = (hex) => (hex.length & 1 ? `0${hex}` : hex);
-function hexToBytes(hex) {
-    hex = padHex(strip0x(hex));
-    const array = new Uint8Array(hex.length / 2);
-    for (let i = 0; i < array.length; i++) {
-        const j = i * 2;
-        array[i] = Number.parseInt(hex.slice(j, j + 2), 16);
-    }
-    return array;
-}
-function numberToHex(num) {
-    return padHex(num.toString(16));
-}
-function hexToNumber(hex) {
-    if (typeof hex !== 'string') {
-        throw new TypeError('hexToNumber: expected string, got ' + typeof hex);
-    }
-    return hex ? BigInt(add0x(hex)) : 0n;
 }
 const FIELDS = ['nonce', 'gasPrice', 'gasLimit', 'to', 'value', 'data', 'v', 'r', 's'];
 const FIELDS2930 = [
@@ -79,7 +76,7 @@ function normalizeField(field, value) {
         if (typeof value === 'string')
             value = BigInt(value === '0x' ? '0x0' : value);
         if (typeof value === 'number' || typeof value === 'bigint')
-            value = add0x(padHex(value.toString(16)));
+            value = numberTo0xHex(value);
         if (field === 'gasLimit' && (!value || BigInt(value) === 0n))
             value = '0x5208';
         if (typeof value !== 'string')
@@ -398,7 +395,7 @@ class Transaction {
         const signature = secp256k1.Signature.fromHex(hex);
         const chainId = Number(this.raw.chainId);
         const vv = this.type === 'legacy' ? (chainId ? recovery + (chainId * 2 + 35) : recovery + 27) : recovery;
-        const [v, r, s] = [vv, signature.r, signature.s].map((n) => add0x(numberToHex(n)));
+        const [v, r, s] = [vv, signature.r, signature.s].map(numberTo0xHex);
         const signedRaw = this.type === 'legacy'
             ? { ...this.raw, v, r, s }
             : { ...cloneDeep(this.raw), yParity: v, r, s };
@@ -407,7 +404,7 @@ class Transaction {
     recoverSenderPublicKey() {
         if (!this.isSigned)
             throw new Error('Expected signed transaction: cannot recover sender of unsigned tx');
-        const [r, s] = [this.raw.r, this.raw.s].map((n) => hexToNumber(n));
+        const [r, s] = [this.raw.r, this.raw.s].map(hexToNumber);
         const sig = new secp256k1.Signature(r, s);
         if (this.hardfork !== 'chainstart' && sig.hasHighS()) {
             throw new Error('Invalid signature: s is invalid');
