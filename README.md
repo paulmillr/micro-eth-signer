@@ -6,6 +6,8 @@ Library's size is <500 lines of code, or 3KiB gzipped (8.7KiB minified). Uses th
 
 Validated with over 3MiB of ethers.js test vectors!
 
+Also, check out: [micro-sol-signer](https://github.com/paulmillr/micro-sol-signer)
+
 ## Usage
 
 > npm install micro-eth-signer
