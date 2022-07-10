@@ -2,7 +2,7 @@
   "compilerOptions": {
     "strict": true,
     "target": "es2020",
-    "module": "commonjs",
+    "module": "node16",
     "noImplicitAny": true,
     "removeComments": true,
     "preserveConstEnums": true,

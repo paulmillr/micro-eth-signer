@@ -1,13 +1,18 @@
-const assert = require('assert').strict;
-const { should } = require('micro-should');
+import { strict as assert } from 'node:assert';
+import { should } from 'micro-should';
 const { deepStrictEqual } = assert;
+import { Address, Transaction } from '../index.js';
+import * as validate from '../tx-validator.js';
+import * as formatters from '../formatters.js';
+import { readFile } from 'node:fs/promises';
 
 (async () => {
-  const txs = require('./transactions.json');
-  const eip155 = require('./eip155.json').slice(1);
-  const { Address, Transaction } = require('../index');
-  const validate = require('../tx-validator');
-  const utils = require('../formatters');
+  async function readJSON(file) {
+    const d = await readFile(new URL(file, import.meta.url));
+    return JSON.parse(d);
+  }
+  const txs = await readJSON('./transactions.json');
+  const eip155 = (await readJSON('./eip155.json')).slice(1);
 
   // for (let txr of txs) {
   const expected = txs[0];
@@ -120,7 +125,7 @@ const { deepStrictEqual } = assert;
   // });
 
   should('handle ethers.js test vectors', async () => {
-    const txs = require('./ethers-transactions.json');
+    const txs = await readJSON('./ethers-transactions.json');
 
     const REQUIRED = ['nonce', 'gasPrice', 'to', 'value', 'data'];
     txs_loop: for (let tx of txs) {
@@ -180,7 +185,7 @@ const { deepStrictEqual } = assert;
   });
 
   should('handle EIP1559 & EIP-2930 test vectors', async () => {
-    const eip1559 = require('./ethers-eip1559.json');
+    const eip1559 = await readJSON('./ethers-eip1559.json');
     for (let tx of eip1559) {
       // empty gasLimit unsupported (21000 forced)
       if (!tx.tx.gasLimit) continue;
@@ -283,15 +288,15 @@ const { deepStrictEqual } = assert;
   });
 
   should('utils: parseDecimal', () => {
-    deepStrictEqual(utils.parseDecimal('6.30880845', 8), 630880845n);
-    deepStrictEqual(utils.parseDecimal('6.308', 8), 630800000n);
-    deepStrictEqual(utils.parseDecimal('6.00008', 8), 600008000n);
-    deepStrictEqual(utils.parseDecimal('10', 8), 1000000000n);
-    deepStrictEqual(utils.parseDecimal('200', 8), 20000000000n);
+    deepStrictEqual(formatters.parseDecimal('6.30880845', 8), 630880845n);
+    deepStrictEqual(formatters.parseDecimal('6.308', 8), 630800000n);
+    deepStrictEqual(formatters.parseDecimal('6.00008', 8), 600008000n);
+    deepStrictEqual(formatters.parseDecimal('10', 8), 1000000000n);
+    deepStrictEqual(formatters.parseDecimal('200', 8), 20000000000n);
   });
 
   should('utils: formatDecimal', () => {
-    const { formatDecimal, parseDecimal } = utils;
+    const { formatDecimal, parseDecimal } = formatters;
     const cases = [
       '6.30880845',
       '6.308',
@@ -330,7 +335,7 @@ const { deepStrictEqual } = assert;
   });
 
   should('utils: perCentDecimal', () => {
-    const { perCentDecimal, formatDecimal } = utils;
+    const { perCentDecimal, formatDecimal } = formatters;
     const t = (prec, price, exp) =>
       assert.deepStrictEqual(+formatDecimal(perCentDecimal(prec, price), prec) * price, exp);
     t(4, 0.5, 0.01);
@@ -346,7 +351,7 @@ const { deepStrictEqual } = assert;
   });
 
   should('utils: roundDecimal', () => {
-    const { roundDecimal, formatDecimal, parseDecimal } = utils;
+    const { roundDecimal, formatDecimal, parseDecimal } = formatters;
     const cases = [
       [[1n, 1], 1n],
       [[1n, 100], 1n],
@@ -403,7 +408,7 @@ const { deepStrictEqual } = assert;
   });
 
   should('utils: formatUSD', () => {
-    const { formatUSD } = utils;
+    const { formatUSD } = formatters;
     assert.deepStrictEqual(formatUSD(100), '$100');
     assert.deepStrictEqual(formatUSD(123456789.987654321), '$123,456,789.99');
     assert.deepStrictEqual(formatUSD(0.012345), '$0.01');
