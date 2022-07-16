@@ -125,8 +125,7 @@ function normalizeField(
     // '123' -> 0x7b (handles both hex and non-hex numbers)
     if (typeof value === 'string') value = BigInt(value === '0x' ? '0x0' : value);
     // 123 -> '0x7b' && 1 -> 0x01
-    if (typeof value === 'number' || typeof value === 'bigint')
-      value = numberTo0xHex(value);
+    if (typeof value === 'number' || typeof value === 'bigint') value = numberTo0xHex(value);
     // 21000, default / minimum
     if (field === 'gasLimit' && (!value || BigInt(value as string) === 0n)) value = '0x5208';
     if (typeof value !== 'string') throw new TypeError(`Invalid type for field ${field}`);

@@ -8,10 +8,16 @@
   "files": [
     "index.js",
     "index.d.ts",
+    "index.d.ts.map",
+    "index.ts",
     "formatters.js",
     "formatters.d.ts",
+    "formatters.d.ts.map",
+    "formatters.ts",
     "tx-validator.js",
-    "tx-validator.d.ts"
+    "tx-validator.d.ts",
+    "tx-validator.d.ts.map",
+    "tx-validator.ts"
   ],
   "dependencies": {
     "@noble/hashes": "~1.1.0",
@@ -55,7 +61,7 @@
     "signer"
   ],
   "scripts": {
-    "build": "tsc -d && rollup -c rollup.config.js",
+    "build": "tsc && rollup -c rollup.config.js",
     "bench": "node test/benchmark.js",
     "lint": "prettier --print-width 100 --single-quote --check index.ts",
     "test": "node test/test.js"
