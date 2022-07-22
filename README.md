@@ -6,12 +6,7 @@ Library's size is <500 lines of code, or 3KiB gzipped (8.7KiB minified). Uses th
 
 Validated with over 3MiB of ethers.js test vectors.
 
-Check out all web3 utility libraries:
-
-- [micro-eth-signer](https://github.com/paulmillr/micro-eth-signer)
-- [micro-sol-signer](https://github.com/paulmillr/micro-sol-signer)
-- [micro-web3](https://github.com/paulmillr/micro-web3)
-- [tx-tor-broadcaster](https://github.com/paulmillr/tx-tor-broadcaster)
+*Check out all web3 utility libraries:* [micro-eth-signer](https://github.com/paulmillr/micro-eth-signer), [micro-sol-signer](https://github.com/paulmillr/micro-sol-signer), [micro-web3](https://github.com/paulmillr/micro-web3), [tx-tor-broadcaster](https://github.com/paulmillr/tx-tor-broadcaster)
 
 ## Usage
 
