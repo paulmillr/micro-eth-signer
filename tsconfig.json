@@ -9,7 +9,8 @@
     "removeComments": true,
     "preserveConstEnums": true,
     "noUnusedLocals": true,
-    "noUnusedParameters": true
+    "noUnusedParameters": true,
+    "noImplicitReturns": true,
   },
   "include": ["index.ts", "formatters.ts", "tx-validator.ts"],
   "exclude": ["node_modules"]
