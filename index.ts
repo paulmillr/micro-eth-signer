@@ -369,6 +369,7 @@ export class Transaction {
   get chain(): Chain | undefined {
     for (let k in CHAIN_TYPES)
       if (CHAIN_TYPES[k as Chain] === Number(this.raw.chainId!)) return k as Chain;
+    return undefined;
   }
 
   get sender(): string {

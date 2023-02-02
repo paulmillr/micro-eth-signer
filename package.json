@@ -65,6 +65,7 @@
     "build": "tsc && rollup -c rollup.config.js",
     "bench": "node test/benchmark.js",
     "lint": "prettier --print-width 100 --single-quote --check index.ts",
+    "format": "prettier --print-width 100 --single-quote --write index.ts",
     "test": "node test/test.js"
   }
 }
