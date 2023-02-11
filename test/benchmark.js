@@ -1,8 +1,8 @@
-const { run, mark, logMem } = require('micro-bmark');
-const signer = require('..');
+import { run, mark, logMem } from 'micro-bmark';
+import { Transaction } from '../index.js'
 
 run(async () => {
-  const getTx = () => new signer.Transaction({
+  const getTx = () => new Transaction({
     to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
     maxFeePerGas: 100n * 10n ** 9n, // 100 gwei in wei
     value: 10n ** 18n, // 1 eth in wei
