@@ -23,7 +23,7 @@
   "dependencies": {
     "@noble/hashes": "~1.1.2",
     "@noble/secp256k1": "~1.6.3",
-    "rlp": "3.0.0"
+    "@ethereumjs/rlp": "4.0.0"
   },
   "devDependencies": {
     "@rollup/plugin-commonjs": "22.0.0",

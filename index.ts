@@ -3,7 +3,7 @@
 import { keccak_256 } from '@noble/hashes/sha3';
 import { bytesToHex, hexToBytes as _hexToBytes } from '@noble/hashes/utils';
 import * as secp256k1 from '@noble/secp256k1';
-import RLP from 'rlp';
+import * as RLP from '@ethereumjs/rlp';
 
 export const CHAIN_TYPES = { mainnet: 1, ropsten: 3, rinkeby: 4, goerli: 5, kovan: 42 };
 export const TRANSACTION_TYPES = { legacy: 0, eip2930: 1, eip1559: 2 };
