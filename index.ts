@@ -1,5 +1,4 @@
-/*! micro-eth-signer - MIT License (c) Paul Miller (paulmillr.com) */
-
+/*! micro-eth-signer - MIT License (c) 2021 Paul Miller (paulmillr.com) */
 import { keccak_256 } from '@noble/hashes/sha3';
 import { bytesToHex, hexToBytes as _hexToBytes } from '@noble/hashes/utils';
 import * as secp256k1 from '@noble/secp256k1';
@@ -7,6 +6,35 @@ import * as RLP from '@ethereumjs/rlp';
 
 export const CHAIN_TYPES = { mainnet: 1, ropsten: 3, rinkeby: 4, goerli: 5, kovan: 42 };
 export const TRANSACTION_TYPES = { legacy: 0, eip2930: 1, eip1559: 2 };
+
+type Hex = string | Uint8Array;
+type RSRec = { r: bigint; s: bigint; recovery: number };
+type SignOpts = { extraEntropy?: boolean };
+const secp = {
+  getPublicKey65b: (priv: Hex) => secp256k1.getPublicKey(priv, false),
+  normalizePublicKeyTo65b: (pub: Hex) => secp256k1.Point.fromHex(pub).toRawBytes(false),
+  sign: (msg: Hex, priv: Hex, opts?: SignOpts): RSRec => {
+    const [hex, recovery] = secp256k1.signSync(msg, priv, {
+      recovered: true,
+      extraEntropy: opts?.extraEntropy === false ? undefined : true,
+    });
+    const { r, s } = secp256k1.Signature.fromHex(hex);
+    return { r, s, recovery };
+  },
+  signAsync: async (msg: Hex, priv: Hex, opts?: SignOpts): Promise<RSRec> => {
+    const [hex, recovery] = await secp256k1.sign(msg, priv, {
+      recovered: true,
+      extraEntropy: opts?.extraEntropy === false ? undefined : true,
+    });
+    const { r, s } = secp256k1.Signature.fromHex(hex);
+    return { r, s, recovery };
+  },
+  sigRecoverPub: (rsrec: RSRec, msg: Hex, checkHighS = true) => {
+    const sig = new secp256k1.Signature(rsrec.r, rsrec.s);
+    if (checkHighS && sig.hasHighS()) throw new Error('Invalid signature: s is invalid');
+    return secp256k1.recoverPublicKey(msg, sig, rsrec.recovery);
+  },
+};
 
 export function add0x(hex: string) {
   return /^0x/i.test(hex) ? hex : `0x${hex}`;
@@ -256,15 +284,12 @@ function rawToSerialized(input: RawTx | RawTxMap, chain?: Chain, type?: Type): s
 export const Address = {
   fromPrivateKey(key: string | Uint8Array): string {
     if (typeof key === 'string') key = hexToBytes(key);
-    return Address.fromPublicKey(secp256k1.getPublicKey(key));
+    return Address.fromPublicKey(secp.getPublicKey65b(key));
   },
 
   fromPublicKey(key: string | Uint8Array): string {
-    if (typeof key === 'string') key = hexToBytes(key);
-    const len = key.length;
-    if (![33, 65].includes(len)) throw new Error(`Invalid key with length "${len}"`);
-    const pub = len === 65 ? key : secp256k1.Point.fromHex(key).toRawBytes(false);
-    const addr = bytesToHex(keccak_256(pub.slice(1, 65))).slice(24);
+    const pub = secp.normalizePublicKeyTo65b(key);
+    const addr = bytesToHex(keccak_256(pub.subarray(1, 65))).slice(24);
     return Address.checksum(addr);
   },
 
@@ -358,6 +383,10 @@ export class Transaction {
     this.isSigned = !!(this.raw.r && this.raw.r !== '0x');
   }
 
+  private isNew() {
+    return this.type === 'eip1559';
+  }
+
   get bytes(): Uint8Array {
     return hexToBytes(this.hex);
   }
@@ -379,18 +408,18 @@ export class Transaction {
   }
 
   get gasPrice(): bigint {
-    if (this.type === 'eip1559') throw new Error('Field only available for "legacy" transactions');
+    if (this.isNew()) throw new Error('Field only available for "legacy" transactions');
     return BigInt(this.raw.gasPrice!);
   }
 
   // maxFeePerGas: Represents the maximum amount that a user is willing to pay for their tx (inclusive of baseFeePerGas and maxPriorityFeePerGas)
   get maxFeePerGas() {
-    if (this.type !== 'eip1559') throw new Error('Field only available for "eip1559" transactions');
+    if (!this.isNew()) throw new Error('Field only available for "eip1559" transactions');
     return BigInt(this.raw.maxFeePerGas!);
   }
 
   get maxPriorityFeePerGas() {
-    if (this.type !== 'eip1559') throw new Error('Field only available for "eip1559" transactions');
+    if (!this.isNew()) throw new Error('Field only available for "eip1559" transactions');
     return BigInt(this.raw.maxPriorityFeePerGas!);
   }
 
@@ -404,7 +433,7 @@ export class Transaction {
   }
   // Total fee in wei
   get fee(): bigint {
-    const price = this.type === 'eip1559' ? this.maxFeePerGas : this.gasPrice;
+    const price = this.isNew() ? this.maxFeePerGas : this.gasPrice;
     return price * this.gasLimit;
   }
 
@@ -460,15 +489,11 @@ export class Transaction {
   async sign(privateKey: string | Uint8Array, extraEntropy = false): Promise<Transaction> {
     if (this.isSigned) throw new Error('Expected unsigned transaction');
     if (typeof privateKey === 'string') privateKey = strip0x(privateKey);
-    const [hex, recovery] = await secp256k1.sign(this.getMessageToSign(), privateKey, {
-      recovered: true,
-      extraEntropy: extraEntropy === false ? undefined : true,
-    });
-    const signature = secp256k1.Signature.fromHex(hex);
+    const sig = await secp.signAsync(this.getMessageToSign(), privateKey, { extraEntropy });
+    const { recovery: rec } = sig;
     const chainId = Number(this.raw.chainId!);
-    const vv =
-      this.type === 'legacy' ? (chainId ? recovery + (chainId * 2 + 35) : recovery + 27) : recovery;
-    const [v, r, s] = [vv, signature.r, signature.s].map(numberTo0xHex);
+    const vv = this.type === 'legacy' ? (chainId ? rec + (chainId * 2 + 35) : rec + 27) : rec;
+    const [v, r, s] = [vv, sig.r, sig.s].map(numberTo0xHex);
     const signedRaw: RawTxMap =
       this.type === 'legacy'
         ? { ...this.raw, v, r, s }
@@ -479,16 +504,11 @@ export class Transaction {
   recoverSenderPublicKey(): Uint8Array | undefined {
     if (!this.isSigned)
       throw new Error('Expected signed transaction: cannot recover sender of unsigned tx');
-    const [r, s] = [this.raw.r, this.raw.s].map(hexToNumber);
-    const sig = new secp256k1.Signature(r, s);
-    // @ts-ignore
-    if (this.hardfork !== 'chainstart' && sig.hasHighS()) {
-      throw new Error('Invalid signature: s is invalid');
-    }
-    const signature = sig.toHex();
     const v = Number(hexToNumber(this.type === 'legacy' ? this.raw.v! : this.raw.yParity!));
     const chainId = Number(this.raw.chainId!);
     const recovery = this.type === 'legacy' ? (chainId ? v - (chainId * 2 + 35) : v - 27) : v;
-    return secp256k1.recoverPublicKey(this.getMessageToSign(), signature, recovery);
+    const [r, s] = [this.raw.r, this.raw.s].map(hexToNumber);
+    const checkHighS = this.hardfork !== 'chainstart';
+    return secp.sigRecoverPub({ r, s, recovery }, this.getMessageToSign(), checkHighS);
   }
 }
