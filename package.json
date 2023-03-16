@@ -26,13 +26,10 @@
     "@ethereumjs/rlp": "4.0.0"
   },
   "devDependencies": {
-    "@rollup/plugin-commonjs": "22.0.0",
-    "@rollup/plugin-node-resolve": "13.3.0",
     "micro-bmark": "0.3.0",
     "micro-should": "0.4.0",
-    "prettier": "2.6.2",
-    "rollup": "2.75.5",
-    "typescript": "4.7.3"
+    "prettier": "2.8.4",
+    "typescript": "5.0.2"
   },
   "jest": {
     "testRegex": "/test/.*?\\.ts",
@@ -63,7 +60,7 @@
   ],
   "scripts": {
     "build": "tsc",
-    "build:release": "rollup -c rollup.config.js",
+    "build:release": "cd build; npm run build:release",
     "bench": "node test/benchmark.js",
     "lint": "prettier --print-width 100 --single-quote --check index.ts",
     "format": "prettier --print-width 100 --single-quote --write index.ts",
