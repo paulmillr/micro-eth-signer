@@ -91,9 +91,9 @@ const TypeToFields = {
 };
 
 export type Field =
-  | typeof FIELDS[number]
-  | typeof FIELDS2930[number]
-  | typeof FIELDS1559[number]
+  | (typeof FIELDS)[number]
+  | (typeof FIELDS2930)[number]
+  | (typeof FIELDS1559)[number]
   | 'address'
   | 'storageKey';
 
