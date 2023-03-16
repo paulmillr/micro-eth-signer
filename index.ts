@@ -1,38 +1,32 @@
 /*! micro-eth-signer - MIT License (c) 2021 Paul Miller (paulmillr.com) */
 import { keccak_256 } from '@noble/hashes/sha3';
 import { bytesToHex, hexToBytes as _hexToBytes } from '@noble/hashes/utils';
-import * as secp256k1 from '@noble/secp256k1';
+import { secp256k1 } from '@noble/curves/secp256k1';
 import * as RLP from '@ethereumjs/rlp';
 
 export const CHAIN_TYPES = { mainnet: 1, ropsten: 3, rinkeby: 4, goerli: 5, kovan: 42 };
 export const TRANSACTION_TYPES = { legacy: 0, eip2930: 1, eip1559: 2 };
 
 type Hex = string | Uint8Array;
-type RSRec = { r: bigint; s: bigint; recovery: number };
+type RSRec = { r: bigint; s: bigint; recovery?: number };
 type SignOpts = { extraEntropy?: boolean };
 const secp = {
   getPublicKey65b: (priv: Hex) => secp256k1.getPublicKey(priv, false),
-  normalizePublicKeyTo65b: (pub: Hex) => secp256k1.Point.fromHex(pub).toRawBytes(false),
-  sign: (msg: Hex, priv: Hex, opts?: SignOpts): RSRec => {
-    const [hex, recovery] = secp256k1.signSync(msg, priv, {
-      recovered: true,
+  normalizePublicKeyTo65b: (pub: Hex) => secp256k1.ProjectivePoint.fromHex(pub).toRawBytes(false),
+  sign: (msg: Hex, priv: Hex, opts?: SignOpts) => {
+    return secp256k1.sign(msg, priv, {
       extraEntropy: opts?.extraEntropy === false ? undefined : true,
     });
-    const { r, s } = secp256k1.Signature.fromHex(hex);
-    return { r, s, recovery };
   },
   signAsync: async (msg: Hex, priv: Hex, opts?: SignOpts): Promise<RSRec> => {
-    const [hex, recovery] = await secp256k1.sign(msg, priv, {
-      recovered: true,
+    return secp256k1.sign(msg, priv, {
       extraEntropy: opts?.extraEntropy === false ? undefined : true,
     });
-    const { r, s } = secp256k1.Signature.fromHex(hex);
-    return { r, s, recovery };
   },
   sigRecoverPub: (rsrec: RSRec, msg: Hex, checkHighS = true) => {
-    const sig = new secp256k1.Signature(rsrec.r, rsrec.s);
+    const sig = new secp256k1.Signature(rsrec.r, rsrec.s).addRecoveryBit(rsrec.recovery!);
     if (checkHighS && sig.hasHighS()) throw new Error('Invalid signature: s is invalid');
-    return secp256k1.recoverPublicKey(msg, sig, rsrec.recovery);
+    return sig.recoverPublicKey(msg).toRawBytes();
   },
 };
 
@@ -490,7 +484,7 @@ export class Transaction {
     if (this.isSigned) throw new Error('Expected unsigned transaction');
     if (typeof privateKey === 'string') privateKey = strip0x(privateKey);
     const sig = await secp.signAsync(this.getMessageToSign(), privateKey, { extraEntropy });
-    const { recovery: rec } = sig;
+    const rec = sig.recovery!;
     const chainId = Number(this.raw.chainId!);
     const vv = this.type === 'legacy' ? (chainId ? rec + (chainId * 2 + 35) : rec + 27) : rec;
     const [v, r, s] = [vv, sig.r, sig.s].map(numberTo0xHex);
