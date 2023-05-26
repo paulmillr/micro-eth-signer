@@ -173,9 +173,9 @@ export function formatUSD(amount: number): string;
 
 ## Performance
 
-Transaction signature matches `noble-secp256k1` `sign()` speed, which means over 4000 times per second on M1 Mac.
+Transaction signature matches `noble-curves` `sign()` speed, which means over 4000 times per second on ARM Mac.
 
-The first call of `sign` will take 20ms+ due to noble-secp256k1 `utils.precompute`.
+The first call of `sign` will take 20ms+ due to noble-curves secp256k1 `utils.precompute`.
 
 To run benchmarks, execute `npm run bench`.
 
