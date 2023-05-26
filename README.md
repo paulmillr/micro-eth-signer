@@ -6,6 +6,7 @@ Create, sign and validate Ethereum transactions & addresses with minimum deps.
 - 3 dependencies: SHA-3, RLP & secp256k1, 13KB gzipped with all deps bundled
 - No network code in main package: allows simpler audits and offline usage
 - Validated against 3MB of [ethers](https://github.com/ethers-io/ethers.js/) test vectors
+- Using audited [noble](https://paulmillr.com/noble/) cryptography under the hood
 
 *Check out all web3 utility libraries:* [ETH](https://github.com/paulmillr/micro-eth-signer), [BTC](https://github.com/paulmillr/scure-btc-signer), [SOL](https://github.com/paulmillr/micro-sol-signer), [micro-web3](https://github.com/paulmillr/micro-web3), [tx-tor-broadcaster](https://github.com/paulmillr/tx-tor-broadcaster)
 
@@ -13,63 +14,66 @@ Create, sign and validate Ethereum transactions & addresses with minimum deps.
 
 > npm install micro-eth-signer
 
-Supports Node.js & all major browsers. If you're looking for a fully-contained single-file version, check out Releases page on GitHub.
+We support all major platforms and runtimes.
+For [Deno](https://deno.land), ensure to use [npm specifier](https://deno.land/manual@v1.28.0/node/npm_specifiers).
+For React Native, you may need a [polyfill for getRandomValues](https://github.com/LinusU/react-native-get-random-values).
+If you don't like NPM, a standalone [eth-signer.js](https://github.com/paulmillr/micro-eth-signer/releases) is also available.
 
 ```js
-const { Address, Transaction } = require('micro-eth-signer');
+import { Address, Transaction } from 'micro-eth-signer';
 
-(async () => {
-  const tx = new Transaction({
-    to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
-    maxFeePerGas: 100n * 10n ** 9n, // 100 gwei in wei
-    value: 10n ** 18n, // 1 eth in wei
-    nonce: 1,
-    maxPriorityFeePerGas: 0,
-    chainId: 1
-  });
+const tx = new Transaction({
+  to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
+  maxFeePerGas: 100n * 10n ** 9n, // 100 gwei in wei
+  value: 10n ** 18n, // 1 eth in wei
+  nonce: 1,
+  maxPriorityFeePerGas: 0,
+  chainId: 1
+});
 
-  const privateKey = '6b911fd37cdf5c81d4c0adb1ab7fa822ed253ab0ad9aa18d77257c88b29b718e';
-  const signedTx = await tx.sign(privateKey); // Uint8Array is also accepted
-  const {hash, hex} = signedTx;
+// keys, messages & other inputs can be Uint8Arrays or hex strings
+// Uint8Array.from([0xde, 0xad, 0xbe, 0xef]) === 'deadbeef'
+const privateKey = '6b911fd37cdf5c81d4c0adb1ab7fa822ed253ab0ad9aa18d77257c88b29b718e';
+const signedTx = tx.sign(privateKey);
+const { hash, hex } = signedTx;
 
-  // Strings can be used also
-  // tx = new Transaction({"nonce": "0x01"})
-  // Same goes to serialized representation
-  // tx = new Transaction('0xeb018502540be40082520894df90dea0e0bf5ca6d2a7f0cb86874ba6714f463e872386f26fc1000080808080');
+// Strings can be used also
+// tx = new Transaction({"nonce": "0x01"})
+// Same goes to serialized representation
+// tx = new Transaction('0xeb018502540be40082520894df90dea0e0bf5ca6d2a7f0cb86874ba6714f463e872386f26fc1000080808080');
 
-  // Various tx properties
-  console.log('Need wei', tx.upfrontCost); // also, tx.fee, tx.amount, tx.sender, etc
+// Various tx properties
+console.log('Need wei', tx.upfrontCost); // also, tx.fee, tx.amount, tx.sender, etc
 
-  // Address manipulation
-  const addr = Address.fromPrivateKey(privateKey);
-  const pubKey = signedTx.recoverSenderPublicKey();
-  console.log('Verified', Address.verifyChecksum(addr));
-  console.log('addr is correct', signedTx.sender, signedTx.sender == addr);
-  console.log(signedTx);
+// Address manipulation
+const addr = Address.fromPrivateKey(privateKey);
+const pubKey = signedTx.recoverSenderPublicKey();
+console.log('Verified', Address.verifyChecksum(addr));
+console.log('addr is correct', signedTx.sender, signedTx.sender == addr);
+console.log(signedTx);
 
-  // London style txs, EIP 1559
-  const legacyTx = new Transaction({
-    to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
-    gasPrice: 100n * 10n ** 9n, // 100 gwei in wei
-    value: 10n ** 18n, // 1 eth in wei
-    nonce: 1
-  }, undefined, undefined, 'legacy');
+// London style txs, EIP 1559
+const legacyTx = new Transaction({
+  to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
+  gasPrice: 100n * 10n ** 9n, // 100 gwei in wei
+  value: 10n ** 18n, // 1 eth in wei
+  nonce: 1
+}, undefined, undefined, 'legacy');
 
-  const berlinTx = new Transaction({
-    to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
-    maxFeePerGas: 100n * 10n ** 9n, // 100 gwei in wei
-    maxPriorityFeePerGas: 1n * 10n ** 9n, // 1 gwei in wei
-    value: 10n ** 18n, // 1 eth in wei
-    nonce: 1,
-    // the field can also be used in eip1559 txs
-    accessList: [{
-      "address": "0x123456789a123456789a123456789a123456789a",
-      "storageKeys": [
-        "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-      ]
-    }]
-  }, undefined, undefined, 'eip2930');
-})();
+const berlinTx = new Transaction({
+  to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
+  maxFeePerGas: 100n * 10n ** 9n, // 100 gwei in wei
+  maxPriorityFeePerGas: 1n * 10n ** 9n, // 1 gwei in wei
+  value: 10n ** 18n, // 1 eth in wei
+  nonce: 1,
+  // the field can also be used in eip1559 txs
+  accessList: [{
+    "address": "0x123456789a123456789a123456789a123456789a",
+    "storageKeys": [
+      "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    ]
+  }]
+}, undefined, undefined, 'eip2930');
 ```
 
 ## API
