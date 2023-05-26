@@ -2,11 +2,12 @@
 
 Create, sign and validate Ethereum transactions & addresses with minimum deps.
 
-Library's size is <500 lines of code, or 3KiB gzipped (8.7KiB minified). Uses three dependencies (SHA-3, RLP & secp256k1), four libraries combined are 13KiB gzipped (37KiB minified).
+- Tiny: 500 lines of code, 3KB gzipped
+- 3 dependencies: SHA-3, RLP & secp256k1, 13KB gzipped with all deps bundled
+- No network code in main package: allows simpler audits and offline usage
+- Validated against 3MB of [ethers](https://github.com/ethers-io/ethers.js/) test vectors
 
-Validated with over 3MiB of ethers.js test vectors.
-
-*Check out all web3 utility libraries:* [micro-eth-signer](https://github.com/paulmillr/micro-eth-signer), [micro-btc-signer](https://github.com/paulmillr/micro-btc-signer), [micro-sol-signer](https://github.com/paulmillr/micro-sol-signer), [micro-web3](https://github.com/paulmillr/micro-web3), [tx-tor-broadcaster](https://github.com/paulmillr/tx-tor-broadcaster)
+*Check out all web3 utility libraries:* [ETH](https://github.com/paulmillr/micro-eth-signer), [BTC](https://github.com/paulmillr/scure-btc-signer), [SOL](https://github.com/paulmillr/micro-sol-signer), [micro-web3](https://github.com/paulmillr/micro-web3), [tx-tor-broadcaster](https://github.com/paulmillr/tx-tor-broadcaster)
 
 ## Usage
 
