@@ -2,8 +2,8 @@
 
 Create, sign and validate Ethereum transactions & addresses with minimum deps.
 
-- Tiny: 500 lines of code, 3KB gzipped
-- 3 dependencies: SHA-3, RLP & secp256k1, 13KB gzipped with all deps bundled
+- Tiny: 500 lines of code, 3KB gzipped, 13KB bundled
+- 3 dependencies: noble-hashes for sha3, noble-curves for secp256k1, rlp
 - No network code in main package: allows simpler audits and offline usage
 - Validated against 3MB of [ethers](https://github.com/ethers-io/ethers.js/) test vectors
 - Using audited [noble](https://paulmillr.com/noble/) cryptography under the hood
