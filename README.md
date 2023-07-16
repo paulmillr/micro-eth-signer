@@ -136,7 +136,7 @@ You can use either of those to initialize new `Transaction`. There are a few met
     - `gasPrice` is legacy transaction's Gas Price in wei. Not applicable to eip1559 transactions
     - `data` is transaction's data if it's calling some smart contracts
     - `accessList` is transaction's Access List, a list of addresses that its smart contract call touches. Basically an array of strings: `["0x123...", "0x456..."]`. Not applicable to legacy transactions
-- `Transaction#sign(privateKey: string | Uint8Array): Promise<Transaction>` —
+- `Transaction#sign(privateKey: string | Uint8Array): Transaction` —
   creates new transaction with same data, but signed by following private key
 - `Transaction#recoverSenderPublicKey(): string` — recovers sender's public key from **signed transaction**
 

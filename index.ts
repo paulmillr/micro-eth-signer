@@ -10,6 +10,8 @@ export const TRANSACTION_TYPES = { legacy: 0, eip2930: 1, eip1559: 2 };
 type Hex = string | Uint8Array;
 type RSRec = { r: bigint; s: bigint; recovery?: number };
 type SignOpts = { extraEntropy?: boolean };
+
+// All secp methods are in this object. This makes secp library easily replaceable
 const secp = {
   getPublicKey65b: (priv: Hex) => secp256k1.getPublicKey(priv, false),
   normalizePublicKeyTo65b: (pub: Hex) => secp256k1.ProjectivePoint.fromHex(pub).toRawBytes(false),
@@ -480,10 +482,10 @@ export class Transaction {
     return this.getMessageToSign(true);
   }
 
-  async sign(privateKey: string | Uint8Array, extraEntropy = false): Promise<Transaction> {
+  sign(privateKey: string | Uint8Array, extraEntropy = false): Transaction {
     if (this.isSigned) throw new Error('Expected unsigned transaction');
     if (typeof privateKey === 'string') privateKey = strip0x(privateKey);
-    const sig = await secp.signAsync(this.getMessageToSign(), privateKey, { extraEntropy });
+    const sig = secp.sign(this.getMessageToSign(), privateKey, { extraEntropy });
     const rec = sig.recovery!;
     const chainId = Number(this.raw.chainId!);
     const vv = this.type === 'legacy' ? (chainId ? rec + (chainId * 2 + 35) : rec + 27) : rec;
