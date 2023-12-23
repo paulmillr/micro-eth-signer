@@ -31,16 +31,10 @@
     "prettier": "3.1.1",
     "typescript": "5.3.2"
   },
-  "jest": {
-    "testRegex": "/test/.*?\\.ts",
-    "transform": {
-      "^.+\\.ts$": "ts-jest"
-    }
-  },
   "author": "Paul Miller (https://paulmillr.com)",
   "repository": {
     "type": "git",
-    "url": "https://github.com/paulmillr/micro-eth-signer.git"
+    "url": "git+https://github.com/paulmillr/micro-eth-signer.git"
   },
   "license": "MIT",
   "keywords": [
