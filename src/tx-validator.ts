@@ -163,7 +163,10 @@ function dataToString(snb: SNB) {
 }
 
 class TransactionFieldError extends Error {
-  constructor(message: string, readonly errors: Record<string, string>) {
+  constructor(
+    message: string,
+    readonly errors: Record<string, string>
+  ) {
     super(message + '. ' + JSON.stringify(errors));
   }
 }
