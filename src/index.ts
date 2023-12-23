@@ -313,8 +313,8 @@ export const Address = {
     const hash = bytesToHex(keccak_256(addr.toLowerCase()));
     for (let i = 0; i < 40; i++) {
       // the nth letter should be uppercase if the nth digit of casemap is 1
-      const nth = Number.parseInt(hash[i], 16);
-      const char = addr[i];
+      const char = addr[i]!;
+      const nth = Number.parseInt(hash[i]!, 16);
       if (nth > 7 && char.toUpperCase() !== char) return false;
       if (nth <= 7 && char.toLowerCase() !== char) return false;
     }

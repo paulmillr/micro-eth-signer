@@ -1,8 +1,5 @@
-node_modules/
-build/
-test/web3js-transactions.json
-/*.js
-/*.js.map
-/*.d.ts
-/*.d.ts.map
-package-lock.json
+node_modules
+/build/
+/lib
+/index.js
+/index.d.ts

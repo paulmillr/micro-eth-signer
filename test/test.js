@@ -1,9 +1,9 @@
 import { strict as assert } from 'node:assert';
 import { should } from 'micro-should';
 const { deepStrictEqual } = assert;
-import { Address, Transaction } from '../index.js';
-import * as validate from '../tx-validator.js';
-import * as formatters from '../formatters.js';
+import { Address, Transaction } from '../lib/esm/index.js';
+import * as validate from '../lib/esm/tx-validator.js';
+import * as formatters from '../lib/esm/formatters.js';
 import { readFile } from 'node:fs/promises';
 
 (async () => {
