@@ -1,6 +1,7 @@
 /*! micro-eth-signer - MIT License (c) 2021 Paul Miller (paulmillr.com) */
 import { keccak_256 } from '@noble/hashes/sha3';
 import { bytesToHex, hexToBytes as _hexToBytes } from '@noble/hashes/utils';
+import { isBytes } from '@noble/curves/abstract/utils';
 import { secp256k1 } from '@noble/curves/secp256k1';
 import * as RLP from '@ethereumjs/rlp';
 
@@ -55,6 +56,10 @@ function hexToNumber(hex: string): bigint {
     throw new TypeError('hexToNumber: expected string, got ' + typeof hex);
   }
   return hex ? BigInt(add0x(hex)) : 0n;
+}
+
+function isObject(item: unknown): item is object {
+  return item != null && typeof item === 'object';
 }
 
 function cloneDeep<T>(obj: T): T {
@@ -144,7 +149,7 @@ function normalizeField(
   // can be number, bignumber, decimal number in string (123), hex number in string (0x123)
   if (FIELD_NUMBER.has(field)) {
     // bytes
-    if (value instanceof Uint8Array) value = add0x(bytesToHex(value));
+    if (isBytes(value)) value = add0x(bytesToHex(value));
     if (field === 'yParity' && typeof value === 'boolean') value = value ? '0x1' : '0x0';
     // '123' -> 0x7b (handles both hex and non-hex numbers)
     if (typeof value === 'string') value = BigInt(value === '0x' ? '0x0' : value);
@@ -162,7 +167,7 @@ function normalizeField(
   // Can be string or Uint8Array
   if (FIELD_DATA.has(field)) {
     if (!value) value = '';
-    if (value instanceof Uint8Array) value = bytesToHex(value);
+    if (isBytes(value)) value = bytesToHex(value);
     if (typeof value !== 'string') throw new TypeError(`Invalid type for field ${field}`);
     value = add0x(value);
     return value === '0x' ? '' : value;
@@ -181,12 +186,7 @@ function normalizeField(
           for (let i of access[1]) res[key].add(normalizeField('storageKey', i) as string);
         } else {
           // {address: string, storageKeys: string[]}[]
-          if (
-            typeof access !== 'object' ||
-            access == null ||
-            !access.address ||
-            !Array.isArray(access.storageKeys)
-          )
+          if (!isObject(access) || !access.address || !Array.isArray(access.storageKeys))
             throw new TypeError(`Invalid type for field ${field}`);
           const key = normalizeField('address', access.address) as string;
           if (!res[key]) res[key] = new Set();
@@ -195,7 +195,7 @@ function normalizeField(
       }
     } else {
       // {[address]: string[]}
-      if (typeof value !== 'object' || value == null || value instanceof Uint8Array)
+      if (!isObject(value) || isBytes(value))
         throw new TypeError(`Invalid type for field ${field}`);
       for (let k in value) {
         const key = normalizeField('address', k) as string;
