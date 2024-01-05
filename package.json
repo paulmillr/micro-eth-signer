@@ -1,6 +1,6 @@
 {
   "name": "micro-eth-signer",
-  "version": "0.7.0-pre",
+  "version": "0.7.0",
   "description": "Small tool for Ethereum transactions, addresses and smart contracts",
   "files": [
     "lib",
@@ -16,7 +16,7 @@
     "micro-packed": "~0.5.0"
   },
   "devDependencies": {
-    "micro-bmark": "0.3.0",
+    "micro-bmark": "0.3.1",
     "micro-should": "0.4.0",
     "prettier": "3.1.1",
     "typescript": "5.3.2"
