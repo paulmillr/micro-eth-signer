@@ -192,11 +192,14 @@ export type UnmapType<T> = T extends MapType<infer U> ? U : never;
 export function mapComponent<T extends BaseComponent>(c: T): P.CoderType<MapType<Writable<T>>> {
   // Arrays (should be first one, since recursive)
   let m;
-  if ((m = /^(.+)\[(\d+)?]$/.exec(c.type))) {
+  if ((m = ARRAY_RE.exec(c.type))) {
     const inner = mapComponent({ ...c, type: m[1] });
+    if (inner.size === 0)
+      throw new Error('mapComponent: arrays of zero-size elements disabled (possible DoS attack)');
     // Static array
-    if (+m[2]) {
-      let out = P.array(+m[2], inner);
+    if (m[3] !== undefined) {
+      if (!Number.isSafeInteger(+m[3])) throw new Error(`mapComponent: wrong array size=${m[3]}`);
+      let out = P.array(+m[3], inner);
       // Static array of dynamic values should be behind pointer too, again without reason.
       if (inner.size === undefined) out = P.pointer(PTR, out);
       return out as any;

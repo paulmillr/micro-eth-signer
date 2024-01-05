@@ -1576,3 +1576,79 @@ should('example/libra', async () => {
   );
   console.log(d.decode(UNISWAP, tx0, Object.assign(uniOpt, { amount: 100000000000000000n })));
 });
+
+should('ZST', () => {
+  const payload = hex.decode(
+    '000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000FFFFFFFF'
+  );
+  const TYPES = {
+    // Will crash (fixed size, but very big)
+    'uint256[0][4294967295]': unwrapTestType('uint256[0][4294967295]'),
+    'uint32[0][4294967295]': unwrapTestType('uint32[0][4294967295]'),
+    // Make sure that it won't crash
+    'uint256[4294967295][4294967295]': unwrapTestType('uint256[4294967295][4294967295]'),
+    'uint32[4294967295][4294967295]': unwrapTestType('uint32[4294967295][4294967295]'),
+    'uint256[0][]': unwrapTestType('uint32[0][]'),
+    'uint256[0][]': unwrapTestType('uint32[0][]'),
+    '()[]': { type: 'tuple[]', components: [] }, // not supported in test methods
+    '(())[]': { type: 'tuple[]', components: [{ type: 'tuple', components: [] }] },
+    '(uint32[0])[]': { type: 'tuple[]', components: [{ type: 'uint32[0]' }] },
+    '((uint32[0]))[]': {
+      type: 'tuple[]',
+      components: [{ type: 'tuple', components: [{ type: 'uint32[0]' }] }],
+    },
+  };
+
+  for (const type in TYPES) {
+    // it would crash process before
+    throws(() => abi.mapComponent(TYPES[type]).decode(payload));
+  }
+  // Basic ZST works, they cannot cause DoS outside of array. You will need very big ABI definition to cause issues.
+  deepStrictEqual(
+    abi.mapComponent({ type: 'tuple', components: [] }).encode([]),
+    new Uint8Array([])
+  );
+  deepStrictEqual(
+    abi.mapComponent({ type: 'uint32[]' }).encode([]),
+    new Uint8Array([
+      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+      32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+      0, 0,
+    ])
+  );
+});
+
+should('Recursive ptrs', () => {
+  //const EPad = (p) => P.padLeft(32, p, P.ZeroPad);
+  //const PTR = EPad(P.U32BE);
+  const arr2 = abi.mapComponent(unwrapTestType('uint256[][]'));
+  const arr4 = abi.mapComponent(unwrapTestType('uint256[][][][]'));
+  const arr10 = abi.mapComponent(unwrapTestType('uint256[][][][][][][][][][]'));
+  const a = [[], [], [], [], [], [], [], [], [], []];
+  const p = abi.mapComponent(unwrapTestType('uint256[][]')).encode(a);
+  const ptrArr = abi.mapComponent(unwrapTestType('uint256[]'));
+  const a2 = ptrArr.decode(p);
+  // 0x20 == 32
+  const changePtr = ptrArr.encode(a2.map((i) => 32n));
+  console.log('s', hex.encode(changePtr));
+  // default PoC
+  const payload =
+    '0000000000000000000000000000000000000000000000000000000000000020' +
+    '000000000000000000000000000000000000000000000000000000000000000a' +
+    '0000000000000000000000000000000000000000000000000000000000000020'.repeat(64);
+  throws(() => arr10.decode(hex.decode(payload)));
+  // Try to break check
+  const p2 = hex.encode(
+    ptrArr.encode(Array.from({ length: 10 * 1024 }, (i, j) => BigInt(j + 1) * 32n))
+  );
+  // Kinda slow, but input is 320 kb
+  throws(() => arr10.decode(hex.decode(p2)));
+  throws(() => arr4.decode(hex.decode(p2)));
+  throws(() => arr2.decode(hex.decode(p2)));
+});
+
+// ESM is broken.
+import url from 'url';
+if (import.meta.url === url.pathToFileURL(process.argv[1]).href) {
+  should.run();
+}

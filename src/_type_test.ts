@@ -90,6 +90,9 @@ assertType<P.CoderType<{ lol: string; wut: bigint }>>(
     { type: 'uint', name: 'wut' },
   ] as const)
 );
+assertType<P.CoderType<bigint[][]>>(web3.mapArgs([{ type: 'uint32[1][]' }] as const));
+// zero sized arrays not supported by types
+assertType<P.CoderType<unknown>>(web3.mapArgs([{ type: 'uint32[0][]' }] as const));
 // Without const
 assertType<P.CoderType<Record<string, unknown>>>(
   web3.mapArgs([
