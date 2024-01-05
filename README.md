@@ -1,22 +1,18 @@
 # micro-eth-signer
 
-Create, sign and validate Ethereum transactions & addresses with minimum deps.
+Small tool for Ethereum transactions, addresses and smart contracts.
 
-- Tiny: 500 lines of code, 3KB gzipped, 13KB bundled
-- 3 dependencies: noble-hashes for sha3, noble-curves for secp256k1, rlp
-- No network code in main package: allows simpler audits and offline usage
-- Validated against 3MB of [ethers](https://github.com/ethers-io/ethers.js/) test vectors
-- Using audited [noble](https://paulmillr.com/noble/) cryptography under the hood
+- 🔓 Secure: minimum deps, audited [noble](https://paulmillr.com/noble/) cryptography
+- 🔻 Tree-shaking-friendly: use only what's necessary, other code won't be included
+- 🌍 No network code for simplified auditing and offline usage
+- 🔍 Tested against 3MB of [ethers](https://github.com/ethers-io/ethers.js/) vectors
+- ✍️ Create and sign transactions, generate and checksum addresses
+- 📖 Decode transactions and events into human-readable form
+- 🆎 Call smart contracts: Chainlink and Uniswap APIs are included
+- 🦺 Decode smart contract ABIs into type-safe TypeScript structures
+- 🪶 Small: 500 lines of code for main module, 2.7K lines for everything
 
-Typesafe Web3 with minimum deps: call eth contracts directly from JS. Batteries included.
-
-- Connect to web3 nodes
-- Write typesafe code with auto inference of TypeScript types from ABI JSON
-- Fetch token balances, resolve ENS domains, watch token prices with chainlink web3 oracle
-- Decode transactions: create readable tx descriptions from tx data & ABIs
-- No network code in main package: allows simpler audits and offline usage
-
-*Check out all web3 utility libraries:* [ETH](https://github.com/paulmillr/micro-eth-signer), [BTC](https://github.com/paulmillr/scure-btc-signer), [SOL](https://github.com/paulmillr/micro-sol-signer), [tx-tor-broadcaster](https://github.com/paulmillr/tx-tor-broadcaster)
+_Check out all web3 utility libraries:_ [ETH](https://github.com/paulmillr/micro-eth-signer), [BTC](https://github.com/paulmillr/scure-btc-signer), [SOL](https://github.com/paulmillr/micro-sol-signer), [tx-tor-broadcaster](https://github.com/paulmillr/tx-tor-broadcaster)
 
 ## Usage
 
@@ -27,72 +23,61 @@ For [Deno](https://deno.land), ensure to use [npm specifier](https://deno.land/m
 For React Native, you may need a [polyfill for getRandomValues](https://github.com/LinusU/react-native-get-random-values).
 If you don't like NPM, a standalone [eth-signer.js](https://github.com/paulmillr/micro-eth-signer/releases) is also available.
 
-```js
-import { Address, Transaction } from 'micro-eth-signer';
+- [Transaction creation and signing](#transaction-creation-and-signing)
+- [Address generation and checksumming](#address-generation-and-checksumming)
+- [Transaction decoding](#transaction-decoding)
+- [Event decoding](#event-decoding)
+- [Call smart contracts](#call-smart-contracts)
+  - [Fetch Chainlink oracle prices](#fetch-chainlink-oracle-prices)
+  - [Uniswap](#uniswap)
+- [Type inference](#type-inference)
+- [Human-friendly field validation](#human-friendly-field-validation)
+- [Formatters](#formatters)
+- [Low-level transaction API](#low-level-transaction-api)
 
+### Transaction creation and signing
+
+```js
+import { Transaction } from 'micro-eth-signer';
 const tx = new Transaction({
   to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
   maxFeePerGas: 100n * 10n ** 9n, // 100 gwei in wei
   value: 10n ** 18n, // 1 eth in wei
   nonce: 1,
   maxPriorityFeePerGas: 0,
-  chainId: 1
+  chainId: 1,
 });
-
 // keys, messages & other inputs can be Uint8Arrays or hex strings
 // Uint8Array.from([0xde, 0xad, 0xbe, 0xef]) === 'deadbeef'
 const privateKey = '6b911fd37cdf5c81d4c0adb1ab7fa822ed253ab0ad9aa18d77257c88b29b718e';
 const signedTx = tx.sign(privateKey);
-const { hash, hex } = signedTx;
-
-// Strings can be used also
-// tx = new Transaction({"nonce": "0x01"})
-// Same goes to serialized representation
-// tx = new Transaction('0xeb018502540be40082520894df90dea0e0bf5ca6d2a7f0cb86874ba6714f463e872386f26fc1000080808080');
-
-// Various tx properties
+console.log(signedTx.hash, signedTx.hex);
 console.log('Need wei', tx.upfrontCost); // also, tx.fee, tx.amount, tx.sender, etc
-
-// Address manipulation
-const addr = Address.fromPrivateKey(privateKey);
-const pubKey = signedTx.recoverSenderPublicKey();
-console.log('Verified', Address.verifyChecksum(addr));
-console.log('addr is correct', signedTx.sender, signedTx.sender == addr);
-console.log(signedTx);
-
-// London style txs, EIP 1559
-const legacyTx = new Transaction({
-  to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
-  gasPrice: 100n * 10n ** 9n, // 100 gwei in wei
-  value: 10n ** 18n, // 1 eth in wei
-  nonce: 1
-}, undefined, undefined, 'legacy');
-
-const berlinTx = new Transaction({
-  to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
-  maxFeePerGas: 100n * 10n ** 9n, // 100 gwei in wei
-  maxPriorityFeePerGas: 1n * 10n ** 9n, // 1 gwei in wei
-  value: 10n ** 18n, // 1 eth in wei
-  nonce: 1,
-  // the field can also be used in eip1559 txs
-  accessList: [{
-    "address": "0x123456789a123456789a123456789a123456789a",
-    "storageKeys": [
-      "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-    ]
-  }]
-}, undefined, undefined, 'eip2930');
 ```
 
+### Address generation and checksumming
 
 ```ts
-import web3 from 'micro-eth-signer/web3';
-import contracts from 'micro-eth-signer/web3/contracts';
-import web3net from 'micro-eth-signer/web3-net';
+const addr = '0x0089d53f703f7e0843953d48133f74ce247184c2';
+const addrc = Address.checksum(addr); // 0x0089d53F703f7E0843953D48133f74cE247184c2
+Address.verifyChecksum(addrc); // true
+Address.verifyChecksum(addr); // true also (non-checksummed)
+Address.fromPrivateKey('0687640ee33ef844baba3329db9e16130bd1735cbae3657bd64aed25e9a5c377');
+// 0xD4fE407789e11a27b7888A324eC597435353dC35
+Address.fromPublicKey('030fba7ba5cfbf8b00dd6f3024153fc44ddda93727da58c99326eb0edd08195cdb');
+// 0xD4fE407789e11a27b7888A324eC597435353dC35
+```
+
+### Transaction decoding
+
+```ts
+import web3 from 'micro-eth-signer/web3.js';
+import contracts from 'micro-eth-signer/web3.js/contracts';
+import web3net from 'micro-web3-net';
 const DEF_CONTRACTS = contracts.DEFAULT_CONTRACTS;
 ```
 
-### Decode transactions without network
+The transaction sent ERC-20 USDT token between addresses:
 
 ```ts
 import { hex } from '@scure/base';
@@ -108,7 +93,7 @@ console.log(info);
 // hint: 'Transfer 22588 USDT to 0xdac17f958d2ee523a2206206994597c13d831ec7' }
 ```
 
-### Decode events
+### Event decoding
 
 ```ts
 const BAT = '0x0d8775f648430679a709e98d2b0cb6250d2887ef';
@@ -128,7 +113,9 @@ console.log(info.hint);
 // Allow 0xe592427a0aece92de3edee1f18e0157c05861564 spending up to 1000 BAT from 0xd8da6bf26964af9d7eed9e03e53415d37aa96045
 ```
 
-### Fetch Chainlink oracle prices
+### Call smart contracts
+
+#### Fetch Chainlink oracle prices
 
 ```ts
 import chainlink from 'micro-eth-signer/web3/api/chainlink';
@@ -141,7 +128,7 @@ const bat = await chainlink.tokenPrice(provider, 'BAT');
 console.log({ btc, bat }); // BTC 19188.68870991, BAT 0.39728989 in USD
 ```
 
-### Uniswap
+#### Uniswap
 
 Swap 12.12 USDT to BAT with uniswap V3 defaults of 0.5% slippage, 30 min expiration.
 
@@ -189,33 +176,31 @@ We're parsing values as:
 
 Check out [`src/api/ens.ts`](./src/api/ens.ts) for type-safe contract execution example.
 
-## API
+### Human-friendly field validation
 
-### Address
-
-Represents ETH address and has following methods:
-
-- `Address.fromPrivateKey(privateKey: string | Uint8Array): string` - create address from private key
-- `Address.fromPublicKey(publicKey: string | Uint8Array): string` - creates address from public key
-- `Address.checksum(nonChecksummedAddress: string): string` - creates checksummed address from non-checksummed address
-- `Address.verifyChecksum(address: string): boolean` - verifies checksummed & non-checksummed address
-
-Usage:
-
-```js
-const addr = "0x0089d53f703f7e0843953d48133f74ce247184c2";
-const addrc = Address.checksum(addr) // 0x0089d53F703f7E0843953D48133f74cE247184c2
-Address.verifyChecksum(addrc) // true
-Address.verifyChecksum(addr) // true also (non-checksummed)
-Address.fromPrivateKey("0687640ee33ef844baba3329db9e16130bd1735cbae3657bd64aed25e9a5c377")
-  // 0xD4fE407789e11a27b7888A324eC597435353dC35
-Address.fromPublicKey("030fba7ba5cfbf8b00dd6f3024153fc44ddda93727da58c99326eb0edd08195cdb")
-  // 0xD4fE407789e11a27b7888A324eC597435353dC35
+```ts
+import { validateField, validateFields } from 'micro-eth-signer/tx-validator';
 ```
 
-### Transaction
+### Formatters
 
-Represents unsigned & signed ETH transactions. They are serialized & deserialized using RLP. Here's an example of the same transaction in raw state, and serialized state:
+```ts
+export function parseDecimal(s: string, precision: number): bigint;
+export function formatDecimal(n: bigint, precision: number): string;
+export function perCentDecimal(precision: number, price: number): bigint;
+export function roundDecimal(
+  n: bigint,
+  roundPrecision: number,
+  precision?: number,
+  price?: number
+): bigint;
+export function fromWei(wei: string | number | bigint): string;
+export function formatUSD(amount: number): string;
+```
+
+### Low-level transaction API
+
+Transaction represents unsigned & signed ETH transactions. They are serialized & deserialized using RLP. Here's an example of the same transaction in raw state, and serialized state:
 
 ```js
 // raw
@@ -231,35 +216,35 @@ Represents unsigned & signed ETH transactions. They are serialized & deserialize
 You can use either of those to initialize new `Transaction`. There are a few methods available:
 
 - `new Transaction(serialized[, chain, hardfork, type])` - creates transaction from Raw TX string.
-    - `chain`: optional argument (default is `mainnet`; `ropsten`, `rinkeby`, `goerli`, `kovan` etc)
-    - `hardfork`: optional argument (default is `london`). The only place we're checking for `hardfork`
-      is the replay protection code. There are very old transactions that don't support replay protection,
-      you'll probably won't need them
-    - `type`: optional argument (default is `eip1559`). Can be either `legacy`, `eip2930`, or `eip1559`
-      (Berlin and London style transactions with access lists and `maxFeePerGas`/`maxPriorityFeePerGas`)
+  - `chain`: optional argument (default is `mainnet`; `ropsten`, `rinkeby`, `goerli`, `kovan` etc)
+  - `hardfork`: optional argument (default is `london`). The only place we're checking for `hardfork`
+    is the replay protection code. There are very old transactions that don't support replay protection,
+    you'll probably won't need them
+  - `type`: optional argument (default is `eip1559`). Can be either `legacy`, `eip2930`, or `eip1559`
+    (Berlin and London style transactions with access lists and `maxFeePerGas`/`maxPriorityFeePerGas`)
 - `new Transaction(rawTx[, chain, hardfork, type])` - creates transaction from Raw TX data.
-    - `rawTx` must have fields `to`, `value`, `nonce`, `gasLimit`
-    - `rawTx` must have `maxFeePerGas` (eip1559 txs) or `gasPrice` (berlin & legacy txs)
-    - `to` is recipient's address
-    - `value` is amount to send in wei
-    - `nonce` is sender's nonce in number
-    - `gasLimit` is transaction's Gas Limit in wei (minimum is `21000`)
-    - `maxFeePerGas` is eip1559 transaction's max acceptable gas price in wei (100 gwei is `100 * 10 ** 9`). Not applicable to legacy transactions
-    - `maxPriorityFeePerGas` is eip1559 transaction's max acceptable tip in wei. Not applicable to legacy transactions
-    - `gasPrice` is legacy transaction's Gas Price in wei. Not applicable to eip1559 transactions
-    - `data` is transaction's data if it's calling some smart contracts
-    - `accessList` is transaction's Access List, a list of addresses that its smart contract call touches. Basically an array of strings: `["0x123...", "0x456..."]`. Not applicable to legacy transactions
+  - `rawTx` must have fields `to`, `value`, `nonce`, `gasLimit`
+  - `rawTx` must have `maxFeePerGas` (eip1559 txs) or `gasPrice` (berlin & legacy txs)
+  - `to` is recipient's address
+  - `value` is amount to send in wei
+  - `nonce` is sender's nonce in number
+  - `gasLimit` is transaction's Gas Limit in wei (minimum is `21000`)
+  - `maxFeePerGas` is eip1559 transaction's max acceptable gas price in wei (100 gwei is `100 * 10 ** 9`). Not applicable to legacy transactions
+  - `maxPriorityFeePerGas` is eip1559 transaction's max acceptable tip in wei. Not applicable to legacy transactions
+  - `gasPrice` is legacy transaction's Gas Price in wei. Not applicable to eip1559 transactions
+  - `data` is transaction's data if it's calling some smart contracts
+  - `accessList` is transaction's Access List, a list of addresses that its smart contract call touches. Basically an array of strings: `["0x123...", "0x456..."]`. Not applicable to legacy transactions
 - `Transaction#sign(privateKey: string | Uint8Array): Transaction` —
   creates new transaction with same data, but signed by following private key
 - `Transaction#recoverSenderPublicKey(): string` — recovers sender's public key from **signed transaction**
 
-##### Transaction Properties
+Transaction properties:
 
 - `isSigned: boolean` - whether tx is signed with private key
 - `gasPrice: bigint` - legacy wei/gas
 - `maxFeePerGas: bigint`, `maxPriorityFeePerGas: bigint` - eip1559 wei/gas
 - `amount: bigint` - amount (aka `value`) in wei
-- `fee: bigint` - fee in wei (`maxFeePerGas` * `gasLimit` or `gasPrice` * `gasLimit`)
+- `fee: bigint` - fee in wei (`maxFeePerGas` _ `gasLimit` or `gasPrice` _ `gasLimit`)
 - `upfrontCost: bigint` - amount + fee in wei, combined
 - `to: string` - address that receives the tx
 - `nonce: number` - account's nonce
@@ -267,21 +252,20 @@ You can use either of those to initialize new `Transaction`. There are a few met
 - `hash: string` - signed tx hash used in block explorers. Example: `50b6e7b58320c885ab7b2ee0d0b5813a697268bd2494a06de792790b13668c08`
 - `raw: Object` - raw transaction's data with fields encoded as strings
 
-### Additional modules
-
-Those are optional:
+As an example, here's how to create legacy pre-eip1559 transaction:
 
 ```ts
-import * as formatters from 'micro-eth-signer/formatters';
-import { validateField, validateFields } from 'micro-eth-signer/tx-validator'
-
-// formatters:
-export function parseDecimal(s: string, precision: number): bigint;
-export function formatDecimal(n: bigint, precision: number): string;
-export function perCentDecimal(precision: number, price: number): bigint;
-export function roundDecimal(n: bigint, roundPrecision: number, precision?: number, price?: number): bigint;
-export function fromWei(wei: string | number | bigint): string;
-export function formatUSD(amount: number): string;
+const legacyTx = new Transaction(
+  {
+    to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
+    gasPrice: 100n * 10n ** 9n, // 100 gwei in wei
+    value: 10n ** 18n, // 1 eth in wei
+    nonce: 1,
+  },
+  undefined,
+  undefined,
+  'legacy'
+);
 ```
 
 ## Performance
