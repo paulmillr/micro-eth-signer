@@ -55,6 +55,9 @@ function EPad<T>(p: P.CoderType<T>) {
   return P.padLeft(32, p, P.ZeroPad);
 }
 // Save pointers values next to array. ETH only stuff.
+// By some reason, ptr value inside arrays is placed right after ptr.
+// This should work by default without 'wrappedArray'.
+// TODO: Debug more later.
 function wrappedArray<T>(len: P.Length, inner: P.CoderType<T>): P.CoderType<T[]> {
   return P.wrap({
     size: typeof len === 'number' && inner.size ? len * inner.size : undefined,
@@ -63,9 +66,7 @@ function wrappedArray<T>(len: P.Length, inner: P.CoderType<T>): P.CoderType<T[]>
       w.bytes(P.array(value.length, inner).encode(value));
     },
     decodeStream: (r: P.Reader): T[] =>
-      P.array(r.length(len), inner).decodeStream(
-        new P.Reader(r.absBytes(r.pos), r.path, r.fieldPath)
-      ),
+      P.array(r.length(len), inner).decodeStream(r.offsetReader(r.pos)),
   });
 }
 
@@ -192,11 +193,15 @@ export type UnmapType<T> = T extends MapType<infer U> ? U : never;
 export function mapComponent<T extends BaseComponent>(c: T): P.CoderType<MapType<Writable<T>>> {
   // Arrays (should be first one, since recursive)
   let m;
-  if ((m = /^(.+)\[(\d+)?]$/.exec(c.type))) {
+  if ((m = ARRAY_RE.exec(c.type))) {
     const inner = mapComponent({ ...c, type: m[1] });
+    if (inner.size === 0)
+      throw new Error('mapComponent: arrays of zero-size elements disabled (possible DoS attack)');
     // Static array
-    if (+m[2]) {
-      let out = P.array(+m[2], inner);
+    if (m[3] !== undefined) {
+      const m3 = Number.parseInt(m[3]);
+      if (!Number.isSafeInteger(m3)) throw new Error(`mapComponent: wrong array size=${m[3]}`);
+      let out = P.array(m3, inner);
       // Static array of dynamic values should be behind pointer too, again without reason.
       if (inner.size === undefined) out = P.pointer(PTR, out);
       return out as any;
@@ -236,8 +241,9 @@ export function mapComponent<T extends BaseComponent>(c: T): P.CoderType<MapType
   if ((m = /^(u?)int([0-9]+)?$/.exec(c.type)))
     return ethInt(m[2] ? +m[2] : 256, m[1] !== 'u') as any;
   if ((m = /^bytes([0-9]{1,2})$/.exec(c.type))) {
-    if (!+m[1] || +m[1] > 32) throw new Error('wrong bytes<N> type');
-    return P.padRight(32, P.bytes(+m[1]), P.ZeroPad) as any;
+    const parsed = +m[1];
+    if (!parsed || parsed > 32) throw new Error('wrong bytes<N> type');
+    return P.padRight(32, P.bytes(parsed), P.ZeroPad) as any;
   }
   throw new Error(`mapComponent: unknown component=${c}`);
 }

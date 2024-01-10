@@ -1,6 +1,7 @@
 import { deepStrictEqual, throws } from 'node:assert';
 import { describe, should } from 'micro-should';
 import { hex, utf8 } from '@scure/base';
+import * as P from 'micro-packed';
 import * as abi from '../lib/esm/web3.js';
 import * as abi_default_contracts from '../lib/esm/contracts/index.js';
 // Based on ethers.js test cases (MIT licensed)
@@ -1576,3 +1577,182 @@ should('example/libra', async () => {
   );
   console.log(d.decode(UNISWAP, tx0, Object.assign(uniOpt, { amount: 100000000000000000n })));
 });
+
+should('ZST', () => {
+  const payload = hex.decode(
+    '000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000FFFFFFFF'
+  );
+  const TYPES = {
+    // Will crash (fixed size, but very big)
+    'uint256[0][4294967295]': unwrapTestType('uint256[0][4294967295]'),
+    'uint32[0][4294967295]': unwrapTestType('uint32[0][4294967295]'),
+    // Make sure that it won't crash
+    'uint256[4294967295][4294967295]': unwrapTestType('uint256[4294967295][4294967295]'),
+    'uint32[4294967295][4294967295]': unwrapTestType('uint32[4294967295][4294967295]'),
+    'uint256[0][]': unwrapTestType('uint32[0][]'),
+    'uint256[0][]': unwrapTestType('uint32[0][]'),
+    '()[]': { type: 'tuple[]', components: [] }, // not supported in test methods
+    '(())[]': { type: 'tuple[]', components: [{ type: 'tuple', components: [] }] },
+    '(uint32[0])[]': { type: 'tuple[]', components: [{ type: 'uint32[0]' }] },
+    '((uint32[0]))[]': {
+      type: 'tuple[]',
+      components: [{ type: 'tuple', components: [{ type: 'uint32[0]' }] }],
+    },
+  };
+
+  for (const type in TYPES) {
+    // it would crash process before
+    throws(() => abi.mapComponent(TYPES[type]).decode(payload));
+  }
+  // Basic ZST works, they cannot cause DoS outside of array. You will need very big ABI definition to cause issues.
+  deepStrictEqual(
+    abi.mapComponent({ type: 'tuple', components: [] }).encode([]),
+    new Uint8Array([])
+  );
+  deepStrictEqual(
+    abi.mapComponent({ type: 'uint32[]' }).encode([]),
+    new Uint8Array([
+      0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+      32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+      0, 0,
+    ])
+  );
+});
+
+should('Recursive ptrs', () => {
+  //const EPad = (p) => P.padLeft(32, p, P.ZeroPad);
+  //const PTR = EPad(P.U32BE);
+  const arr2 = abi.mapComponent(unwrapTestType('uint256[][]'));
+  const arr4 = abi.mapComponent(unwrapTestType('uint256[][][][]'));
+  const arr10 = abi.mapComponent(unwrapTestType('uint256[][][][][][][][][][]'));
+  const a = [[], [], [], [], [], [], [], [], [], []];
+  const p = arr2.encode(a);
+  const ptrArr = abi.mapComponent(unwrapTestType('uint256[]'));
+  deepStrictEqual(
+    hex.encode(p),
+
+    '0000000000000000000000000000000000000000000000000000000000000020' + // ptr
+      '000000000000000000000000000000000000000000000000000000000000000a' + // len=10
+      '0000000000000000000000000000000000000000000000000000000000000140' +
+      '0000000000000000000000000000000000000000000000000000000000000160' +
+      '0000000000000000000000000000000000000000000000000000000000000180' +
+      '00000000000000000000000000000000000000000000000000000000000001a0' +
+      '00000000000000000000000000000000000000000000000000000000000001c0' +
+      '00000000000000000000000000000000000000000000000000000000000001e0' +
+      '0000000000000000000000000000000000000000000000000000000000000200' +
+      '0000000000000000000000000000000000000000000000000000000000000220' +
+      '0000000000000000000000000000000000000000000000000000000000000240' +
+      '0000000000000000000000000000000000000000000000000000000000000260' + // ptrs end (10)
+      '0000000000000000000000000000000000000000000000000000000000000000' +
+      '0000000000000000000000000000000000000000000000000000000000000000' +
+      '0000000000000000000000000000000000000000000000000000000000000000' +
+      '0000000000000000000000000000000000000000000000000000000000000000' +
+      '0000000000000000000000000000000000000000000000000000000000000000' +
+      '0000000000000000000000000000000000000000000000000000000000000000' +
+      '0000000000000000000000000000000000000000000000000000000000000000' +
+      '0000000000000000000000000000000000000000000000000000000000000000' +
+      '0000000000000000000000000000000000000000000000000000000000000000' +
+      '0000000000000000000000000000000000000000000000000000000000000000' // 10 values
+  );
+  const a2 = ptrArr.decode(p, { allowUnreadBytes: true }); // we need to read only ptrs, not values);
+
+  // 0x20 == 32
+  const changePtr = ptrArr.encode(a2.map((i) => 32n));
+  // default PoC
+  const payload =
+    '0000000000000000000000000000000000000000000000000000000000000020' +
+    '000000000000000000000000000000000000000000000000000000000000000a' +
+    '0000000000000000000000000000000000000000000000000000000000000020'.repeat(64);
+  throws(() => arr10.decode(hex.decode(payload)));
+  // Try to break check
+  const p2 = hex.encode(
+    ptrArr.encode(Array.from({ length: 10 * 1024 }, (i, j) => BigInt(j + 1) * 32n))
+  );
+  // Kinda slow, but input is 320 kb
+  throws(() => arr10.decode(hex.decode(p2)));
+  throws(() => arr4.decode(hex.decode(p2)));
+  throws(() => arr2.decode(hex.decode(p2)));
+});
+
+should('Recursive ptrs2', () => {
+  const arr10 = abi.mapComponent(unwrapTestType('uint256[][][][][][][][][][]'));
+  const a = [[], [], [], [], [], [], [], [], [], []];
+  const ptrArr = abi.mapComponent(unwrapTestType('uint256[]'));
+  const mainPtr = hex.encode(ptrArr.encode(a.map((i) => BigInt(a.length - i + 1) * 32n)));
+  throws(() => arr10.decode(hex.decode(mainPtr.repeat(10 + 1))));
+});
+
+should('Interleave ptrs', () => {
+  const ptrArr = abi.mapComponent(unwrapTestType('uint256[]'));
+  const raw = P.array(null, P.U256BE);
+  const arr2 = abi.mapComponent(unwrapTestType('uint256[][]'));
+
+  const getArr = (length) => {
+    const arr = Array.from({ length }, (i, j) => BigInt(length - j) * 32n);
+
+    // 10: 32 * (length + 256 + 2*length +2)
+    // 11: 32 * (length + 256 + 5*length+3)
+    // 12: 32 * (length + 256 + 8*lenght+4)
+    //    return hex.encode(ptrArr.encode(arr)) + '00'.repeat(32 * (30 * length + 3));
+
+    const repeats = {
+      4: 47, // 6kb -> 6kb (+0x)
+      8: 109, // 15kb -> 30kb (+1x)
+      16: 233, // 30kb -> 123kb (+3x)
+      32: 481, // 63kb -> 510kb (+7x)
+      64: 977, // 129kb -> 2mb (+15x)
+      128: 1969, // 260kb -> 8mb (+31x)
+      256: 3953, // 522kb -> 33mb (+63x)
+      512: 7921, // 1mb -> 133mb (+127x)
+      1024: 15857, // 2mb -> 533mb (+255x)
+      2048: 32000, // 4mb -> 2gb (+511x)
+      4096: 64000, // 8mb -> est: 8gb (+1023x)
+    };
+
+    return hex.encode(ptrArr.encode(arr)) + '00'.repeat(32 * 2 * repeats[length]);
+  };
+
+  for (const l of [4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096]) {
+    console.log(`============== LEN ${l} ========================`);
+    const ptrEnc = getArr(l);
+    console.log('ptrEnc', ptrEnc.length);
+    //console.log('PTR', ptrArr.decode(hex.decode(ptrEnc)));
+    //console.log('RAW', raw.decode(hex.decode(ptrEnc)));
+    throws(() => arr2.encode(arr2.decode(hex.decode(ptrEnc))));
+    // will bypass check, very slow and crash at the end)
+    const TRY_POC = false;
+    if (TRY_POC) {
+      const realSz = arr2.encode(
+        arr2.decode(hex.decode(ptrEnc), { allowMultipleReads: true })
+      ).length;
+      console.log('REAL', realSz);
+      console.log(
+        'DIFF',
+        realSz - ptrEnc.length,
+        `+${Math.floor((realSz - ptrEnc.length) / ptrEnc.length)}x`
+      );
+      // console.log(
+      //   'ARR2',
+      //   arr2.decode(hex.decode(ptrEnc)).map((i) => i.length)
+      // );
+    }
+  }
+});
+
+should('Junk data', () => {
+  const t = abi.mapComponent(unwrapTestType('uint256[]'));
+  const DATA = [1n, 2n, 3n, 4n];
+  const encoded = hex.encode(t.encode(DATA));
+  const dataWithFingerpint = encoded + '11'.repeat(32);
+  // by default: catch unread bytes even with pointers!
+  throws(() => t.decode(hex.decode(dataWithFingerpint)));
+  // allow to read tx if user insists
+  const decoded = t.decode(hex.decode(dataWithFingerpint), { allowUnreadBytes: true });
+  deepStrictEqual(decoded, DATA);
+});
+
+// ESM is broken.
+import url from 'url';
+if (import.meta.url === url.pathToFileURL(process.argv[1]).href) {
+  should.run();
+}
