@@ -1,6 +1,6 @@
 # micro-eth-signer
 
-Small tool for Ethereum transactions, addresses and smart contracts.
+Minimal library for Ethereum transactions, addresses and smart contracts.
 
 - 🔓 Secure: minimum deps, audited [noble](https://paulmillr.com/noble/) cryptography
 - 🔻 Tree-shaking-friendly: use only what's necessary, other code won't be included
