@@ -1751,6 +1751,74 @@ should('Junk data', () => {
   deepStrictEqual(decoded, DATA);
 });
 
+should('Junk data from real tx', () => {
+  // https://etherscan.io/tx/0x62d0afd1d7815ee9b2da236ddc6af07386072acea20eef27497ad29e37533fdd
+  const tx =
+    '7ff36ab50000000000000000000000000000000000000000000000164054d8356b4f5c2800000000000000000000000000000000000000000000000000000000000000800000000000000000000000006994ece772cc4abb5c9993c065a34c94544a40870000000000000000000000000000000000000000000000000000000062b348620000000000000000000000000000000000000000000000000000000000000002000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2000000000000000000000000106d3c66d22d2dd0446df23d7f5960752994d6007a6572696f6e';
+  // uniswap v2
+  const ABI = [
+    {
+      inputs: [
+        { internalType: 'uint256', name: 'amountOutMin', type: 'uint256' },
+        { internalType: 'address[]', name: 'path', type: 'address[]' },
+        { internalType: 'address', name: 'to', type: 'address' },
+        { internalType: 'uint256', name: 'deadline', type: 'uint256' },
+      ],
+      name: 'swapExactETHForTokens',
+      outputs: [{ internalType: 'uint256[]', name: 'amounts', type: 'uint256[]' }],
+      stateMutability: 'payable',
+      type: 'function',
+    },
+  ];
+  const sh = abi.fnSigHash(ABI[0]);
+  const inputs = abi.mapArgs(ABI[0].inputs);
+  const txBytes = hex.decode(tx);
+
+  const txSigHash = hex.encode(txBytes.slice(0, 4));
+  const txData = txBytes.slice(4);
+  // verify function signature hash to make sure we decode correct ABI
+  deepStrictEqual(sh, txSigHash);
+  // Error: Reader(): unread byte ranges: (224/6)[7a6572696f6e] (total=230)
+  throws(() => inputs.decode(txData));
+  const params = inputs.decode(txData, { allowUnreadBytes: true });
+  /*
+  Exactly same data as shown in etherscan:
+  {
+  amountOutMin: 410463937262026447912n,
+  path: [
+    '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2',
+    '0x106d3c66d22d2dd0446df23d7f5960752994d600'
+  ],
+  to: '0x6994ece772cc4abb5c9993c065a34c94544a4087',
+  deadline: 1655916642n
+  }
+  */
+
+  // Lets try manual decoding
+
+  deepStrictEqual(
+    tx,
+    '7ff36ab5' + // function signature hash
+      /*  00 */ '0000000000000000000000000000000000000000000000164054d8356b4f5c28' + // amountMin 410463937262026447912n in hex (uint256be)
+      /*  32 */ '0000000000000000000000000000000000000000000000000000000000000080' + // array pointer (128 byte)
+      /*  64 */ '0000000000000000000000006994ece772cc4abb5c9993c065a34c94544a4087' + // to param
+      /*  96 */ '0000000000000000000000000000000000000000000000000000000062b34862' + // deadline (1655916642n in hex)
+      /* 128 */ '0000000000000000000000000000000000000000000000000000000000000002' + // array length (array pointer points here)
+      /* 160 */ '000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2' + // first element of path
+      /* 192 */ '000000000000000000000000106d3c66d22d2dd0446df23d7f5960752994d600' + // second element of path
+      /* 224 */ '7a6572696f6e' // fingerprint! (or memory leak, or whatever). 6 bytes
+  );
+  // Encoded version doesn't include last 6 bytes, but is identical otherwise
+  deepStrictEqual(hex.encode(inputs.encode(params)), tx.slice(8, -12));
+  // '0000000000000000000000000000000000000000000000164054d8356b4f5c28' +
+  // '0000000000000000000000000000000000000000000000000000000000000080' +
+  // '0000000000000000000000006994ece772cc4abb5c9993c065a34c94544a4087' +
+  // '0000000000000000000000000000000000000000000000000000000062b34862' +
+  // '0000000000000000000000000000000000000000000000000000000000000002' +
+  // '000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2' +
+  // '000000000000000000000000106d3c66d22d2dd0446df23d7f5960752994d600'
+});
+
 // ESM is broken.
 import url from 'url';
 if (import.meta.url === url.pathToFileURL(process.argv[1]).href) {
