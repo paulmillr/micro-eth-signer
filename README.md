@@ -270,7 +270,8 @@ const legacyTx = new Transaction(
 
 ## Performance
 
-Transaction signature matches `noble-curves` `sign()` speed, which means over 4000 times per second on ARM Mac.
+Transaction signature matches `noble-curves` `sign()` speed,
+which means over 4000 times per second on macs.
 
 The first call of `sign` will take 20ms+ due to noble-curves secp256k1 `utils.precompute`.
 
