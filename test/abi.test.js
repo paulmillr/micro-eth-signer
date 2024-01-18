@@ -1678,7 +1678,7 @@ should('Recursive ptrs2', () => {
   const arr10 = abi.mapComponent(unwrapTestType('uint256[][][][][][][][][][]'));
   const a = [[], [], [], [], [], [], [], [], [], []];
   const ptrArr = abi.mapComponent(unwrapTestType('uint256[]'));
-  const mainPtr = hex.encode(ptrArr.encode(a.map((i) => BigInt(a.length - i + 1) * 32n)));
+  const mainPtr = hex.encode(ptrArr.encode(a.map((_, i) => BigInt(a.length - i + 1) * 32n)));
   throws(() => arr10.decode(hex.decode(mainPtr.repeat(10 + 1))));
 });
 
