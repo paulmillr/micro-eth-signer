@@ -10,7 +10,7 @@ Minimal library for Ethereum transactions, addresses and smart contracts.
 - 📖 Decode transactions and events into human-readable form
 - 🆎 Call smart contracts: Chainlink and Uniswap APIs are included
 - 🦺 Decode smart contract ABIs into type-safe TypeScript structures
-- 🪶 Small: 500 lines of code for main module, 2.7K lines for everything
+- 🪶 2.7K lines for everything, 500 lines for the core logic
 
 _Check out all web3 utility libraries:_ [ETH](https://github.com/paulmillr/micro-eth-signer), [BTC](https://github.com/paulmillr/scure-btc-signer), [SOL](https://github.com/paulmillr/micro-sol-signer), [tx-tor-broadcaster](https://github.com/paulmillr/tx-tor-broadcaster)
 
