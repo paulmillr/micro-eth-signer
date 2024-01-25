@@ -12,6 +12,8 @@ Minimal library for Ethereum transactions, addresses and smart contracts.
 - 🦺 Decode smart contract ABIs into type-safe TypeScript structures
 - 🪶 2.7K lines for everything, 500 lines for the core logic
 
+Check out article [ZSTs, ABIs, stolen keys and broken legs](https://github.com/paulmillr/micro-eth-signer/discussions/20) about caveats of secure ABI parsing found during development of the library.
+
 _Check out all web3 utility libraries:_ [ETH](https://github.com/paulmillr/micro-eth-signer), [BTC](https://github.com/paulmillr/scure-btc-signer), [SOL](https://github.com/paulmillr/micro-sol-signer), [tx-tor-broadcaster](https://github.com/paulmillr/tx-tor-broadcaster)
 
 ## Usage
