@@ -10,7 +10,7 @@
   "license": "MIT",
   "devDependencies": {
     "micro-eth-signer": "file:..",
-    "esbuild": "0.17.19"
+    "esbuild": "0.20.1"
   },
   "scripts": {
     "build": "npx esbuild --bundle input.js --outfile=micro-eth-signer.js --global-name=ethSigner"

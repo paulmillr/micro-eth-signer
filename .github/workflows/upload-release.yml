@@ -22,6 +22,6 @@ jobs:
           cd build
           npm ci
           npm run build
-          gh release upload ${{ github.event.release.tag_name }} noble-ciphers.js
+          gh release upload ${{ github.event.release.tag_name }} micro-eth-signer.js
         env:
           GH_TOKEN: ${{ github.token }}
