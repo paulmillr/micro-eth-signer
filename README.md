@@ -2,19 +2,19 @@
 
 Minimal library for Ethereum transactions, addresses and smart contracts.
 
-- 🔓 Secure: minimum deps, audited [noble](https://paulmillr.com/noble/) cryptography
+- 🔓 Secure: 3 deps, audited [noble](https://paulmillr.com/noble/) cryptography
 - 🔻 Tree-shaking-friendly: use only what's necessary, other code won't be included
-- 🌍 No network code for simplified auditing and offline usage
-- 🔍 Tested against 3MB of [ethers](https://github.com/ethers-io/ethers.js/) vectors
+- 🌍 No network code: simplified auditing and offline usage
+- 🔍 Unique tests: 150MB of test vectors from EIPs, ethers and viem
 - ✍️ Create and sign transactions, generate and checksum addresses
-- 📖 Decode transactions and events into human-readable form
+- 📖 Human-readable hints for transactions and events
 - 🆎 Call smart contracts: Chainlink and Uniswap APIs are included
-- 🦺 Decode smart contract ABIs into type-safe TypeScript structures
-- 🪶 2.7K lines for everything, 500 lines for the core logic
+- 🦺 Typescript-friendly ABI and RLP decoding
+- 🪶 3000 lines for everything
 
 Check out article [ZSTs, ABIs, stolen keys and broken legs](https://github.com/paulmillr/micro-eth-signer/discussions/20) about caveats of secure ABI parsing found during development of the library.
 
-_Check out all web3 utility libraries:_ [ETH](https://github.com/paulmillr/micro-eth-signer), [BTC](https://github.com/paulmillr/scure-btc-signer), [SOL](https://github.com/paulmillr/micro-sol-signer), [tx-tor-broadcaster](https://github.com/paulmillr/tx-tor-broadcaster)
+_Check out all web3 utility libraries:_ [ETH](https://github.com/paulmillr/micro-eth-signer), [BTC](https://github.com/paulmillr/scure-btc-signer), [SOL](https://github.com/paulmillr/micro-sol-signer)
 
 ## Usage
 
@@ -25,126 +25,194 @@ For [Deno](https://deno.land), ensure to use [npm specifier](https://deno.land/m
 For React Native, you may need a [polyfill for getRandomValues](https://github.com/LinusU/react-native-get-random-values).
 If you don't like NPM, a standalone [eth-signer.js](https://github.com/paulmillr/micro-eth-signer/releases) is also available.
 
-- [Transaction creation and signing](#transaction-creation-and-signing)
-- [Address generation and checksumming](#address-generation-and-checksumming)
-- [Transaction decoding](#transaction-decoding)
-- [Event decoding](#event-decoding)
+- [Create and sign transactions](#create-and-sign-transactions)
+- [Create and checksum addresses](#create-and-checksum-addresses)
+- [Generate random keys and addresses](#generate-random-keys-and-addresses)
+- [Human-readable hints](#human-readable-hints)
+  - [Decoding transactions](#decoding-transactions)
+  - [Decoding events](#decoding-events)
 - [Call smart contracts](#call-smart-contracts)
   - [Fetch Chainlink oracle prices](#fetch-chainlink-oracle-prices)
-  - [Uniswap](#uniswap)
-- [Type inference](#type-inference)
-- [Human-friendly field validation](#human-friendly-field-validation)
-- [Formatters](#formatters)
-- [Low-level transaction API](#low-level-transaction-api)
+  - [Swap tokens with Uniswap](#swap-tokens-with-uniswap)
+- [ABI type inference](#abi-type-inference)
+- [RLP parsing](#rlp-parsing)
+- [Sign and verify messages](#sign-and-verify-messages)
+- [Security](#security)
+- [Performance](#performance)
+- [License](#license)
 
-### Transaction creation and signing
+### Create and sign transactions
 
-```js
-import { Transaction } from 'micro-eth-signer';
-const tx = new Transaction({
+```ts
+import { addr, amounts, Transaction } from 'micro-eth-signer';
+const privateKey = '0x6b911fd37cdf5c81d4c0adb1ab7fa822ed253ab0ad9aa18d77257c88b29b718e';
+const senderAddr = addr.fromPrivateKey(privateKey);
+const unsignedTx = Transaction.prepare({
   to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
-  maxFeePerGas: 100n * 10n ** 9n, // 100 gwei in wei
-  value: 10n ** 18n, // 1 eth in wei
-  nonce: 1,
-  maxPriorityFeePerGas: 0,
-  chainId: 1,
+  maxFeePerGas: 100n * amounts.GWEI, // 100 gwei in wei
+  value: 1n * amounts.ETHER, // 1 eth in wei
+  nonce: 0n,
 });
-// keys, messages & other inputs can be Uint8Arrays or hex strings
-// Uint8Array.from([0xde, 0xad, 0xbe, 0xef]) === 'deadbeef'
-const privateKey = '6b911fd37cdf5c81d4c0adb1ab7fa822ed253ab0ad9aa18d77257c88b29b718e';
-const signedTx = tx.sign(privateKey);
-console.log(signedTx.hash, signedTx.hex);
-console.log('Need wei', tx.upfrontCost); // also, tx.fee, tx.amount, tx.sender, etc
+const tx = unsignedTx.signBy(privateKey); // Uint8Array is also accepted
+console.log('signed tx', tx, tx.toHex());
+console.log('need total wei', tx.calcAmounts().wei.amountWithFee);
+console.log('address is same', tx.sender === senderAddr);
 ```
 
-### Address generation and checksumming
+### Create and checksum addresses
 
 ```ts
-const addr = '0x0089d53f703f7e0843953d48133f74ce247184c2';
-const addrc = Address.checksum(addr); // 0x0089d53F703f7E0843953D48133f74cE247184c2
-Address.verifyChecksum(addrc); // true
-Address.verifyChecksum(addr); // true also (non-checksummed)
-Address.fromPrivateKey('0687640ee33ef844baba3329db9e16130bd1735cbae3657bd64aed25e9a5c377');
-// 0xD4fE407789e11a27b7888A324eC597435353dC35
-Address.fromPublicKey('030fba7ba5cfbf8b00dd6f3024153fc44ddda93727da58c99326eb0edd08195cdb');
-// 0xD4fE407789e11a27b7888A324eC597435353dC35
-```
-
-### Transaction decoding
-
-```ts
-import web3 from 'micro-eth-signer/web3.js';
-import contracts from 'micro-eth-signer/web3.js/contracts';
-import web3net from 'micro-web3-net';
-const DEF_CONTRACTS = contracts.DEFAULT_CONTRACTS;
-```
-
-The transaction sent ERC-20 USDT token between addresses:
-
-```ts
-import { hex } from '@scure/base';
-const tx =
-  'a9059cbb000000000000000000000000dac17f958d2ee523a2206206994597c13d831ec70000000000000000000000000000000000000000000000000000000542598700';
-const decoder = new web3.Decoder();
-const USDT = contracts.tokenFromSymbol('USDT').contract;
-decoder.add(USDT, contracts.ERC20);
-const info = decoder.decode(USDT, hex.decode(tx), { contractInfo: DEF_CONTRACTS[USDT] });
-console.log(info);
-// { name: 'transfer', signature: 'transfer(address,uint256)',
-// value: { to: '0xdac17f958d2ee523a2206206994597c13d831ec7', value: 22588000000n },
-// hint: 'Transfer 22588 USDT to 0xdac17f958d2ee523a2206206994597c13d831ec7' }
-```
-
-### Event decoding
-
-```ts
-const BAT = '0x0d8775f648430679a709e98d2b0cb6250d2887ef';
-const decoder = new web3.Decoder();
-decoder.add(BAT, contracts.ERC20);
-const info = decoder.decodeEvent(
-  BAT,
-  [
-    '0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925',
-    '0x000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa96045',
-    '0x000000000000000000000000e592427a0aece92de3edee1f18e0157c05861564',
-  ],
-  '0x00000000000000000000000000000000000000000000003635c9adc5dea00000',
-  { contract: BAT, contracts: { ...DEF_CONTRACTS }, contractInfo: DEF_CONTRACTS[BAT] }
+import { addr } from 'micro-eth-signer';
+const priv = '0x0687640ee33ef844baba3329db9e16130bd1735cbae3657bd64aed25e9a5c377';
+const pub = '030fba7ba5cfbf8b00dd6f3024153fc44ddda93727da58c99326eb0edd08195cdb';
+const nonChecksummedAddress = '0x0089d53f703f7e0843953d48133f74ce247184c2';
+const checksummedAddress = addr.addChecksum(nonChecksummedAddress);
+console.log(
+  checksummedAddress, // 0x0089d53F703f7E0843953D48133f74cE247184c2
+  addr.verifyChecksum(checksummedAddress), // true
+  addr.verifyChecksum(nonChecksummedAddress), // also true
+  addr.fromPrivateKey(priv),
+  addr.fromPublicKey(pub)
 );
-console.log(info.hint);
-// Allow 0xe592427a0aece92de3edee1f18e0157c05861564 spending up to 1000 BAT from 0xd8da6bf26964af9d7eed9e03e53415d37aa96045
+```
+
+### Generate random keys and addresses
+
+```ts
+import { addr } from 'micro-eth-signer';
+const random = addr.random(); // Secure: uses CSPRNG
+console.log(random.privateKey, random.address);
+// 0x17ed046e6c4c21df770547fad9a157fd17b48b35fe9984f2ff1e3c6a62700bae
+// 0x26d930712fd2f612a107A70fd0Ad79b777cD87f6
+```
+
+### Human-readable hints
+
+#### Decoding transactions
+
+The transaction sent ERC-20 USDT token between addresses. The library produces a following hint:
+
+> Transfer 22588 USDT to 0xdac17f958d2ee523a2206206994597c13d831ec7
+
+```ts
+import { decodeTx } from 'micro-eth-signer/abi';
+
+const tx =
+  '0xf8a901851d1a94a20082c12a94dac17f958d2ee523a2206206994597c13d831ec780b844a9059cbb000000000000000000000000dac17f958d2ee523a2206206994597c13d831ec7000000000000000000000000000000000000000000000000000000054259870025a066fcb560b50e577f6dc8c8b2e3019f760da78b4c04021382ba490c572a303a42a0078f5af8ac7e11caba9b7dc7a64f7bdc3b4ce1a6ab0a1246771d7cc3524a7200';
+// Decode tx information
+deepStrictEqual(decodeTx(tx), {
+  name: 'transfer',
+  signature: 'transfer(address,uint256)',
+  value: {
+    to: '0xdac17f958d2ee523a2206206994597c13d831ec7',
+    value: 22588000000n,
+  },
+  hint: 'Transfer 22588 USDT to 0xdac17f958d2ee523a2206206994597c13d831ec7',
+});
+```
+
+Or if you have already decoded tx:
+
+```ts
+import { decodeData } from 'micro-eth-signer/abi';
+
+const to = '0x7a250d5630b4cf539739df2c5dacb4c659f2488d';
+const data =
+  '7ff36ab5000000000000000000000000000000000000000000000000ab54a98ceb1f0ad30000000000000000000000000000000000000000000000000000000000000080000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa96045000000000000000000000000000000000000000000000000000000006fd9c6ea0000000000000000000000000000000000000000000000000000000000000002000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2000000000000000000000000106d3c66d22d2dd0446df23d7f5960752994d600';
+const value = 100000000000000000n;
+
+deepStrictEqual(decodeData(to, data, value, { customContracts }), {
+  name: 'swapExactETHForTokens',
+  signature: 'swapExactETHForTokens(uint256,address[],address,uint256)',
+  value: {
+    amountOutMin: 12345678901234567891n,
+    path: [
+      '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2',
+      '0x106d3c66d22d2dd0446df23d7f5960752994d600',
+    ],
+    to: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
+    deadline: 1876543210n,
+  },
+});
+
+// With custom tokens/contracts
+const customContracts = {
+  '0x106d3c66d22d2dd0446df23d7f5960752994d600': { abi: 'ERC20', symbol: 'LABRA', decimals: 9 },
+};
+deepStrictEqual(decodeData(to, data, value, { customContracts }), {
+  name: 'swapExactETHForTokens',
+  signature: 'swapExactETHForTokens(uint256,address[],address,uint256)',
+  value: {
+    amountOutMin: 12345678901234567891n,
+    path: [
+      '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2',
+      '0x106d3c66d22d2dd0446df23d7f5960752994d600',
+    ],
+    to: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
+    deadline: 1876543210n,
+  },
+  hint: 'Swap 0.1 ETH for at least 12345678901.234567891 LABRA. Expires at Tue, 19 Jun 2029 06:00:10 GMT',
+});
+```
+
+#### Decoding events
+
+Decoding the event produces the following hint:
+
+> Allow 0xe592427a0aece92de3edee1f18e0157c05861564 spending up to 1000 BAT from 0xd8da6bf26964af9d7eed9e03e53415d37aa96045
+
+```ts
+import { decodeEvent } from 'micro-eth-signer/abi';
+
+const to = '0x0d8775f648430679a709e98d2b0cb6250d2887ef';
+const topics = [
+  '0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925',
+  '0x000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa96045',
+  '0x000000000000000000000000e592427a0aece92de3edee1f18e0157c05861564',
+];
+const data = '0x00000000000000000000000000000000000000000000003635c9adc5dea00000';
+const einfo = decodeEvent(to, topics, data);
+console.log(einfo);
 ```
 
 ### Call smart contracts
 
+User explicitly passes built-in function `fetch` to enable network access to JSON-RPC web3 node.
+
 #### Fetch Chainlink oracle prices
 
 ```ts
-import chainlink from 'micro-eth-signer/web3/api/chainlink';
-const provider = new web3net.Web3({
-  url: 'https://nodes.mewapi.io/rpc/eth',
-  headers: { Origin: 'https://www.myetherwallet.com' },
+import FetchProvider from 'micro-eth-signer/net/provider';
+import Chainlink from 'micro-eth-signer/net/chainlink';
+const provider = new FetchProvider(thisGlobal.fetch, 'https://nodes.mewapi.io/rpc/eth', {
+  Origin: 'https://www.myetherwallet.com',
 });
-const btc = await chainlink.coinPrice(provider, 'BTC');
-const bat = await chainlink.tokenPrice(provider, 'BAT');
+const link = new Chainlink(provider);
+const btc = await link.coinPrice('BTC');
+const bat = await link.tokenPrice('BAT');
 console.log({ btc, bat }); // BTC 19188.68870991, BAT 0.39728989 in USD
 ```
 
-#### Uniswap
+#### Swap tokens with Uniswap
+
+> Btw cool tool, glad you built it!
+
+_Uniswap Founder_
 
 Swap 12.12 USDT to BAT with uniswap V3 defaults of 0.5% slippage, 30 min expiration.
 
 ```ts
-import univ2 from 'micro-eth-signer/web3/api/uniswap-v2';
-import univ3 from 'micro-eth-signer/web3/api/uniswap-v3';
+import { tokenFromSymbol } from 'micro-eth-signer/abi';
+import FetchProvider from 'micro-eth-signer/net/provider';
+// import Uniswap2 from 'micro-eth-signer/net/uniswap-v2';
+import Uniswap3 from 'micro-eth-signer/net/uniswap-v3';
 
-const provider = new web3net.Web3({
-  url: 'https://nodes.mewapi.io/rpc/eth',
-  headers: { Origin: 'https://www.myetherwallet.com' },
+const provider = new FetchProvider(thisGlobal.fetch, 'https://nodes.mewapi.io/rpc/eth', {
+  Origin: 'https://www.myetherwallet.com',
 });
-const USDT = contracts.tokenFromSymbol('USDT');
-const BAT = contracts.tokenFromSymbol('BAT');
-const u3 = new univ3.UniswapV3(provider); // or new univ2.UniswapV2(provider)
+const USDT = tokenFromSymbol('USDT');
+const BAT = tokenFromSymbol('BAT');
+const u3 = new Uniswap3(provider); // or new UniswapV2(provider)
 const fromAddress = '0xd8da6bf26964af9d7eed9e03e53415d37aa96045';
 const toAddress = '0xd8da6bf26964af9d7eed9e03e53415d37aa96045';
 const swap = await u3.swap(USDT, BAT, '12.12', { slippagePercent: 0.5, ttl: 30 * 60 });
@@ -152,15 +220,37 @@ const swapData = await swap.tx(fromAddress, toAddress);
 console.log(swapData.amount, swapData.expectedAmount, swapData.allowance);
 ```
 
-### Type inference
+### ABI type inference
 
-The ABI is type-safe with following limitations:
+The ABI is type-safe when `as const` is specified:
 
-- Fixed size arrays can have 999 elements at max: string[], string[1], ..., string[999]
-- Fixed size 2d arrays can have 39 elements at max: string[][], string[][1], ..., string[39][39]
-- Which is enough for almost all cases
-- ABI must be described as constant value: `[...] as const`
-- We're not able to handle contracts with method overload (same function names with different args) — the code will still work, but not types
+```ts
+import { createContract } from 'micro-eth-signer/abi';
+const PAIR_CONTRACT = [
+  {
+    type: 'function',
+    name: 'getReserves',
+    outputs: [
+      { name: 'reserve0', type: 'uint112' },
+      { name: 'reserve1', type: 'uint112' },
+      { name: 'blockTimestampLast', type: 'uint32' },
+    ],
+  },
+] as const;
+
+const contract = createContract(PAIR_CONTRACT);
+// Would create following typescript type:
+{
+  getReserves: {
+    encodeInput: () => Uint8Array;
+    decodeOutput: (b: Uint8Array) => {
+      reserve0: bigint;
+      reserve1: bigint;
+      blockTimestampLast: bigint;
+    };
+  }
+}
+```
 
 We're parsing values as:
 
@@ -170,105 +260,65 @@ We're parsing values as:
 // single input
 {inputs: [{type: 'uint'}]} -> encodeInput(bigint);
 // all inputs named
-{inputs: [{type: 'uint', name: 'lol}, {type: 'address', name: 'wut'}]} -> encodeInput({lol: bigint, wut: string})
+{inputs: [{type: 'uint', name: 'lol'}, {type: 'address', name: 'wut'}]} -> encodeInput({lol: bigint, wut: string})
 // at least one input is unnamed
-{inputs: [{type: 'uint', name: 'lol}, {type: 'address'}]} -> encodeInput([bigint, string])
+{inputs: [{type: 'uint', name: 'lol'}, {type: 'address'}]} -> encodeInput([bigint, string])
 // Same applies for output!
 ```
 
-Check out [`src/api/ens.ts`](./src/api/ens.ts) for type-safe contract execution example.
+There are following limitations:
 
-### Human-friendly field validation
+- Fixed size arrays can have 999 elements at max: string[], string[1], ..., string[999]
+- Fixed size 2d arrays can have 39 elements at max: string[][], string[][1], ..., string[39][39]
+- Which is enough for almost all cases
+- ABI must be described as constant value: `[...] as const`
+- We're not able to handle contracts with method overload (same function names with different args) — the code will still work, but not types
 
-```ts
-import { validateField, validateFields } from 'micro-eth-signer/tx-validator';
-```
+Check out [`src/net/ens.ts`](./src/net/ens.ts) for type-safe contract execution example.
 
-### Formatters
+### RLP parsing
 
-```ts
-export function parseDecimal(s: string, precision: number): bigint;
-export function formatDecimal(n: bigint, precision: number): string;
-export function perCentDecimal(precision: number, price: number): bigint;
-export function roundDecimal(
-  n: bigint,
-  roundPrecision: number,
-  precision?: number,
-  price?: number
-): bigint;
-export function fromWei(wei: string | number | bigint): string;
-export function formatUSD(amount: number): string;
-```
-
-### Low-level transaction API
-
-Transaction represents unsigned & signed ETH transactions. They are serialized & deserialized using RLP. Here's an example of the same transaction in raw state, and serialized state:
-
-```js
-// raw
-{
-  "nonce": "0x01", "gasLimit": "0x5208", "gasPrice": "0x02540be400",
-  "to": "0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e",
-  "value": "2386f26fc10000", "data": "0x"
-}
-// serialized
-"0xeb018502540be40082520894df90dea0e0bf5ca6d2a7f0cb86874ba6714f463e872386f26fc1000080808080"
-```
-
-You can use either of those to initialize new `Transaction`. There are a few methods available:
-
-- `new Transaction(serialized[, chain, hardfork, type])` - creates transaction from Raw TX string.
-  - `chain`: optional argument (default is `mainnet`; `ropsten`, `rinkeby`, `goerli`, `kovan` etc)
-  - `hardfork`: optional argument (default is `london`). The only place we're checking for `hardfork`
-    is the replay protection code. There are very old transactions that don't support replay protection,
-    you'll probably won't need them
-  - `type`: optional argument (default is `eip1559`). Can be either `legacy`, `eip2930`, or `eip1559`
-    (Berlin and London style transactions with access lists and `maxFeePerGas`/`maxPriorityFeePerGas`)
-- `new Transaction(rawTx[, chain, hardfork, type])` - creates transaction from Raw TX data.
-  - `rawTx` must have fields `to`, `value`, `nonce`, `gasLimit`
-  - `rawTx` must have `maxFeePerGas` (eip1559 txs) or `gasPrice` (berlin & legacy txs)
-  - `to` is recipient's address
-  - `value` is amount to send in wei
-  - `nonce` is sender's nonce in number
-  - `gasLimit` is transaction's Gas Limit in wei (minimum is `21000`)
-  - `maxFeePerGas` is eip1559 transaction's max acceptable gas price in wei (100 gwei is `100 * 10 ** 9`). Not applicable to legacy transactions
-  - `maxPriorityFeePerGas` is eip1559 transaction's max acceptable tip in wei. Not applicable to legacy transactions
-  - `gasPrice` is legacy transaction's Gas Price in wei. Not applicable to eip1559 transactions
-  - `data` is transaction's data if it's calling some smart contracts
-  - `accessList` is transaction's Access List, a list of addresses that its smart contract call touches. Basically an array of strings: `["0x123...", "0x456..."]`. Not applicable to legacy transactions
-- `Transaction#sign(privateKey: string | Uint8Array): Transaction` —
-  creates new transaction with same data, but signed by following private key
-- `Transaction#recoverSenderPublicKey(): string` — recovers sender's public key from **signed transaction**
-
-Transaction properties:
-
-- `isSigned: boolean` - whether tx is signed with private key
-- `gasPrice: bigint` - legacy wei/gas
-- `maxFeePerGas: bigint`, `maxPriorityFeePerGas: bigint` - eip1559 wei/gas
-- `amount: bigint` - amount (aka `value`) in wei
-- `fee: bigint` - fee in wei (`maxFeePerGas` _ `gasLimit` or `gasPrice` _ `gasLimit`)
-- `upfrontCost: bigint` - amount + fee in wei, combined
-- `to: string` - address that receives the tx
-- `nonce: number` - account's nonce
-- `sender: string` - address that sends the tx. Only signed txs have the field
-- `hash: string` - signed tx hash used in block explorers. Example: `50b6e7b58320c885ab7b2ee0d0b5813a697268bd2494a06de792790b13668c08`
-- `raw: Object` - raw transaction's data with fields encoded as strings
-
-As an example, here's how to create legacy pre-eip1559 transaction:
+We implement RLP in just 100 lines of code, powered by [packed](https://github.com/paulmillr/micro-packed):
 
 ```ts
-const legacyTx = new Transaction(
-  {
-    to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
-    gasPrice: 100n * 10n ** 9n, // 100 gwei in wei
-    value: 10n ** 18n, // 1 eth in wei
-    nonce: 1,
-  },
-  undefined,
-  undefined,
-  'legacy'
-);
+import { RLP } from 'micro-eth-signer/rlp';
+RLP.decode(RLP.encode('dog'));
 ```
+
+### Sign and verify messages
+
+EIP-712 is not supported yet.
+
+```ts
+import { addr, messenger } from 'micro-eth-signer';
+const { privateKey, address } = addr.random();
+const msg = 'noble';
+const sig = messenger.sign(msg, privateKey);
+const isValid = messenger.verify(sig, msg, address);
+```
+
+## Security
+
+Main points to consider when auditing the library:
+
+- ABI correctness
+  - All ABI JSON should be compared to some external source
+  - There are different databases of ABI: one is hosted by Etherscan, when you open contract page
+- Network access
+  - There must be no network calls in the library
+  - Some functionality requires network: these need external network interface, conforming to `Web3Provider`
+  - `createContract(abi)` should create purely offline contract
+  - `createContract(abi, net)` would create contract that calls network using `net`, using external interface
+- Skipped test vectors
+  - There is `SKIPPED_ERRORS`, which contains list of test vectors from other libs that we skip
+  - They are skipped because we consider them invalid, or so
+  - If you believe they're skipped for wrong reasons, investigate and report
+
+The library is cross-tested against other libraries (last update on 25 Feb 2024):
+
+- ethereum-tests v13.1
+- ethers 6.11.1
+- viem v2.7.13
 
 ## Performance
 

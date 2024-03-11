@@ -1,20 +1,37 @@
 name: Node CI
-
-on: [push, pull_request]
+on:
+  - push
+  - pull_request
 jobs:
   test:
     name: v${{ matrix.node }} @ ubuntu-latest
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        node: [20]
+        node:
+          - 18
+          - 20
     steps:
-    - uses: actions/checkout@v3
-    - name: Use Node.js ${{ matrix.node }}
-      uses: actions/setup-node@v3
-      with:
-        node-version: ${{ matrix.node }}
-    - run: npm install
-    - run: npm run build --if-present
-    - run: npm test
-    - run: npm run lint --if-present
+      - uses: actions/checkout@1e31de5234b9f8995739874a8ce0492dc87873e2 # v4
+      - name: Use Node.js ${{ matrix.node }}
+        uses: actions/setup-node@8f152de45cc393bb48ce5d89d36b731f54556e65 # v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Cache Submodules
+        id: cache-submodule
+        uses: actions/cache@13aacd865c20de90d75de3b17ebe84f7a17d57d2 # v4
+        with:
+          path: |
+            test/vectors/ethereum-tests
+            test/vectors/ethers
+            test/vectors/viem
+          key: ${{ runner.os }}-submodules
+      - name: Update git submodules
+        if: steps.cache-submodule.outputs.cache-hit != 'true'
+        uses: actions/checkout@1e31de5234b9f8995739874a8ce0492dc87873e2 # v4
+        with:
+          submodules: recursive
+      - run: npm install
+      - run: npm run build --if-present
+      - run: npm test
+      - run: npm run lint --if-present

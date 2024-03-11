@@ -1,9 +1,27 @@
 import { deepStrictEqual, throws } from 'node:assert';
 import { describe, should } from 'micro-should';
-import { hex, utf8 } from '@scure/base';
+import { bytesToHex, hexToBytes, utf8ToBytes } from '@noble/hashes/utils';
 import * as P from 'micro-packed';
-import * as abi from '../lib/esm/web3.js';
-import * as abi_default_contracts from '../lib/esm/contracts/index.js';
+import * as abi from '../lib/esm/abi/decoder.js';
+import { strip0x } from '../lib/esm/utils.js';
+import { CONTRACTS, decodeData, decodeEvent, decodeTx } from '../lib/esm/abi/index.js';
+
+import { default as ERC20 } from '../lib/esm/abi/erc20.js';
+import {
+  default as UNISWAP_V2_ROUTER,
+  UNISWAP_V2_ROUTER_CONTRACT,
+} from '../lib/esm/abi/uniswap-v2.js';
+import {
+  default as UNISWAP_V3_ROUTER,
+  UNISWAP_V3_ROUTER_CONTRACT,
+} from '../lib/esm/abi/uniswap-v3.js';
+import {
+  default as KYBER_NETWORK_PROXY,
+  KYBER_NETWORK_PROXY_CONTRACT,
+} from '../lib/esm/abi/kyber.js';
+
+const hex = { encode: bytesToHex, decode: hexToBytes };
+
 // Based on ethers.js test cases (MIT licensed)
 const abiTestEvents = {
   transfer: {
@@ -870,13 +888,13 @@ function t(type, value, exp) {
   should(`mapType(${type}, ${value}, ${exp})`, () => {
     const p = abi.mapComponent(unwrapTestType(type));
     deepStrictEqual(hex.encode(p.encode(value)), exp);
-    deepStrictEqual(p.decode(hex.decode(abi.strip0x(exp))), value);
+    deepStrictEqual(p.decode(hex.decode(strip0x(exp))), value);
   });
 }
 function tErr(type, value, exp) {
   const p = abi.mapComponent(unwrapTestType(type));
   if (value !== undefined) throws(() => hex.encode(p.encode(value)));
-  if (exp !== undefined) throws(() => p.decode(hex.decode(abi.strip0x(exp))));
+  if (exp !== undefined) throws(() => p.decode(hex.decode(strip0x(exp))));
 }
 describe('Type mapping', () => {
   t(
@@ -1266,14 +1284,14 @@ should('mapArgs', () => {
   t(
     SPEC_CONTRACT,
     'sam',
-    [utf8.decode('dave'), true, [1, 2, 3]],
+    [utf8ToBytes('dave'), true, [1, 2, 3]],
     '0000000000000000000000000000000000000000000000000000000000000060000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000000000000000000000000000000000000000000464617665000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000003000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000003'
   );
   // A call to a function with the signature f(uint,uint32[],bytes10,bytes) with values (0x123, [0x456, 0x789], "1234567890", "Hello, world!")
   t(
     SPEC_CONTRACT,
     'd',
-    [0x123, [0x456, 0x789], utf8.decode('1234567890'), 'Hello, world!'],
+    [0x123, [0x456, 0x789], utf8ToBytes('1234567890'), 'Hello, world!'],
     '0000000000000000000000000000000000000000000000000000000000000123' +
       '0000000000000000000000000000000000000000000000000000000000000080' +
       '3132333435363738393000000000000000000000000000000000000000000000' +
@@ -1318,7 +1336,7 @@ should('Decoder', () => {
   const USDT = '0xdac17f958d2ee523a2206206994597c13d831ec7';
   const WETH = '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2';
   let d = new abi.Decoder();
-  d.add(USDT, abi_default_contracts.ERC20);
+  d.add(USDT, ERC20);
   // tx hash: 0x6fd66d7b306f77fc01a397f55d4efe19256458badd8782d523d06ed450851d0a
   const data = hex.decode(
     'a9059cbb000000000000000000000000dac17f958d2ee523a2206206994597c13d831ec70000000000000000000000000000000000000000000000000000000542598700'
@@ -1340,8 +1358,8 @@ should('Decoder', () => {
     'Transfer 22588 USDT to 0xdac17f958d2ee523a2206206994597c13d831ec7'
   );
   // Uni
-  const UNISWAP = abi_default_contracts.UNISWAP_V2_ROUTER_CONTRACT;
-  d.add(UNISWAP, abi_default_contracts.UNISWAP_V2_ROUTER);
+  const UNISWAP = UNISWAP_V2_ROUTER_CONTRACT;
+  d.add(UNISWAP, UNISWAP_V2_ROUTER);
   const LABRA = '0x106d3c66d22d2dd0446df23d7f5960752994d600';
   const LAYER = '0x0ff6ffcfda92c53f615a4a75d982f399c989366b';
   const PLUTON = '0xd8912c10681d8b21fd3742244f44658dba12264e';
@@ -1369,8 +1387,8 @@ should('Decoder', () => {
   };
   const uniOpt = {
     contract: UNISWAP,
-    contracts: Object.assign({}, abi_default_contracts.DEFAULT_CONTRACTS, CUSTOM_TOKENS),
-    contractInfo: abi_default_contracts.DEFAULT_CONTRACTS[UNISWAP],
+    contracts: Object.assign({}, CONTRACTS, CUSTOM_TOKENS),
+    contractInfo: CONTRACTS[UNISWAP],
   };
   const tx0 = hex.decode(
     '7ff36ab5000000000000000000000000000000000000000000000000ab54a98ceb1f0ad30000000000000000000000000000000000000000000000000000000000000080000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa96045000000000000000000000000000000000000000000000000000000006fd9c6ea0000000000000000000000000000000000000000000000000000000000000002000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2000000000000000000000000106d3c66d22d2dd0446df23d7f5960752994d600'
@@ -1401,12 +1419,12 @@ should('Decoder', () => {
     'Swap up to 98.765432109876543212 ETH for exact 12.345678901234567891 TRU. Expires at Tue, 19 Jun 2029 06:00:10 GMT'
   );
   // Kyber
-  const KYBER = abi_default_contracts.KYBER_NETWORK_PROXY_CONTRACT;
-  d.add(KYBER, abi_default_contracts.KYBER_NETWORK_PROXY);
+  const KYBER = KYBER_NETWORK_PROXY_CONTRACT;
+  d.add(KYBER, KYBER_NETWORK_PROXY);
   const kyberOpt = {
     contract: KYBER,
-    contracts: Object.assign({}, abi_default_contracts.DEFAULT_CONTRACTS, CUSTOM_TOKENS),
-    contractInfo: abi_default_contracts.DEFAULT_CONTRACTS[KYBER],
+    contracts: Object.assign({}, CONTRACTS, CUSTOM_TOKENS),
+    contractInfo: CONTRACTS[KYBER],
   };
   const tx4 = hex.decode(
     'ae591d540000000000000000000000007fc66500c84a76ad7e9c93437bfc5ac33e2ddae90000000000000000000000000000000000000000000000055aa54d38e5267eec000000000000000000000000f629cbd94d3791c9250152bd8dfbdf380e2a3b9c000000000000000000000000dc083bf73176bd3ed63907424d26d02571d92b95000000000000000000000000000000000000000000000000ab54a98ceb1f0ad300000000000000000000000000000000000000000000000aef84762139eb8000000000000000000000000000de63aef60307655405835da74ba02ce4db1a42fb000000000000000000000000000000000000000000000000000000000000001200000000000000000000000000000000000000000000000000000000000001200000000000000000000000000000000000000000000000000000000000000000'
@@ -1429,12 +1447,12 @@ should('Decoder', () => {
     d.decode(KYBER, tx6, Object.assign(kyberOpt, { amount: 0n })).hint,
     'Swap 98.765432109876543212 RAE For 0.056059083163201264 ETH (with platform fee: 0.079012345687901234 RAE)'
   );
-  const UNISWAP3 = abi_default_contracts.UNISWAP_V3_ROUTER_CONTRACT;
-  d.add(UNISWAP3, abi_default_contracts.UNISWAP_V3_ROUTER);
+  const UNISWAP3 = UNISWAP_V3_ROUTER_CONTRACT;
+  d.add(UNISWAP3, UNISWAP_V3_ROUTER);
   const uni3Opt = {
     contract: UNISWAP3,
-    contracts: Object.assign({}, abi_default_contracts.DEFAULT_CONTRACTS, CUSTOM_TOKENS),
-    contractInfo: abi_default_contracts.DEFAULT_CONTRACTS[UNISWAP3],
+    contracts: Object.assign({}, CONTRACTS, CUSTOM_TOKENS),
+    contractInfo: CONTRACTS[UNISWAP3],
   };
   const mtx0 = hex.decode(
     'ac9650d800000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000001c00000000000000000000000000000000000000000000000000000000000000144f28c0498000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa96045000000000000000000000000000000000000000000000000000000006fd9c6ea0000000000000000000000000000000000000000000000056bc75e2d63100000000000000000000000000000000000000000000000000000ab54a98ceb1f0ad30000000000000000000000000000000000000000000000000000000000000042852e5427c86a3b46dd25e5fe027bb15f53c4bcb8000bb8dac17f958d2ee523a2206206994597c13d831ec7000bb8c02aaa39b223fe8d0a0e5c4f27ead9083c756cc200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000412210e8a00000000000000000000000000000000000000000000000000000000'
@@ -1524,11 +1542,11 @@ should('ABI Events: null values', () => {
 should('ABI Events: Decoder', () => {
   const BAT = '0x0d8775f648430679a709e98d2b0cb6250d2887ef';
   let d = new abi.Decoder();
-  d.add(BAT, abi_default_contracts.ERC20);
+  d.add(BAT, ERC20);
   const usdtOpt = {
     contract: BAT,
-    contracts: Object.assign({}, abi_default_contracts.DEFAULT_CONTRACTS),
-    contractInfo: abi_default_contracts.DEFAULT_CONTRACTS[BAT],
+    contracts: Object.assign({}, CONTRACTS),
+    contractInfo: CONTRACTS[BAT],
   };
   deepStrictEqual(
     d.decodeEvent(
@@ -1556,8 +1574,8 @@ should('ABI Events: Decoder', () => {
 
 should('example/libra', async () => {
   let d = new abi.Decoder();
-  const UNISWAP = abi_default_contracts.UNISWAP_V2_ROUTER_CONTRACT;
-  d.add(UNISWAP, abi_default_contracts.UNISWAP_V2_ROUTER);
+  const UNISWAP = UNISWAP_V2_ROUTER_CONTRACT;
+  d.add(UNISWAP, UNISWAP_V2_ROUTER);
   const LABRA = '0x106d3c66d22d2dd0446df23d7f5960752994d600';
 
   const CUSTOM_TOKENS = {
@@ -1565,8 +1583,8 @@ should('example/libra', async () => {
   };
   const uniOpt = {
     contract: UNISWAP,
-    contracts: Object.assign({}, abi_default_contracts.DEFAULT_CONTRACTS, CUSTOM_TOKENS),
-    contractInfo: abi_default_contracts.DEFAULT_CONTRACTS[UNISWAP],
+    contracts: Object.assign({}, CONTRACTS, CUSTOM_TOKENS),
+    contractInfo: CONTRACTS[UNISWAP],
   };
   const tx0 = hex.decode(
     '7ff36ab5000000000000000000000000000000000000000000000000ab54a98ceb1f0ad30000000000000000000000000000000000000000000000000000000000000080000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa96045000000000000000000000000000000000000000000000000000000006fd9c6ea0000000000000000000000000000000000000000000000000000000000000002000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2000000000000000000000000106d3c66d22d2dd0446df23d7f5960752994d600'
@@ -1713,9 +1731,8 @@ should('Interleave ptrs', () => {
   };
 
   for (const l of [4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096]) {
-    console.log(`============== LEN ${l} ========================`);
     const ptrEnc = getArr(l);
-    console.log('ptrEnc', ptrEnc.length);
+    console.log('encoding ptr', l, ptrEnc.length);
     //console.log('PTR', ptrArr.decode(hex.decode(ptrEnc)));
     //console.log('RAW', raw.decode(hex.decode(ptrEnc)));
     throws(() => arr2.encode(arr2.decode(hex.decode(ptrEnc))));
@@ -1819,8 +1836,171 @@ should('Junk data from real tx', () => {
   // '000000000000000000000000106d3c66d22d2dd0446df23d7f5960752994d600'
 });
 
+describe('simple decoder API', () => {
+  should('decodeData', () => {
+    // tx hash: 0x6fd66d7b306f77fc01a397f55d4efe19256458badd8782d523d06ed450851d0a
+    const to0 = '0xdac17f958d2ee523a2206206994597c13d831ec7'; // USDT, but we don't know that. It is part of tx
+    const data =
+      'a9059cbb000000000000000000000000dac17f958d2ee523a2206206994597c13d831ec70000000000000000000000000000000000000000000000000000000542598700';
+    deepStrictEqual(decodeData(to0, data), {
+      name: 'transfer',
+      signature: 'transfer(address,uint256)',
+      value: {
+        to: '0xdac17f958d2ee523a2206206994597c13d831ec7',
+        value: 22588000000n,
+      },
+      hint: 'Transfer 22588 USDT to 0xdac17f958d2ee523a2206206994597c13d831ec7',
+    });
+  });
+  should('decodeData with custom tokens', () => {
+    // User defines other tokens
+    const customContracts = {
+      '0x106d3c66d22d2dd0446df23d7f5960752994d600': { abi: 'ERC20', symbol: 'LABRA', decimals: 9 },
+    };
+    // Uniswap v2 router contract, but user doesn't know it. It was part of tx.
+    const to = '0x7a250d5630b4cf539739df2c5dacb4c659f2488d';
+    const data =
+      '7ff36ab5000000000000000000000000000000000000000000000000ab54a98ceb1f0ad30000000000000000000000000000000000000000000000000000000000000080000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa96045000000000000000000000000000000000000000000000000000000006fd9c6ea0000000000000000000000000000000000000000000000000000000000000002000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2000000000000000000000000106d3c66d22d2dd0446df23d7f5960752994d600';
+
+    deepStrictEqual(decodeData(to, data, 100000000000000000n, { customContracts }), {
+      name: 'swapExactETHForTokens',
+      signature: 'swapExactETHForTokens(uint256,address[],address,uint256)',
+      value: {
+        amountOutMin: 12345678901234567891n,
+        path: [
+          '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2',
+          '0x106d3c66d22d2dd0446df23d7f5960752994d600',
+        ],
+        to: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
+        deadline: 1876543210n,
+      },
+      hint: 'Swap 0.1 ETH for at least 12345678901.234567891 LABRA. Expires at Tue, 19 Jun 2029 06:00:10 GMT',
+    });
+    // Without information about custom contracts/tokens there is no hint, but we still try to decode what we can
+    deepStrictEqual(decodeData(to, data, 100000000000000000n), {
+      name: 'swapExactETHForTokens',
+      signature: 'swapExactETHForTokens(uint256,address[],address,uint256)',
+      value: {
+        amountOutMin: 12345678901234567891n,
+        path: [
+          '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2',
+          '0x106d3c66d22d2dd0446df23d7f5960752994d600',
+        ],
+        to: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
+        deadline: 1876543210n,
+      },
+    });
+  });
+  should('decodeTx', () => {
+    // tx hash 0x6fd66d7b306f77fc01a397f55d4efe19256458badd8782d523d06ed450851d0a
+    const tx =
+      '0xf8a901851d1a94a20082c12a94dac17f958d2ee523a2206206994597c13d831ec780b844a9059cbb000000000000000000000000dac17f958d2ee523a2206206994597c13d831ec7000000000000000000000000000000000000000000000000000000054259870025a066fcb560b50e577f6dc8c8b2e3019f760da78b4c04021382ba490c572a303a42a0078f5af8ac7e11caba9b7dc7a64f7bdc3b4ce1a6ab0a1246771d7cc3524a7200';
+    // Decode tx information
+    deepStrictEqual(decodeTx(tx), {
+      name: 'transfer',
+      signature: 'transfer(address,uint256)',
+      value: {
+        to: '0xdac17f958d2ee523a2206206994597c13d831ec7',
+        value: 22588000000n,
+      },
+      hint: 'Transfer 22588 USDT to 0xdac17f958d2ee523a2206206994597c13d831ec7',
+    });
+  });
+  should('decodeEvent', () => {
+    const to = '0x0d8775f648430679a709e98d2b0cb6250d2887ef'; // BAT, but user doesn't know that!
+    const topics = [
+      '0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925',
+      '0x000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa96045',
+      '0x000000000000000000000000e592427a0aece92de3edee1f18e0157c05861564',
+    ];
+    const data = '0x00000000000000000000000000000000000000000000003635c9adc5dea00000';
+    deepStrictEqual(decodeEvent(to, topics, data), {
+      name: 'Approval',
+      signature: 'Approval(address,address,uint256)',
+      value: {
+        value: 1000000000000000000000n,
+        owner: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
+        spender: '0xe592427a0aece92de3edee1f18e0157c05861564',
+      },
+      hint: 'Allow 0xe592427a0aece92de3edee1f18e0157c05861564 spending up to 1000 BAT from 0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
+    });
+  });
+  should('decoding receipts', () => {
+    // Random example from 'https://docs.alchemy.com/reference/eth-gettransactionreceipt'
+    const result = {
+      transactionHash: '0x8fc90a6c3ee3001cdcbbb685b4fbe67b1fa2bec575b15b0395fea5540d0901ae',
+      blockHash: '0x58a945e1558810523df00490ff28cbe111b37851c44679ce5be1eeaebb4b4907',
+      blockNumber: '0xeb8822',
+      logs: [
+        {
+          transactionHash: '0x8fc90a6c3ee3001cdcbbb685b4fbe67b1fa2bec575b15b0395fea5540d0901ae',
+          address: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48',
+          blockHash: '0x58a945e1558810523df00490ff28cbe111b37851c44679ce5be1eeaebb4b4907',
+          blockNumber: '0xeb8822',
+          data: '0x000000000000000000000000000000000000000000000000000000001debea42',
+          logIndex: '0x6c',
+          removed: false,
+          topics: [
+            '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef',
+            '0x0000000000000000000000005067c042e35881843f2b31dfc2db1f4f272ef48c',
+            '0x0000000000000000000000003ee18b2214aff97000d974cf647e7c347e8fa585',
+          ],
+          transactionIndex: '0x4e',
+        },
+        {
+          transactionHash: '0x8fc90a6c3ee3001cdcbbb685b4fbe67b1fa2bec575b15b0395fea5540d0901ae',
+          address: '0x98f3c9e6e3face36baad05fe09d375ef1464288b',
+          blockHash: '0x58a945e1558810523df00490ff28cbe111b37851c44679ce5be1eeaebb4b4907',
+          blockNumber: '0xeb8822',
+          data: '0x000000000000000000000000000000000000000000000000000000000001371e000000000000000000000000000000000000000000000000000000006eca00000000000000000000000000000000000000000000000000000000000000000080000000000000000000000000000000000000000000000000000000000000000f000000000000000000000000000000000000000000000000000000000000008501000000000000000000000000000000000000000000000000000000001debea42000000000000000000000000a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48000267c46aa713cfe47608dd1c16f8a0325208df084c3cbebf9f366ad0eafc2653e4000100000000000000000000000000000000000000000000000000000000001e8542000000000000000000000000000000000000000000000000000000',
+          logIndex: '0x6d',
+          removed: false,
+          topics: [
+            '0x6eb224fb001ed210e379b335e35efe88672a8ce935d981a6896b27ffdf52a3b2',
+            '0x0000000000000000000000003ee18b2214aff97000d974cf647e7c347e8fa585',
+          ],
+          transactionIndex: '0x4e',
+        },
+      ],
+      contractAddress: null,
+      effectiveGasPrice: '0x2d7003407',
+      cumulativeGasUsed: '0x76c649',
+      from: '0x5067c042e35881843f2b31dfc2db1f4f272ef48c',
+      gasUsed: '0x1a14b',
+      logsBloom:
+        '0x00000000000100000000008000000000000000000000000000000000000000000010000000000000001000000000000000000000000000000000000000000000000000000000000008008008000000000000000000000000000000000000000000000000000000000000000000004000000000000000000000000010000000000000000000000000000000000000000000000000010002000000000000000400000000000400200001000000000000000000000000040000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000004000000000000000000',
+      status: '0x1',
+      to: '0x3ee18b2214aff97000d974cf647e7c347e8fa585',
+      transactionIndex: '0x4e',
+      type: '0x0',
+    };
+    const res = result.logs.map((log) => ({
+      data: decodeData(log.address, log.data),
+      event: decodeEvent(log.address, log.topics, log.data),
+    }));
+    deepStrictEqual(res, [
+      {
+        // It calls 'transferTokens' @ wormhole bridge, we don't know what it is.
+        data: undefined,
+        event: {
+          name: 'Transfer',
+          signature: 'Transfer(address,address,uint256)',
+          value: {
+            value: 502000194n,
+            from: '0x5067c042e35881843f2b31dfc2db1f4f272ef48c',
+            to: '0x3ee18b2214aff97000d974cf647e7c347e8fa585',
+          },
+          hint: 'Transfer 502.000194 USDC from 0x5067c042e35881843f2b31dfc2db1f4f272ef48c to 0x3ee18b2214aff97000d974cf647e7c347e8fa585',
+        },
+      },
+      // this is wormhole abi, we have no idea about it.
+      { data: undefined, event: undefined },
+    ]);
+  });
+});
+
 // ESM is broken.
-import url from 'url';
+import url from 'node:url';
 if (import.meta.url === url.pathToFileURL(process.argv[1]).href) {
   should.run();
 }

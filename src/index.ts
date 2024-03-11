@@ -1,510 +1,258 @@
 /*! micro-eth-signer - MIT License (c) 2021 Paul Miller (paulmillr.com) */
-import { keccak_256 } from '@noble/hashes/sha3';
-import { bytesToHex, hexToBytes as _hexToBytes } from '@noble/hashes/utils';
-import { isBytes } from '@noble/curves/abstract/utils';
 import { secp256k1 } from '@noble/curves/secp256k1';
-import * as RLP from '@ethereumjs/rlp';
-
-export const CHAIN_TYPES = { mainnet: 1, ropsten: 3, rinkeby: 4, goerli: 5, kovan: 42 };
-export const TRANSACTION_TYPES = { legacy: 0, eip2930: 1, eip1559: 2 };
-
-type Hex = string | Uint8Array;
-type RSRec = { r: bigint; s: bigint; recovery?: number };
-type SignOpts = { extraEntropy?: boolean };
-
-// All secp methods are in this object. This makes secp library easily replaceable
-const secp = {
-  getPublicKey65b: (priv: Hex) => secp256k1.getPublicKey(priv, false),
-  normalizePublicKeyTo65b: (pub: Hex) => secp256k1.ProjectivePoint.fromHex(pub).toRawBytes(false),
-  sign: (msg: Hex, priv: Hex, opts?: SignOpts) => {
-    return secp256k1.sign(msg, priv, {
-      extraEntropy: opts?.extraEntropy === false ? undefined : true,
-    });
-  },
-  signAsync: async (msg: Hex, priv: Hex, opts?: SignOpts): Promise<RSRec> => {
-    return secp256k1.sign(msg, priv, {
-      extraEntropy: opts?.extraEntropy === false ? undefined : true,
-    });
-  },
-  sigRecoverPub: (rsrec: RSRec, msg: Hex, checkHighS = true) => {
-    const sig = new secp256k1.Signature(rsrec.r, rsrec.s).addRecoveryBit(rsrec.recovery!);
-    if (checkHighS && sig.hasHighS()) throw new Error('Invalid signature: s is invalid');
-    return sig.recoverPublicKey(msg).toRawBytes();
-  },
-};
-
-export function add0x(hex: string) {
-  return /^0x/i.test(hex) ? hex : `0x${hex}`;
-}
-
-export function strip0x(hex: string) {
-  return hex.replace(/^0x/i, '');
-}
-
-export function hexToBytes(hex: string): Uint8Array {
-  return _hexToBytes(strip0x(hex));
-}
-
-export function numberTo0xHex(num: number | bigint): string {
-  const hex = num.toString(16);
-  const x2 = hex.length & 1 ? `0${hex}` : hex;
-  return add0x(x2);
-}
-
-function hexToNumber(hex: string): bigint {
-  if (typeof hex !== 'string') {
-    throw new TypeError('hexToNumber: expected string, got ' + typeof hex);
-  }
-  return hex ? BigInt(add0x(hex)) : 0n;
-}
-
-function isObject(item: unknown): item is object {
-  return item != null && typeof item === 'object';
-}
-
-function cloneDeep<T>(obj: T): T {
-  if (Array.isArray(obj)) {
-    return obj.map(cloneDeep) as unknown as T;
-  } else if (typeof obj === 'bigint') {
-    return BigInt(obj) as unknown as T;
-  } else if (typeof obj === 'object') {
-    // should be last, so it won't catch other types
-    let res: any = {};
-    for (let key in obj) res[key] = cloneDeep(obj[key]);
-    return res;
-  } else return obj;
-}
-
-type Chain = keyof typeof CHAIN_TYPES;
-type Type = keyof typeof TRANSACTION_TYPES;
-
-// The order is important.
-const FIELDS = ['nonce', 'gasPrice', 'gasLimit', 'to', 'value', 'data', 'v', 'r', 's'] as const;
+import { keccak_256 } from '@noble/hashes/sha3';
+import { bytesToHex } from '@noble/hashes/utils';
+import { UnwrapCoder } from 'micro-packed';
+import { addr } from './address.js';
 // prettier-ignore
-const FIELDS2930 = [
-  'chainId', 'nonce', 'gasPrice', 'gasLimit',
-  'to', 'value', 'data', 'accessList', 'yParity', 'r', 's'
-] as const;
+import {
+  TxType, TxVersions, TxCoder, RawTx,
+  decodeLegacyV, removeSig, sortRawData, validateFields,
+} from './tx.js';
 // prettier-ignore
-const FIELDS1559 = [
-  'chainId', 'nonce', 'maxPriorityFeePerGas', 'maxFeePerGas', 'gasLimit',
-  'to', 'value', 'data', 'accessList', 'yParity', 'r', 's'
-] as const;
+import {
+  amounts, astr, add0x, ethHex, ethHexNoLeadingZero, strip0x, ethDecimal, cloneDeep,
+} from './utils.js';
+export { addr };
 
-const TypeToFields = {
-  legacy: FIELDS,
-  eip2930: FIELDS2930,
-  eip1559: FIELDS1559,
-};
+// The file exports Transaction, but actual (RLP) parsing logic is done in `./tx`
 
-export type Field =
-  | (typeof FIELDS)[number]
-  | (typeof FIELDS2930)[number]
-  | (typeof FIELDS1559)[number]
-  | 'address'
-  | 'storageKey';
-
-type str = string;
-export type AccessList = [str, str[]][];
-// These types will should be serializable by rlp as is
-export type RawTxLegacy = [str, str, str, str, str, str, str, str, str];
-export type RawTx2930 = [str, str, str, str, str, str, AccessList, str, str, str];
-export type RawTx1559 = [str, str, str, str, str, str, str, AccessList, str, str, str];
-export type RawTx = RawTxLegacy | RawTx2930 | RawTx1559;
-export type RawTxMap = {
-  chainId?: string;
-  nonce: string;
-  gasPrice?: string;
-  maxPriorityFeePerGas?: string;
-  maxFeePerGas?: string;
-  gasLimit: string;
-  to: string;
-  value: string;
-  data: string;
-  accessList?: AccessList;
-  yParity?: string;
-  v?: string;
-  r: string;
-  s: string;
-};
-
-// Normalizes field to format which can easily be serialized by rlp (strings & arrays)
-// prettier-ignore
-const FIELD_NUMBER = new Set([
-  'chainId', 'nonce', 'gasPrice', 'maxPriorityFeePerGas', 'maxFeePerGas',
-  'gasLimit', 'value', 'v', 'yParity', 'r', 's'
-]);
-const FIELD_DATA = new Set(['data', 'to', 'storageKey', 'address']);
-function normalizeField(
-  field: Field,
-  value:
-    | number
-    | bigint
-    | string
-    | Uint8Array
-    | Record<string, string[]>
-    | AccessList
-    | { address: string; storageKeys: string[] }[]
-): string | AccessList {
-  // can be number, bignumber, decimal number in string (123), hex number in string (0x123)
-  if (FIELD_NUMBER.has(field)) {
-    // bytes
-    if (isBytes(value)) value = add0x(bytesToHex(value));
-    if (field === 'yParity' && typeof value === 'boolean') value = value ? '0x1' : '0x0';
-    // '123' -> 0x7b (handles both hex and non-hex numbers)
-    if (typeof value === 'string') value = BigInt(value === '0x' ? '0x0' : value);
-    // 123 -> '0x7b' && 1 -> 0x01
-    if (typeof value === 'number' || typeof value === 'bigint') value = numberTo0xHex(value);
-    // 21000, default / minimum
-    if (field === 'gasLimit' && (!value || BigInt(value as string) === 0n)) value = '0x5208';
-    if (typeof value !== 'string') throw new TypeError(`Invalid type for field ${field}`);
-    // should be hex string starting with '0x' at this point.
-    if (field === 'gasPrice' && BigInt(value) === 0n)
-      throw new TypeError('The gasPrice must have non-zero value');
-    // '0x00' and '' serializes differently
-    return BigInt(value) === 0n ? '' : value;
-  }
-  // Can be string or Uint8Array
-  if (FIELD_DATA.has(field)) {
-    if (!value) value = '';
-    if (isBytes(value)) value = bytesToHex(value);
-    if (typeof value !== 'string') throw new TypeError(`Invalid type for field ${field}`);
-    value = add0x(value);
-    return value === '0x' ? '' : value;
-  }
-  if (field === 'accessList') {
-    if (!value) return [];
-    let res: Record<string, Set<string>> = {};
-    if (Array.isArray(value)) {
-      for (let access of value) {
-        if (Array.isArray(access)) {
-          // AccessList
-          if (access.length !== 2 || !Array.isArray(access[1]))
-            throw new TypeError(`Invalid type for field ${field}`);
-          const key = normalizeField('address', access[0]) as string;
-          if (!res[key]) res[key] = new Set();
-          for (let i of access[1]) res[key].add(normalizeField('storageKey', i) as string);
-        } else {
-          // {address: string, storageKeys: string[]}[]
-          if (!isObject(access) || !access.address || !Array.isArray(access.storageKeys))
-            throw new TypeError(`Invalid type for field ${field}`);
-          const key = normalizeField('address', access.address) as string;
-          if (!res[key]) res[key] = new Set();
-          for (let i of access.storageKeys) res[key].add(normalizeField('storageKey', i) as string);
-        }
-      }
-    } else {
-      // {[address]: string[]}
-      if (!isObject(value) || isBytes(value))
-        throw new TypeError(`Invalid type for field ${field}`);
-      for (let k in value) {
-        const key = normalizeField('address', k) as string;
-        // undefined/empty allowed
-        if (!value[k]) continue;
-        if (!Array.isArray(value[k])) throw new TypeError(`Invalid type for field ${field}`);
-        res[key] = new Set(value[k].map((i) => normalizeField('storageKey', i) as string));
-      }
-    }
-    return Object.keys(res).map((i) => [i, Array.from(res[i])]) as AccessList;
-  }
-  throw new TypeError(`Invalid type for field ${field}`);
-}
-
-function possibleTypes(input: RawTxMap): Set<Type> {
-  let types: Set<Type> = new Set(Object.keys(TRANSACTION_TYPES) as Type[]);
-  const keys = new Set(Object.keys(input));
-  if (keys.has('maxPriorityFeePerGas') || keys.has('maxFeePerGas')) {
-    types.delete('legacy');
-    types.delete('eip2930');
-  }
-  if (keys.has('accessList') || keys.has('yParity')) types.delete('legacy');
-  if (keys.has('gasPrice')) types.delete('eip1559');
-  return types;
-}
-
-const RawTxLength: Record<number, Type> = { 9: 'legacy', 11: 'eip2930', 12: 'eip1559' };
-const RawTxLengthRev: Record<Type, number> = { legacy: 9, eip2930: 11, eip1559: 12 };
-function rawToSerialized(input: RawTx | RawTxMap, chain?: Chain, type?: Type): string {
-  let chainId;
-  if (chain) chainId = CHAIN_TYPES[chain];
-  if (Array.isArray(input)) {
-    if (!type) type = RawTxLength[input.length];
-    if (!type || RawTxLengthRev[type] !== input.length)
-      throw new Error(`Invalid fields length for ${type}`);
-  } else {
-    const types = possibleTypes(input);
-    if (type && !types.has(type)) {
-      throw new Error(
-        `Invalid type=${type}. Possible types with current fields: ${Array.from(types)}`
-      );
-    }
-    if (!type) {
-      if (types.has('legacy')) type = 'legacy';
-      else if (!types.size) throw new Error('Impossible fields set');
-      else type = Array.from(types)[0];
-    }
-    if (input.chainId) {
-      if (chain) {
-        const fromChain = normalizeField('chainId', CHAIN_TYPES[chain]);
-        const fromInput = normalizeField('chainId', input.chainId);
-        if (fromChain !== fromInput) {
-          throw new Error(
-            `Both chain=${chain}(${fromChain}) and chainId=${input.chainId}(${fromInput}) specified at same time`
-          );
-        }
-      }
-      chainId = input.chainId;
-    } else input.chainId = chainId as any;
-    input = (TypeToFields[type] as unknown as Field[]).map((key) => (input as any)[key]) as RawTx;
-  }
-  if (input) {
-    const sign = input.slice(-3);
-    // remove signature if any of fields is empty
-    if (!sign[0] || !sign[1] || !sign[2]) {
-      input = input.slice(0, -3) as any;
-      // EIP-155
-      if (type === 'legacy' && chainId)
-        (input as any).push(normalizeField('chainId', chainId), '', '');
-    }
-  }
-  let normalized = (input as Field[]).map((value, i) =>
-    normalizeField(TypeToFields[type as Type][i], value)
-  );
-  if (chainId) chainId = normalizeField('chainId', chainId);
-  if (type !== 'legacy' && chainId && normalized[0] !== chainId)
-    throw new Error(`ChainId=${normalized[0]} incompatible with Chain=${chainId}`);
-  const tNum = TRANSACTION_TYPES[type];
-  return (tNum ? `0x0${tNum}` : '0x') + bytesToHex(RLP.encode(normalized));
-}
-
-export const Address = {
-  fromPrivateKey(key: string | Uint8Array): string {
-    if (typeof key === 'string') key = hexToBytes(key);
-    return Address.fromPublicKey(secp.getPublicKey65b(key));
+/**
+ * Basic message signing & verification. Matches ethers and etherscan behavior.
+ * TODO: research whether EIP-191 and EIP-712 are popular, add them.
+ */
+export const messenger = {
+  sign(msg: string, privateKey: string, extraEntropy = undefined) {
+    astr(msg);
+    astr(privateKey);
+    const hash = keccak_256(msg);
+    const sig = secp256k1.sign(hash, ethHex.decode(privateKey), { extraEntropy });
+    const end = sig.recovery === 0 ? '1b' : '1c';
+    return add0x(sig.toCompactHex() + end);
   },
-
-  fromPublicKey(key: string | Uint8Array): string {
-    const pub = secp.normalizePublicKeyTo65b(key);
-    const addr = bytesToHex(keccak_256(pub.subarray(1, 65))).slice(24);
-    return Address.checksum(addr);
-  },
-
-  // ETH addr checksum is calculated by hashing the string with keccak.
-  // NOTE: it hashes *string*, not a bytearray: keccak('beef') not keccak([0xbe, 0xef])
-  checksum(nonChecksummedAddress: string): string {
-    const addr = strip0x(nonChecksummedAddress.toLowerCase());
-    if (addr.length !== 40) throw new Error('Invalid address, must have 40 chars');
-    const hash = strip0x(bytesToHex(keccak_256(addr)));
-    let checksummed = '';
-    for (let i = 0; i < addr.length; i++) {
-      // If ith character is 9 to f then make it uppercase
-      const nth = Number.parseInt(hash[i], 16);
-      let char = addr[i];
-      if (nth > 7) char = char.toUpperCase();
-      checksummed += char;
-    }
-    return add0x(checksummed);
-  },
-
-  verifyChecksum(address: string): boolean {
-    const addr = strip0x(address);
-    if (addr.length !== 40) throw new Error('Invalid address, must have 40 chars');
-    if (addr === addr.toLowerCase() || addr === addr.toUpperCase()) return true;
-    const hash = bytesToHex(keccak_256(addr.toLowerCase()));
-    for (let i = 0; i < 40; i++) {
-      // the nth letter should be uppercase if the nth digit of casemap is 1
-      const char = addr[i]!;
-      const nth = Number.parseInt(hash[i]!, 16);
-      if (nth > 7 && char.toUpperCase() !== char) return false;
-      if (nth <= 7 && char.toLowerCase() !== char) return false;
-    }
-    return true;
+  verify(signature: string, msg: string, address: string) {
+    astr(signature);
+    astr(msg);
+    astr(address);
+    signature = strip0x(signature);
+    if (signature.length !== 65 * 2) throw new Error('invalid signature length');
+    const sigh = signature.slice(0, -2);
+    const end = signature.slice(-2);
+    if (!['1b', '1c'].includes(end)) throw new Error('invalid recovery bit');
+    const sig = secp256k1.Signature.fromCompact(sigh).addRecoveryBit(end === '1b' ? 0 : 1);
+    const hash = keccak_256(msg);
+    const pub = sig.recoverPublicKey(hash).toHex(false);
+    const recoveredAddr = addr.fromPublicKey(pub);
+    return recoveredAddr === address && secp256k1.verify(sig, hash, pub);
   },
 };
 
-export class Transaction {
-  static DEFAULT_HARDFORK = 'london';
-  static DEFAULT_CHAIN: Chain = 'mainnet';
-  static DEFAULT_TYPE: Type = 'eip1559';
-  readonly hex: string;
-  readonly raw: RawTxMap;
-  readonly isSigned: boolean;
-  readonly type: Type;
+// Transaction-related utils.
 
+// 4 fields are required. Others are pre-filled with default values.
+const DEFAULTS = {
+  accessList: [], // needs to be .slice()-d to create new reference
+  chainId: 1n, // mainnet
+  data: '',
+  gasLimit: 21000n, // TODO: investigate if limit is smaller in eip4844 txs
+  maxPriorityFeePerGas: 1n * amounts.GWEI, // Reduce fingerprinting by using standard, popular value
+  type: 'eip1559',
+} as const;
+type DefaultField = keyof typeof DEFAULTS;
+type DefaultType = (typeof DEFAULTS)['type'];
+type DefaultsOptional<T> = {
+  [P in keyof T as P extends DefaultField ? P : never]?: T[P];
+} & {
+  [P in keyof T as P extends DefaultField ? never : P]: T[P];
+};
+type HumanInputInner<T extends TxType> = DefaultsOptional<{ type: T } & TxCoder<T>>;
+type HumanInputInnerDefault = DefaultsOptional<TxCoder<DefaultType>>;
+type Required<T> = T extends undefined ? never : T;
+type HumanInput<T extends TxType | undefined> = T extends undefined
+  ? HumanInputInnerDefault
+  : HumanInputInner<Required<T>>;
+type TxVersions = typeof TxVersions;
+type SpecifyVersion<T extends TxType[]> = UnwrapCoder<
+  {
+    [K in keyof TxVersions]: K extends T[number] ? TxVersions[K] : never;
+  }[keyof TxVersions]
+>;
+type SpecifyVersionNeg<T extends TxType[]> = UnwrapCoder<
+  Exclude<
+    {
+      [K in keyof TxVersions]: TxVersions[K];
+    }[keyof TxVersions],
+    {
+      [K in keyof TxVersions]: K extends T[number] ? TxVersions[K] : never;
+    }[keyof TxVersions]
+  >
+>;
+
+// Changes:
+// - legacy: instead of hardfork now accepts additional param chainId
+//           if chainId is present, we enable relay protection
+//           This removes hardfork param and simplifies replay protection logic
+// - tx parametrized over type: you cannot access fields from different tx version
+// - legacy: 'v' param is hidden in coders. Transaction operates in terms chainId and yParity.
+// TODO: tx is kinda immutable, but user can change .raw values before signing
+// need to think about re-validation?
+export class Transaction<T extends TxType> {
+  isSigned: boolean;
+
+  // Doesn't force any defaults, catches if fields incompatible with type
   constructor(
-    data: string | Uint8Array | RawTx | RawTxMap,
-    chain?: Chain,
-    readonly hardfork = Transaction.DEFAULT_HARDFORK,
-    type?: Type
+    readonly type: T,
+    readonly raw: TxCoder<T>,
+    strict = true,
+    allowSignatureFields = true
   ) {
-    let norm;
-    if (typeof data === 'string') {
-      norm = data;
-    } else if (data instanceof Uint8Array) {
-      norm = bytesToHex(data);
-    } else if (Array.isArray(data) || (typeof data === 'object' && data != null)) {
-      norm = rawToSerialized(data, chain, type);
-    } else {
-      throw new TypeError('Expected valid serialized tx');
-    }
-    if (norm.length <= 6) throw new Error('Invalid tx length');
-    this.hex = add0x(norm);
-    let txData;
-    const prevType = type;
-    if (this.hex.startsWith('0x01')) [txData, type] = [add0x(this.hex.slice(4)), 'eip2930'];
-    else if (this.hex.startsWith('0x02')) [txData, type] = [add0x(this.hex.slice(4)), 'eip1559'];
-    else [txData, type] = [this.hex, 'legacy'];
-    if (prevType && prevType !== type) throw new Error('Invalid transaction type');
-    this.type = type;
-    const ui8a = RLP.decode(txData) as Uint8Array[];
-    this.raw = ui8a.reduce((res: any, value: any, i: number) => {
-      const name = TypeToFields[type!][i];
-      if (!name) return res;
-      res[name] = normalizeField(name, value);
-      return res;
-    }, {} as RawTxMap);
-    if (!this.raw.chainId) {
-      // Unsigned transaction with EIP-155
-      if (type === 'legacy' && !this.raw.r && !this.raw.s) {
-        this.raw.chainId = this.raw.v;
-        this.raw.v = '';
+    validateFields(type, raw, strict, allowSignatureFields);
+    this.isSigned = typeof raw.r === 'bigint' && typeof raw.s === 'bigint';
+  }
+  // Defaults
+  static prepare<T extends { type: undefined }>(
+    data: T & HumanInputInnerDefault,
+    strict?: boolean
+  ): Transaction<(typeof DEFAULTS)['type']>;
+  static prepare<TT extends TxType, T extends { type: TT } & HumanInput<TT>>(
+    data: HumanInput<TT>,
+    strict?: boolean
+  ): Transaction<T['type']>;
+  static prepare<T extends TxType>(data: HumanInput<T>, strict = true): Transaction<T> {
+    const type = (data.type !== undefined ? data.type : DEFAULTS.type) as T;
+    if (!TxVersions.hasOwnProperty(type)) throw new Error(`wrong transaction type=${type}`);
+    const coder = TxVersions[type];
+    const fields = new Set(coder.fields as string[]);
+    // Copy default fields, but only if the field is present on the tx type.
+    const raw: Record<string, any> = { type };
+    for (const f in DEFAULTS) {
+      if (f !== 'type' && fields.has(f)) {
+        raw[f] = DEFAULTS[f as DefaultField];
+        if (f === 'accessList') raw[f] = cloneDeep(raw[f]);
       }
     }
-    if (!this.raw.chainId) {
-      this.raw.chainId = normalizeField(
-        'chainId',
-        CHAIN_TYPES[chain || Transaction.DEFAULT_CHAIN]
-      ) as string;
+    // Copy all fields, so we can validate unexpected ones.
+    return new Transaction(type, sortRawData(Object.assign(raw, data)), strict, false);
+  }
+  // Not static to avoid overrides
+  setWholeAmount(accountBalance: bigint) {
+    if (typeof accountBalance !== 'bigint' || accountBalance <= 0n)
+      throw new Error('account balance must be bigger than 0');
+    const { fee } = this.calcAmounts().wei;
+    const amountToSend = accountBalance - fee;
+    if (amountToSend <= 0n) throw new Error('account balance must be bigger than fee of ' + fee);
+    return new Transaction(this.type, { ...this.raw, value: amountToSend });
+  }
+  static fromHex(hex: string, strict = false) {
+    const raw = RawTx.decode(ethHexNoLeadingZero.decode(hex));
+    return new Transaction(raw.type, raw.data, strict);
+  }
+  private assertIsSigned() {
+    if (!this.isSigned) throw new Error('expected signed transaction');
+  }
+  /**
+   * Converts transaction to RLP.
+   * @param includeSignature whether to include signature
+   */
+  toRawBytes(includeSignature = this.isSigned) {
+    // cloneDeep is not necessary here
+    let data = Object.assign({}, this.raw);
+    if (includeSignature) {
+      this.assertIsSigned();
+    } else {
+      removeSig(data);
     }
-    this.isSigned = !!(this.raw.r && this.raw.r !== '0x');
+    return RawTx.encode({ type: this.type, data } as any); // TODO: remove any
   }
-
-  private isNew() {
-    return this.type === 'eip1559';
+  /**
+   * Converts transaction to hex.
+   * @param includeSignature whether to include signature
+   */
+  toHex(includeSignature = this.isSigned) {
+    return ethHex.encode(this.toRawBytes(includeSignature));
   }
-
-  get bytes(): Uint8Array {
-    return hexToBytes(this.hex);
+  /**
+   * Calculates keccak-256 hash of signed transaction. Used in block explorers.
+   */
+  get hash() {
+    this.assertIsSigned();
+    return this.calcHash(true);
   }
-
-  equals(other: Transaction) {
-    return this.getMessageToSign() === other.getMessageToSign();
+  /**
+   * Returns sender's address.
+   */
+  get sender() {
+    return this.recoverSender().address;
   }
-
-  get chain(): Chain | undefined {
-    for (let k in CHAIN_TYPES)
-      if (CHAIN_TYPES[k as Chain] === Number(this.raw.chainId!)) return k as Chain;
-    return undefined;
+  /**
+   * For legacy transactions, but can be used with libraries when yParity presented as v.
+   */
+  get v() {
+    return decodeLegacyV(this.raw);
   }
-
-  get sender(): string {
-    const sender = this.recoverSenderPublicKey();
-    if (!sender) throw new Error('Invalid signed transaction');
-    return Address.fromPublicKey(sender);
+  private calcHash(includeSignature: boolean) {
+    return bytesToHex(keccak_256(this.toRawBytes(includeSignature)));
   }
-
-  get gasPrice(): bigint {
-    if (this.isNew()) throw new Error('Field only available for "legacy" transactions');
-    return BigInt(this.raw.gasPrice!);
-  }
-
-  // maxFeePerGas: Represents the maximum amount that a user is willing to pay for their tx (inclusive of baseFeePerGas and maxPriorityFeePerGas)
-  get maxFeePerGas() {
-    if (!this.isNew()) throw new Error('Field only available for "eip1559" transactions');
-    return BigInt(this.raw.maxFeePerGas!);
-  }
-
-  get maxPriorityFeePerGas() {
-    if (!this.isNew()) throw new Error('Field only available for "eip1559" transactions');
-    return BigInt(this.raw.maxPriorityFeePerGas!);
-  }
-
-  get gasLimit(): bigint {
-    return BigInt(this.raw.gasLimit!);
-  }
-
-  // Amount in wei
-  get amount(): bigint {
-    return BigInt(this.raw.value);
-  }
-  // Total fee in wei
-  get fee(): bigint {
-    const price = this.isNew() ? this.maxFeePerGas : this.gasPrice;
-    return price * this.gasLimit;
-  }
-
-  // Amount + fee in wei
-  get upfrontCost(): bigint {
-    return this.amount + this.fee;
-  }
-
-  // Checksummed address
-  get to(): string {
-    return Address.checksum(this.raw.to);
-  }
-
-  // Nonce is a counter that represents a number of outgoing transactions on the acct
-  get nonce(): number {
-    return Number.parseInt(this.raw.nonce, 16) || 0;
-  }
-
-  private supportsReplayProtection() {
-    const properBlock = !['chainstart', 'homestead', 'dao', 'tangerineWhistle'].includes(
-      this.hardfork
-    );
-    if (!this.isSigned) return true; // Unsigned, supports EIP155
-    const v = Number(hexToNumber(this.raw.v!));
-    const chainId = Number(this.raw.chainId!);
-    const meetsConditions = v === chainId * 2 + 35 || v === chainId * 2 + 36;
-
-    return properBlock && meetsConditions;
-  }
-
-  getMessageToSign(signed: boolean = false): string {
-    let values = (TypeToFields[this.type] as any).map((i: any) => (this.raw as any)[i]);
-    if (!signed) {
-      // TODO: merge with line #252 somehow? (same strip & EIP-155)
-      // Strip signature (last 3 values)
-      values = values.slice(0, -3);
-      // EIP-155
-      if (this.type === 'legacy' && this.supportsReplayProtection())
-        values.push(this.raw.chainId! as any, '', '');
+  calcAmounts() {
+    const { type, raw } = this;
+    // Fee calculation is not exact, real fee can be smaller
+    let gasFee;
+    if (type === 'legacy' || type === 'eip2930') {
+      // Because TypeScript is not smart enough to narrow down types here :(
+      const r = raw as SpecifyVersion<['legacy', 'eip2930']>;
+      gasFee = r.gasPrice;
+    } else {
+      const r = raw as SpecifyVersionNeg<['legacy', 'eip2930']>;
+      gasFee = r.maxFeePerGas + r.maxPriorityFeePerGas;
     }
-    let encoded = RLP.encode(values);
-    if (this.type !== 'legacy')
-      encoded = new Uint8Array([TRANSACTION_TYPES[this.type], ...Array.from(encoded)]);
-    return bytesToHex(keccak_256(encoded));
+    // TODO: how to calculate 4844 fee?
+    const fee = raw.gasLimit * gasFee;
+    const amount = raw.value;
+    const amountWithFee = fee + amount;
+    const wei = { amount, fee, amountWithFee };
+    const humanized = {
+      amount: ethDecimal.encode(amount),
+      fee: ethDecimal.encode(fee),
+      amountWithFee: ethDecimal.encode(amountWithFee),
+    };
+    return { wei, humanized };
   }
-
-  // Used in block explorers etc
-  get hash(): string {
-    if (!this.isSigned) throw new Error('Expected signed transaction');
-    return this.getMessageToSign(true);
+  clone() {
+    return new Transaction(this.type, cloneDeep(this.raw));
   }
-
-  sign(privateKey: string | Uint8Array, extraEntropy = false): Transaction {
-    if (this.isSigned) throw new Error('Expected unsigned transaction');
-    if (typeof privateKey === 'string') privateKey = strip0x(privateKey);
-    const sig = secp.sign(this.getMessageToSign(), privateKey, { extraEntropy });
-    const rec = sig.recovery!;
-    const chainId = Number(this.raw.chainId!);
-    const vv = this.type === 'legacy' ? (chainId ? rec + (chainId * 2 + 35) : rec + 27) : rec;
-    const [v, r, s] = [vv, sig.r, sig.s].map(numberTo0xHex);
-    const signedRaw: RawTxMap =
-      this.type === 'legacy'
-        ? { ...this.raw, v, r, s }
-        : { ...cloneDeep(this.raw), yParity: v, r, s };
-    return new Transaction(signedRaw, this.chain, this.hardfork, this.type);
+  verifySignature() {
+    this.assertIsSigned();
+    const { r, s } = this.raw;
+    return secp256k1.verify({ r: r!, s: s! }, this.calcHash(false), this.recoverSender().publicKey);
   }
-
-  recoverSenderPublicKey(): Uint8Array | undefined {
-    if (!this.isSigned)
-      throw new Error('Expected signed transaction: cannot recover sender of unsigned tx');
-    const v = Number(hexToNumber(this.type === 'legacy' ? this.raw.v! : this.raw.yParity!));
-    const chainId = Number(this.raw.chainId!);
-    const recovery = this.type === 'legacy' ? (chainId ? v - (chainId * 2 + 35) : v - 27) : v;
-    const [r, s] = [this.raw.r, this.raw.s].map(hexToNumber);
-    const checkHighS = this.hardfork !== 'chainstart';
-    return secp.sigRecoverPub({ r, s, recovery }, this.getMessageToSign(), checkHighS);
+  removeSignature() {
+    return new Transaction(this.type, removeSig(cloneDeep(this.raw)));
+  }
+  /**
+   * Signs transaction with a private key.
+   * @param privateKey key in hex or Uint8Array format
+   * @param opts extraEntropy will increase security of sig by mixing rfc6979 randomness
+   * @returns new "same" transaction, but signed
+   */
+  signBy(privateKey: string | Uint8Array, opts: { extraEntropy?: true | undefined } = {}) {
+    if (this.isSigned) throw new Error('expected unsigned transaction');
+    const priv = typeof privateKey === 'string' ? strip0x(privateKey) : privateKey;
+    const hash = this.calcHash(false);
+    const { r, s, recovery } = secp256k1.sign(hash, priv, { extraEntropy: opts.extraEntropy });
+    const sraw = Object.assign(cloneDeep(this.raw), { r, s, yParity: recovery });
+    // The copied result is validated in non-strict way, strict is only for user input.
+    return new Transaction(this.type, sraw, false);
+  }
+  /**
+   * Calculates public key and address from signed transaction's signature.
+   */
+  recoverSender() {
+    this.assertIsSigned();
+    const { r, s, yParity } = this.raw;
+    const sig = new secp256k1.Signature(r!, s!).addRecoveryBit(yParity!);
+    // Will crash on 'chainstart' hardfork
+    if (sig.hasHighS()) throw new Error('invalid s');
+    const point = sig.recoverPublicKey(this.calcHash(false));
+    return { publicKey: point.toHex(true), address: addr.fromPublicKey(point.toHex(false)) };
   }
 }
