@@ -1,0 +1,9 @@
+[submodule "test/vectors/ethereum-tests"]
+	path = test/vectors/ethereum-tests
+	url = https://github.com/ethereum/tests.git
+[submodule "test/vectors/ethers"]
+	path = test/vectors/ethers
+	url = https://github.com/ethers-io/ethers.js.git
+[submodule "test/vectors/viem"]
+	path = test/vectors/viem
+	url = https://github.com/wevm/viem.git

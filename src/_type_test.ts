@@ -1,5 +1,5 @@
 import * as P from 'micro-packed';
-import * as web3 from './web3.js';
+import * as abi from './abi/decoder.js';
 // Should not be included in npm package, just for test of typescript compilation
 const assertType = <T>(_value: T) => {};
 const BytesVal = new Uint8Array();
@@ -18,36 +18,36 @@ type A = Writable<Uint8Array>;
 const _a: A = Uint8Array.from([]);
 _a;
 // Tests
-assertType<P.CoderType<string>>(web3.mapComponent({ type: 'string' } as const));
-assertType<P.CoderType<string[]>>(web3.mapComponent({ type: 'string[]' } as const));
+assertType<P.CoderType<string>>(abi.mapComponent({ type: 'string' } as const));
+assertType<P.CoderType<string[]>>(abi.mapComponent({ type: 'string[]' } as const));
 
-assertType<P.CoderType<web3.Bytes>>(web3.mapComponent({ type: 'bytes' } as const));
-assertType<P.CoderType<web3.Bytes[]>>(web3.mapComponent({ type: 'bytes[]' } as const));
+assertType<P.CoderType<Uint8Array>>(abi.mapComponent({ type: 'bytes' } as const));
+assertType<P.CoderType<Uint8Array[]>>(abi.mapComponent({ type: 'bytes[]' } as const));
 
-assertType<P.CoderType<string>>(web3.mapComponent({ type: 'address' } as const));
-assertType<P.CoderType<string[]>>(web3.mapComponent({ type: 'address[]' } as const));
+assertType<P.CoderType<string>>(abi.mapComponent({ type: 'address' } as const));
+assertType<P.CoderType<string[]>>(abi.mapComponent({ type: 'address[]' } as const));
 
-assertType<P.CoderType<boolean>>(web3.mapComponent({ type: 'bool' } as const));
-assertType<P.CoderType<boolean[]>>(web3.mapComponent({ type: 'bool[]' } as const));
+assertType<P.CoderType<boolean>>(abi.mapComponent({ type: 'bool' } as const));
+assertType<P.CoderType<boolean[]>>(abi.mapComponent({ type: 'bool[]' } as const));
 
-assertType<P.CoderType<bigint>>(web3.mapComponent({ type: 'uint16' } as const));
-assertType<P.CoderType<bigint[]>>(web3.mapComponent({ type: 'uint16[]' } as const));
+assertType<P.CoderType<bigint>>(abi.mapComponent({ type: 'uint16' } as const));
+assertType<P.CoderType<bigint[]>>(abi.mapComponent({ type: 'uint16[]' } as const));
 
-assertType<P.CoderType<bigint>>(web3.mapComponent({ type: 'int' } as const));
-assertType<P.CoderType<bigint[]>>(web3.mapComponent({ type: 'int[]' } as const));
+assertType<P.CoderType<bigint>>(abi.mapComponent({ type: 'int' } as const));
+assertType<P.CoderType<bigint[]>>(abi.mapComponent({ type: 'int[]' } as const));
 
-assertType<P.CoderType<bigint>>(web3.mapComponent({ type: 'int24' } as const));
-assertType<P.CoderType<bigint[]>>(web3.mapComponent({ type: 'int24[]' } as const));
+assertType<P.CoderType<bigint>>(abi.mapComponent({ type: 'int24' } as const));
+assertType<P.CoderType<bigint[]>>(abi.mapComponent({ type: 'int24[]' } as const));
 
-assertType<P.CoderType<web3.Bytes>>(web3.mapComponent({ type: 'bytes1' } as const));
-assertType<P.CoderType<web3.Bytes[]>>(web3.mapComponent({ type: 'bytes1[]' } as const));
+assertType<P.CoderType<Uint8Array>>(abi.mapComponent({ type: 'bytes1' } as const));
+assertType<P.CoderType<Uint8Array[]>>(abi.mapComponent({ type: 'bytes1[]' } as const));
 
-assertType<P.CoderType<web3.Bytes>>(web3.mapComponent({ type: 'bytes15' } as const));
-assertType<P.CoderType<web3.Bytes[]>>(web3.mapComponent({ type: 'bytes15[]' } as const));
+assertType<P.CoderType<Uint8Array>>(abi.mapComponent({ type: 'bytes15' } as const));
+assertType<P.CoderType<Uint8Array[]>>(abi.mapComponent({ type: 'bytes15[]' } as const));
 
 // Tuples
 assertType<P.CoderType<{ lol: bigint; wut: string }>>(
-  web3.mapComponent({
+  abi.mapComponent({
     type: 'tuple',
     components: [
       { type: 'uint16', name: 'lol' },
@@ -57,49 +57,49 @@ assertType<P.CoderType<{ lol: bigint; wut: string }>>(
 );
 
 assertType<P.CoderType<[bigint, string]>>(
-  web3.mapComponent({
+  abi.mapComponent({
     type: 'tuple',
     components: [{ type: 'uint16', name: 'lol' }, { type: 'string' }],
   } as const)
 );
 //
-assertType<P.CoderType<unknown>>(web3.mapComponent({ type: 'tuple' }));
-assertType<P.CoderType<unknown>>(web3.mapComponent({ type: 'int25' }));
-assertType<P.CoderType<unknown>>(web3.mapComponent({ type: 'bytes0' }));
+assertType<P.CoderType<unknown>>(abi.mapComponent({ type: 'tuple' }));
+assertType<P.CoderType<unknown>>(abi.mapComponent({ type: 'int25' }));
+assertType<P.CoderType<unknown>>(abi.mapComponent({ type: 'bytes0' }));
 
 // Args
 // If single arg -- use as is
-assertType<web3.ArgsType<[{ type: 'bytes' }]>>(BytesVal);
+assertType<abi.ArgsType<[{ type: 'bytes' }]>>(BytesVal);
 // no names -> tuple
-assertType<web3.ArgsType<[{ type: 'bytes' }, { type: 'uint' }]>>([BytesVal, BigIntVal]);
+assertType<abi.ArgsType<[{ type: 'bytes' }, { type: 'uint' }]>>([BytesVal, BigIntVal]);
 // has names -> struct
-assertType<web3.ArgsType<[{ type: 'bytes'; name: 'lol' }, { type: 'uint'; name: 'wut' }]>>({
+assertType<abi.ArgsType<[{ type: 'bytes'; name: 'lol' }, { type: 'uint'; name: 'wut' }]>>({
   lol: BytesVal,
   wut: BigIntVal,
 });
 // WHY?!
 
-assertType<P.CoderType<string>>(web3.mapArgs([{ type: 'string' }] as const));
-assertType<P.CoderType<Bytes>>(web3.mapArgs([{ type: 'bytes1' }] as const));
+assertType<P.CoderType<string>>(abi.mapArgs([{ type: 'string' }] as const));
+assertType<P.CoderType<Bytes>>(abi.mapArgs([{ type: 'bytes1' }] as const));
 assertType<P.CoderType<[string, bigint]>>(
-  web3.mapArgs([{ type: 'string' }, { type: 'uint' }] as const)
+  abi.mapArgs([{ type: 'string' }, { type: 'uint' }] as const)
 );
 assertType<P.CoderType<{ lol: string; wut: bigint }>>(
-  web3.mapArgs([
+  abi.mapArgs([
     { type: 'string', name: 'lol' },
     { type: 'uint', name: 'wut' },
   ] as const)
 );
 // Without const
 assertType<P.CoderType<Record<string, unknown>>>(
-  web3.mapArgs([
+  abi.mapArgs([
     { type: 'string', name: 'lol' },
     { type: 'uint', name: 'wut' },
   ])
 );
-assertType<P.CoderType<unknown[]>>(web3.mapArgs([{ type: 'string' }, { type: 'uint' }]));
+assertType<P.CoderType<unknown[]>>(abi.mapArgs([{ type: 'string' }, { type: 'uint' }]));
 // unfortunately, typescript cannot detect single value arr on non-const data
-assertType<P.CoderType<unknown[]>>(web3.mapArgs([{ type: 'bytes1' }]));
+assertType<P.CoderType<unknown[]>>(abi.mapArgs([{ type: 'bytes1' }]));
 
 assertType<{
   lol: {
@@ -107,7 +107,7 @@ assertType<{
     decodeOutput: (b: Bytes) => [Bytes, string];
   };
 }>(
-  web3.contract([
+  abi.createContract([
     {
       name: 'lol',
       type: 'function',
@@ -125,7 +125,7 @@ assertType<{
     estimateGas: (v: [bigint, string]) => Promise<bigint>;
   };
 }>(
-  web3.contract(
+  abi.createContract(
     [
       {
         name: 'lol',
@@ -139,7 +139,7 @@ assertType<{
 );
 // Without const there is not much can be derived from abi
 assertType<{}>(
-  web3.contract([
+  abi.createContract([
     {
       name: 'lol',
       type: 'function',
@@ -166,7 +166,7 @@ assertType<{
     encodeInput: () => Bytes;
     decodeOutput: (b: Bytes) => { reserve0: bigint; reserve1: bigint; blockTimestampLast: bigint };
   };
-}>(web3.contract(PAIR_CONTRACT));
+}>(abi.createContract(PAIR_CONTRACT));
 
 const TRANSFER_EVENT = [
   {
@@ -190,4 +190,4 @@ assertType<{
       value: bigint | null;
     }) => (string | null)[];
   };
-}>(web3.events(TRANSFER_EVENT));
+}>(abi.events(TRANSFER_EVENT));

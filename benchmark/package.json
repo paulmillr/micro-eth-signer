@@ -1,0 +1,21 @@
+{
+  "name": "benchmark",
+  "private": true,
+  "version": "0.1.0",
+  "description": "benchmarks",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "bench": "node index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@ethereumjs/rlp": "5.0.0",
+    "@hazae41/binary": "1.3.4",
+    "@hazae41/cubane": "0.1.14",
+    "ethers": "6.11.0",
+    "viem": "2.7.8"
+  }
+}
