@@ -59,6 +59,8 @@ console.log('need total wei', tx.calcAmounts().wei.amountWithFee);
 console.log('address is same', tx.sender === senderAddr);
 ```
 
+We support legacy, EIP2930, EIP1559 and EIP4844 (Dencun / Cancun) transactions.
+
 ### Create and checksum addresses
 
 ```ts
@@ -328,6 +330,12 @@ which means over 4000 times per second on macs.
 The first call of `sign` will take 20ms+ due to noble-curves secp256k1 `utils.precompute`.
 
 To run benchmarks, execute `npm run bench`.
+
+## Contributing
+
+Make sure to use recursive cloning for tests:
+
+    git clone --recursive https://github.com/paulmillr/micro-eth-signer.git
 
 ## License
 
