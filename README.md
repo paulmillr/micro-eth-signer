@@ -283,7 +283,7 @@ Check out [`src/net/ens.ts`](./src/net/ens.ts) for type-safe contract execution 
 We implement RLP in just 100 lines of code, powered by [packed](https://github.com/paulmillr/micro-packed):
 
 ```ts
-import { RLP } from 'micro-eth-signer/rlp';
+import { RLP } from 'micro-eth-signer/tx';
 RLP.decode(RLP.encode('dog'));
 ```
 
