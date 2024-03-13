@@ -23,7 +23,7 @@ const ETH_PRECISION = 18;
 const GWEI_PRECISION = 9;
 const GWEI = 10n ** BigInt(GWEI_PRECISION);
 const ETHER = 10n ** BigInt(ETH_PRECISION);
-export const amounts = {
+export const amounts = /* @__PURE__ */ (() => ({
   GWEI_PRECISION,
   ETH_PRECISION,
   GWEI,
@@ -38,7 +38,7 @@ export const amounts = {
   maxChainId: BigInt(2 ** 32 - 1),
   maxUint64: 2n ** 64n - 1n,
   maxUint256: 2n ** 256n - 1n,
-};
+}))();
 
 // For usage with other packed utils via apply
 // This format is pretty much arbitrary:
@@ -65,8 +65,8 @@ const genEthHex = (keepLeadingZero = true): Coder<Uint8Array, string> => ({
     return add0x(hex);
   },
 });
-export const ethHex = genEthHex(true);
-export const ethHexNoLeadingZero = genEthHex(false);
+export const ethHex = /* @__PURE__ */ genEthHex(true);
+export const ethHexNoLeadingZero = /* @__PURE__ */ genEthHex(false);
 
 const ethHexStartRe = /^0[xX]/;
 export function add0x(hex: string): string {
