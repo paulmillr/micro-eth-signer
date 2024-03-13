@@ -1,1 +1,1 @@
-../lib/esm/index.js
+export { addr, Transaction, messenger } from 'micro-eth-signer';
