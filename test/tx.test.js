@@ -307,13 +307,15 @@ describe('Transactions', () => {
     // const viem_filtered = VIEM_TX.filter(tx => tx.addr)
     should(`viem (${VIEM_TX.length} tests)`, () => {
       let skipped = 0;
+      let passed = 0;
       for (let i = 0; i < VIEM_TX.length; i++) {
         const v = VIEM_TX[i];
         for (const tx of [v.serialized, v.serializedSigned]) {
           try {
             t(tx);
+            passed += 1;
           } catch (e) {
-            if (e.message.startsWith(SKIPPED_ERRORS.viem)) {
+            if (e.message.includes(SKIPPED_ERRORS.viem)) {
               skipped++;
               continue;
             }
@@ -321,7 +323,7 @@ describe('Transactions', () => {
           }
         }
       }
-      console.log('skipped: ' + skipped);
+      console.log(`skipped: ${skipped} ${passed}`);
     });
     should('EIP-4844', () => {
       // FROM https://github.com/ethereumjs/ethereumjs-monorepo/blob/master/packages/tx/test/eip4844.spec.ts
@@ -493,6 +495,13 @@ describe('Transactions', () => {
           // remove fields from wrong version
           for (const k in d) {
             if (k !== 'type' && !c.fields.includes(k) && !c.optionalFields.includes(k)) delete d[k];
+          }
+          // RSK EIP-1991
+          if (d.chainId === 30n) {
+            d.to = d.to.toLowerCase();
+            if (d.accessList) {
+              for (const item of d.accessList) item[0] = item[0].toLowerCase();
+            }
           }
           const preparedTx = Transaction.prepare(d, false);
           deepStrictEqual(preparedTx.toHex(false), unsigned);
