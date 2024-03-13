@@ -70,7 +70,7 @@
   ],
   "scripts": {
     "build": "tsc && tsc -p tsconfig.esm.json",
-    "build:release": "cd build; npm run build:release",
+    "build:release": "cd build; npm run build",
     "bench": "node benchmark/tx.js",
     "lint": "prettier --print-width 100 --single-quote --check src",
     "format": "prettier --print-width 100 --single-quote --write src",
