@@ -162,14 +162,8 @@ function assertYParityValid(elm: number) {
   if (elm === undefined) elm = 0;
   if (elm !== 0 && elm !== 1) throw new Error(`yParity wrong value=${elm} (${typeof elm})`);
 }
-
-const addrCoder = {
-  decode: (data: string): Uint8Array => {
-    if (addr.verifyChecksum(data)) return ethHex.decode(data);
-    else throw new Error(`invalid address checksum: ${data}`);
-  },
-  encode: (data: Uint8Array): string => addr.addChecksum(ethHex.encode(data)),
-} as P.Coder<Uint8Array, string>;
+// We don't know chainId when specific field coded yet.
+const addrCoder = ethHex;
 
 // Parses eip2930 access lists:
 // ["0xde0b295669a9fd93d5f28d9ec85e40f4cb697bae", [
@@ -430,7 +424,21 @@ export const TxVersions = {
   eip4844, // 0x03
 };
 
-export const RawTx = createTxMap(TxVersions);
+export const RawTx = P.apply(createTxMap(TxVersions), {
+  // NOTE: we apply checksum to addresses here, since chainId is not available inside coders
+  // By construction 'to' field is decoded before anything about chainId is known
+  encode: (data) => {
+    data.data.to = addr.addChecksum(data.data.to, data.data.chainId);
+    if (data.type !== 'legacy' && data.data.accessList) {
+      for (const item of data.data.accessList) {
+        item[0] = addr.addChecksum(item[0], data.data.chainId);
+      }
+    }
+    return data;
+  },
+  // Nothing to check here, is validated in validator
+  decode: (data) => data,
+});
 
 /**
  * Unchecked TX for debugging. Returns raw Uint8Array-s.
@@ -494,8 +502,9 @@ const validators: Record<string, (num: any, { strict, type, data }: ValidationOp
     if (strict) minmax(num, amounts.minGasLimit, amounts.maxGasLimit);
     else minmax(num, 0n, amounts.maxUint64);
   },
-  to(address: string) {
-    if (!addr.verifyChecksum(address)) throw new Error('address checksum does not match');
+  to(address: string, { data }: ValidationOpts) {
+    const chainId = typeof data.chainId === 'bigint' ? data.chainId : undefined;
+    if (!addr.verifyChecksum(address, chainId)) throw new Error('address checksum does not match');
   },
   value(num: bigint) {
     abig(num);
@@ -513,8 +522,14 @@ const validators: Record<string, (num: any, { strict, type, data }: ValidationOp
     abig(num);
     if (strict) minmax(num, 1n, amounts.maxChainId, '>= 1 and <= 2**32-1');
   },
-  // handled in decoder/encoder
-  accessList() {},
+  accessList(list: [string, string[]][], { data }: ValidationOpts) {
+    // NOTE: we cannot handle this validation in coder, since it requires chainId to calculate correct checksum
+    const chainId = typeof data.chainId === 'bigint' ? data.chainId : undefined;
+    for (const [address, _] of list) {
+      if (!addr.verifyChecksum(address, chainId))
+        throw new Error('address checksum does not match');
+    }
+  },
 };
 
 // Validation

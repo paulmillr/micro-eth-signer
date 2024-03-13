@@ -6,6 +6,8 @@ import { astr, add0x, ethHex, strip0x } from './utils.js';
 
 export const addr = {
   RE: /^(0[xX])?([0-9a-fA-F]{40})?$/,
+  // Not much support, only RSK for now
+  EIP1991_CHAINS: [30n, 31n],
 
   parse(address: string) {
     astr(address);
@@ -34,9 +36,13 @@ export const addr = {
    * @param nonChecksummedAddress
    * @returns checksummed address
    */
-  addChecksum(nonChecksummedAddress: string): string {
+  addChecksum(nonChecksummedAddress: string, chainId = 1n): string {
+    if (typeof chainId !== 'bigint')
+      throw new Error(`address.addChecksum wrong chainId=${chainId}`);
+    const hasEIP1191 = addr.EIP1991_CHAINS.includes(chainId);
     const low = addr.parse(nonChecksummedAddress).data.toLowerCase();
-    const hash = bytesToHex(keccak_256(low));
+    const hashInput = hasEIP1191 ? `${chainId}0x${low}` : low;
+    const hash = bytesToHex(keccak_256(hashInput));
     let checksummed = '';
     for (let i = 0; i < low.length; i++) {
       const hi = Number.parseInt(hash[i], 16);
@@ -77,19 +83,11 @@ export const addr = {
    * Verifies checksum if the address is checksummed.
    * Always returns true when the address is not checksummed.
    */
-  verifyChecksum(checksummedAddress: string): boolean {
+  verifyChecksum(checksummedAddress: string, chainId = 1n): boolean {
     const { data: address } = addr.parse(checksummedAddress);
     const low = address.toLowerCase();
     const upp = address.toUpperCase();
     if (address === low || address === upp) return true;
-    const hash = bytesToHex(keccak_256(low));
-    for (let i = 0; i < 40; i++) {
-      // the nth letter should be uppercase if the nth digit of casemap is 1
-      const hi = Number.parseInt(hash[i]!, 16);
-      const char = address[i];
-      if ((hi <= 7 && char.toLowerCase() !== char) || (hi > 7 && char.toUpperCase() !== char))
-        return false;
-    }
-    return true;
+    return addr.addChecksum(low, chainId) === checksummedAddress;
   },
 };
