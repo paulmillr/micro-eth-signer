@@ -12,7 +12,7 @@
   "dependencies": {
     "@noble/curves": "~1.3.0",
     "@noble/hashes": "~1.3.3",
-    "micro-packed": "~0.5.2"
+    "micro-packed": "~0.5.3"
   },
   "devDependencies": {
     "micro-bmark": "0.3.1",
