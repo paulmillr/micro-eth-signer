@@ -1,1 +1,1 @@
-export { addr, Transaction, messenger } from 'micro-eth-signer';
+export { addr, Transaction, messenger } from 'lib';
