@@ -1,9 +1,9 @@
 import { deepStrictEqual, throws } from 'node:assert';
 import { inspect } from 'node:util';
 import { describe, should } from 'micro-should';
-import { addr, Transaction, messenger } from '../lib/esm/index.js';
-import { RawTx, RlpTx, __tests } from '../lib/esm/tx.js';
-import { add0x, createDecimal, ethHex, formatters } from '../lib/esm/utils.js';
+import { addr, Transaction, messenger } from '../lib/index.js';
+import { RawTx, RlpTx, __tests } from '../lib/tx.js';
+import { add0x, createDecimal, ethHex, formatters } from '../lib/utils.js';
 import { default as TX_VECTORS } from './vectors/transactions.json' assert { type: 'json' };
 import { default as EIP155_VECTORS } from './vectors/eip155.json' assert { type: 'json' };
 import * as ethTests from './vectors/eth-tests-tx-vectors.js';

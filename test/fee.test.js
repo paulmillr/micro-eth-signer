@@ -1,7 +1,7 @@
 import { deepStrictEqual } from 'node:assert';
 import { describe, should } from 'micro-should';
-import { Transaction } from '../lib/esm/index.js';
-import { ethDecimal, gweiDecimal } from '../lib/esm/utils.js';
+import { Transaction } from '../lib/index.js';
+import { ethDecimal, gweiDecimal } from '../lib/utils.js';
 
 // NOTE: other libraries doesn't support fee estimation, so there is no crosstests for now :(
 // But we need some tests to avoid accidental breakage.

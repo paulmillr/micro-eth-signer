@@ -1,7 +1,7 @@
 import { deepStrictEqual } from 'node:assert';
 import { describe, should } from 'micro-should';
 import { bytesToHex } from '@noble/hashes/utils';
-import { namehash } from '../lib/esm/net/ens.js';
+import { namehash } from '../lib/net/ens.js';
 
 describe('ENS', () => {
   should('namehash', () => {

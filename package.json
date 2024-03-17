@@ -6,9 +6,9 @@
     "lib",
     "src"
   ],
-  "main": "lib/index.js",
-  "module": "lib/esm/index.js",
-  "types": "lib/index.d.ts",
+  "main": "lib/cjs/index.js",
+  "module": "lib/index.js",
+  "types": "lib/cjs/index.d.ts",
   "dependencies": {
     "@noble/curves": "~1.4.0",
     "@noble/hashes": "~1.4.0",
@@ -29,29 +29,29 @@
   "license": "MIT",
   "exports": {
     ".": {
-      "types": "./lib/index.d.ts",
-      "import": "./lib/esm/index.js",
-      "default": "./lib/index.js"
+      "types": "./lib/cjs/index.d.ts",
+      "import": "./lib/index.js",
+      "default": "./lib/cjs/index.js"
     },
     "./abi": {
-      "types": "./lib/abi/index.d.ts",
-      "import": "./lib/esm/abi/index.js",
-      "default": "./lib/abi/index.js"
+      "types": "./lib/cjs/abi/index.d.ts",
+      "import": "./lib/abi/index.js",
+      "default": "./lib/cjs/abi/index.js"
     },
     "./net": {
-      "types": "./lib/net/index.d.ts",
-      "import": "./lib/esm/net/index.js",
-      "default": "./lib/net/index.js"
+      "types": "./lib/cjs/net/index.d.ts",
+      "import": "./lib/net/index.js",
+      "default": "./lib/cjs/net/index.js"
     },
     "./tx": {
-      "types": "./lib/tx.d.ts",
-      "import": "./lib/esm/tx.js",
-      "default": "./lib/tx.js"
+      "types": "./lib/cjs/tx.d.ts",
+      "import": "./lib/tx.js",
+      "default": "./lib/cjs/tx.js"
     },
     "./utils": {
-      "types": "./lib/utils.d.ts",
-      "import": "./lib/esm/utils.js",
-      "default": "./lib/utils.js"
+      "types": "./lib/cjs/utils.d.ts",
+      "import": "./lib/utils.js",
+      "default": "./lib/cjs/utils.js"
     }
   },
   "keywords": [

@@ -1,8 +1,8 @@
 import { deepStrictEqual, throws } from 'node:assert';
 import { describe, should } from 'micro-should';
 import { hexToBytes } from '@noble/hashes/utils';
-import { RLP } from '../lib/esm/tx.js';
-import { ethHex, ethHexNoLeadingZero } from '../lib/esm/utils.js';
+import { RLP } from '../lib/tx.js';
+import { ethHex, ethHexNoLeadingZero } from '../lib/utils.js';
 import { ENCODE_TESTS, DECODE_TESTS, INVALID } from './vectors/monorepo/rlp.js';
 import { getEthersVectors, getViemVectors } from './util.js';
 import { default as RLP_TEST } from './vectors/ethereum-tests/RLPTests/rlptest.json' assert { type: 'json' };
