@@ -1,4 +1,4 @@
-import { ContractInfo, Decoder, createContract } from './decoder.js';
+import { ContractInfo, ContractABI, Decoder, createContract, events } from './decoder.js';
 import { default as ERC20 } from './erc20.js';
 import { default as ERC721 } from './erc721.js';
 import { default as UNISWAP_V2_ROUTER, UNISWAP_V2_ROUTER_CONTRACT } from './uniswap-v2.js';
@@ -9,7 +9,14 @@ import { ethHex } from '../utils.js';
 import { addr } from '../address.js';
 import { Transaction } from '../index.js';
 
-export { ERC20, ERC721, Decoder, createContract };
+// We need to export raw contracts, because 'CONTRACTS' object requires to know address it is not static type
+// so it cannot be re-used in createContract with nice types.
+export { ERC20, ERC721, WETH };
+export { UNISWAP_V2_ROUTER_CONTRACT, UNISWAP_V3_ROUTER_CONTRACT, KYBER_NETWORK_PROXY_CONTRACT };
+
+export { Decoder, createContract, events };
+// Export decoder related types
+export type { ContractInfo, ContractABI };
 
 export const TOKENS: Record<string, ContractInfo> = /* @__PURE__ */ (() =>
   Object.freeze(

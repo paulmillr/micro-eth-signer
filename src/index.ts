@@ -143,9 +143,12 @@ export class Transaction<T extends TxType> {
     if (amountToSend <= 0n) throw new Error('account balance must be bigger than fee of ' + fee);
     return new Transaction(this.type, { ...this.raw, value: amountToSend });
   }
-  static fromHex(hex: string, strict = false) {
-    const raw = RawTx.decode(ethHexNoLeadingZero.decode(hex));
+  static fromRawBytes(bytes: Uint8Array, strict = false) {
+    const raw = RawTx.decode(bytes);
     return new Transaction(raw.type, raw.data, strict);
+  }
+  static fromHex(hex: string, strict = false) {
+    return Transaction.fromRawBytes(ethHexNoLeadingZero.decode(hex), strict);
   }
   private assertIsSigned() {
     if (!this.isSigned) throw new Error('expected signed transaction');
@@ -203,7 +206,9 @@ export class Transaction<T extends TxType> {
       gasFee = r.gasPrice;
     } else {
       const r = raw as SpecifyVersionNeg<['legacy', 'eip2930']>;
-      gasFee = r.maxFeePerGas + r.maxPriorityFeePerGas;
+      // maxFeePerGas is absolute limit, you never pay more than that
+      // maxFeePerGas = baseFeePerGas[*2] + maxPriorityFeePerGas
+      gasFee = r.maxFeePerGas;
     }
     // TODO: how to calculate 4844 fee?
     const fee = raw.gasLimit * gasFee;

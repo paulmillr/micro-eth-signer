@@ -127,6 +127,7 @@ export function zip<A, B>(a: A[], b: B[]): [A, B][] {
 
 export const createDecimal = coders.decimal;
 export const ethDecimal = createDecimal(ETH_PRECISION);
+export const gweiDecimal = createDecimal(GWEI_PRECISION);
 
 export const formatters = {
   // returns decimal that costs exactly $0.01 in given precision (using price)

@@ -4,6 +4,7 @@ import UniswapV2 from './uniswap-v2.js';
 import UniswapV3 from './uniswap-v3.js';
 import { Web3Provider, Web3CallArgs, hexToNumber } from '../utils.js';
 
+// There are many low level APIs inside which are not exported yet.
 export { Chainlink, ENS, UniswapV2, UniswapV3 };
 
 export const FetchProvider = (
