@@ -1,9 +1,9 @@
 import { deepStrictEqual, throws } from 'node:assert';
 import { describe, should } from 'micro-should';
 import { bytesToHex, concatBytes, hexToBytes } from '@noble/hashes/utils';
-import * as uniswap2 from '../lib/net/uniswap-v2.js';
-import * as uniswap3 from '../lib/net/uniswap-v3.js';
-import { ethDecimal, strip0x } from '../lib/utils.js';
+import * as uniswap2 from '../lib/esm/net/uniswap-v2.js';
+import * as uniswap3 from '../lib/esm/net/uniswap-v3.js';
+import { ethDecimal, strip0x } from '../lib/esm/utils.js';
 
 const vitalik = '0xd8da6bf26964af9d7eed9e03e53415d37aa96045';
 const TS = 1876543210;

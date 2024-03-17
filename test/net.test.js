@@ -1,8 +1,8 @@
 import { deepStrictEqual, throws } from 'node:assert';
 import { describe, should } from 'micro-should';
-import { tokenFromSymbol } from '../lib/abi/index.js';
-import { FetchProvider, ENS, Chainlink, UniswapV3 } from '../lib/net/index.js';
-import { ethDecimal, numberTo0xHex } from '../lib/utils.js';
+import { tokenFromSymbol } from '../lib/esm/abi/index.js';
+import { FetchProvider, ENS, Chainlink, UniswapV3 } from '../lib/esm/net/index.js';
+import { ethDecimal, numberTo0xHex } from '../lib/esm/utils.js';
 
 // TODO: is it reasonable to leave that in tests?
 const NODE_URL = 'https://nodes.mewapi.io/rpc/eth';
