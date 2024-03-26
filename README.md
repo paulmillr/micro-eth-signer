@@ -5,12 +5,11 @@ Minimal library for Ethereum transactions, addresses and smart contracts.
 - 🔓 Secure: 3 deps, audited [noble](https://paulmillr.com/noble/) cryptography
 - 🔻 Tree-shaking-friendly: use only what's necessary, other code won't be included
 - 🌍 No network code: simplified auditing and offline usage
-- 🔍 Unique tests: 150MB of test vectors from EIPs, ethers and viem
-- ✍️ Create and sign transactions, generate and checksum addresses
-- 📖 Human-readable hints for transactions and events
+- 🔍 Reliable: 150MB of test vectors from EIPs, ethers and viem
+- ✍️ Transactions: Create, sign and decode complex txs using human-readable hints
 - 🆎 Call smart contracts: Chainlink and Uniswap APIs are included
 - 🦺 Typescript-friendly ABI and RLP decoding
-- 🪶 3000 lines for everything
+- 🪶 1200 lines for core functionality
 
 Check out article [ZSTs, ABIs, stolen keys and broken legs](https://github.com/paulmillr/micro-eth-signer/discussions/20) about caveats of secure ABI parsing found during development of the library.
 
