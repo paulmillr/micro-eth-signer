@@ -19,7 +19,9 @@
     "micro-bmark": "0.3.1",
     "micro-should": "0.4.0",
     "prettier": "3.1.1",
-    "typescript": "5.3.2"
+    "snappy": "7.2.2",
+    "typescript": "5.3.2",
+    "yaml": "2.4.1"
   },
   "author": "Paul Miller (https://paulmillr.com)",
   "repository": {
@@ -42,6 +44,16 @@
       "types": "./lib/net/index.d.ts",
       "import": "./lib/esm/net/index.js",
       "default": "./lib/net/index.js"
+    },
+    "./rlp": {
+      "types": "./lib/net/rlp.d.ts",
+      "import": "./lib/esm/net/rlp.js",
+      "default": "./lib/net/rlp.js"
+    },
+    "./ssz": {
+      "types": "./lib/net/ssz.d.ts",
+      "import": "./lib/esm/net/ssz.js",
+      "default": "./lib/net/ssz.js"
     },
     "./tx": {
       "types": "./lib/tx.d.ts",

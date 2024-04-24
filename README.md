@@ -8,7 +8,7 @@ Minimal library for Ethereum transactions, addresses and smart contracts.
 - 🔍 Reliable: 150MB of test vectors from EIPs, ethers and viem
 - ✍️ Transactions: Create, sign and decode complex txs using human-readable hints
 - 🆎 Call smart contracts: Chainlink and Uniswap APIs are included
-- 🦺 Typescript-friendly ABI and RLP decoding
+- 🦺 Typescript-friendly ABI, RLP and SSZ decoding
 - 🪶 1200 lines for core functionality
 
 Check out article [ZSTs, ABIs, stolen keys and broken legs](https://github.com/paulmillr/micro-eth-signer/discussions/20) about caveats of secure ABI parsing found during development of the library.
@@ -35,6 +35,7 @@ If you don't like NPM, a standalone [eth-signer.js](https://github.com/paulmillr
   - [Swap tokens with Uniswap](#swap-tokens-with-uniswap)
 - [ABI type inference](#abi-type-inference)
 - [RLP parsing](#rlp-parsing)
+- [SSZ parsing](#ssz-parsing)
 - [Sign and verify messages](#sign-and-verify-messages)
 - [Security](#security)
 - [Performance](#performance)
@@ -282,8 +283,17 @@ Check out [`src/net/ens.ts`](./src/net/ens.ts) for type-safe contract execution 
 We implement RLP in just 100 lines of code, powered by [packed](https://github.com/paulmillr/micro-packed):
 
 ```ts
-import { RLP } from 'micro-eth-signer/tx';
+import { RLP } from 'micro-eth-signer/rlp';
 RLP.decode(RLP.encode('dog'));
+```
+
+### SSZ parsing
+
+Simple serialize (SSZ) is the serialization method used on the Beacon Chain.
+We implement RLP in just 900 lines of code, powered by [packed](https://github.com/paulmillr/micro-packed):
+
+```ts
+import * as ssz from 'micro-eth-signer/ssz';
 ```
 
 ### Sign and verify messages
