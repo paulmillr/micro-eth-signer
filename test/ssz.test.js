@@ -3,7 +3,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { describe, should } from 'micro-should';
 import { hexToBytes, bytesToHex } from '@noble/hashes/utils';
 import * as SSZ from '../lib/esm/ssz.js';
-import * as snappy from 'snappy';
+import * as snappy from 'snappyjs';
 import * as yaml from 'yaml';
 
 // https://github.com/ethereum/consensus-spec-tests
@@ -21,7 +21,7 @@ for (const category of readdirSync(PATH)) {
     for (const name of readdirSync(`${PATH}/${category}/${valid}`)) {
       const curPath = `${PATH}/${category}/${valid}/${name}`;
       const data = readFileSync(`${curPath}/serialized.ssz_snappy`);
-      const hex = bytesToHex(snappy.uncompressSync(data));
+      const hex = bytesToHex(snappy.uncompress(data));
       const fullName = `${category}/${name}`;
 
       if (valid === 'valid') {
@@ -41,7 +41,7 @@ for (const type of readdirSync(STATIC_PATH)) {
       const fullName = `${name}/${name2}`;
       const curPath = `${STATIC_PATH}/${type}/${name}/${name2}`;
       const data = readFileSync(`${curPath}/serialized.ssz_snappy`);
-      const hex = bytesToHex(snappy.uncompressSync(data));
+      const hex = bytesToHex(snappy.uncompress(data));
       const meta = yaml.parse(readFileSync(`${curPath}/roots.yaml`, 'utf8'), yamlOpt);
       const value = yaml.parse(readFileSync(`${curPath}/value.yaml`, 'utf8'), yamlOpt);
       STATIC_VECTORS.push({ type, name: fullName, hex, meta, value });
