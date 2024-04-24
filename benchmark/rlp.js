@@ -1,6 +1,6 @@
 import { compare, utils as butils } from 'micro-bmark';
 import { RLP } from '@ethereumjs/rlp';
-import { RLP as microrlp } from '../lib/esm/tx.js';
+import { RLP as microrlp } from '../lib/esm/rlp.js';
 import { Rlp as cubane } from '@hazae41/cubane';
 import { Writable } from '@hazae41/binary';
 

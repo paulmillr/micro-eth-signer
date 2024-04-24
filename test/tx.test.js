@@ -5,7 +5,7 @@ import { addr, Transaction, messenger } from '../lib/esm/index.js';
 import { RawTx, RlpTx, __tests } from '../lib/esm/tx.js';
 import { add0x, createDecimal, ethHex, formatters } from '../lib/esm/utils.js';
 import { default as TX_VECTORS } from './vectors/transactions.json' assert { type: 'json' };
-import { default as EIP155_VECTORS } from './vectors/eip155.json' assert { type: 'json' };
+import { default as EIP155_VECTORS } from './vectors/eips/eip155.json' assert { type: 'json' };
 import * as ethTests from './vectors/eth-tests-tx-vectors.js';
 import { getEthersVectors, getViemVectors } from './util.js';
 
