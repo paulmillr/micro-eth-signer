@@ -22,9 +22,7 @@ jobs:
         uses: actions/cache@13aacd865c20de90d75de3b17ebe84f7a17d57d2 # v4
         with:
           path: |
-            test/vectors/ethereum-tests
-            test/vectors/ethers
-            test/vectors/viem
+            test/vectors
           key: ${{ runner.os }}-submodules
       - name: Update git submodules
         if: steps.cache-submodule.outputs.cache-hit != 'true'
