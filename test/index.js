@@ -9,5 +9,6 @@ import './abi.test.js';
 import './ens.test.js';
 import './uniswap.test.js';
 import './net.test.js';
+import './ssz.test.js';
 
 should.run();
