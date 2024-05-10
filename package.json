@@ -2,7 +2,7 @@
   "name": "micro-eth-signer",
   "version": "0.8.1",
   "description": "Minimal library for Ethereum transactions, addresses and smart contracts",
-  "files": ["lib", "src"],
+  "files": ["abi", "esm", "net", "src", "*.js", "*.d.ts", "*.js.map", "*.d.ts.map"],
   "main": "lib/index.js",
   "module": "lib/esm/index.js",
   "types": "lib/index.d.ts",
@@ -28,44 +28,44 @@
   "license": "MIT",
   "exports": {
     ".": {
-      "types": "./lib/index.d.ts",
-      "import": "./lib/esm/index.js",
-      "default": "./lib/index.js"
+      "types": "./index.d.ts",
+      "import": "./esm/index.js",
+      "default": "./index.js"
     },
     "./abi": {
-      "types": "./lib/abi/index.d.ts",
-      "import": "./lib/esm/abi/index.js",
-      "default": "./lib/abi/index.js"
+      "types": "./abi/index.d.ts",
+      "import": "./esm/abi/index.js",
+      "default": "./abi/index.js"
     },
     "./net": {
-      "types": "./lib/net/index.d.ts",
-      "import": "./lib/esm/net/index.js",
-      "default": "./lib/net/index.js"
+      "types": "./net/index.d.ts",
+      "import": "./esm/net/index.js",
+      "default": "./net/index.js"
     },
     "./net/tx": {
-      "types": "./lib/net/tx.d.ts",
-      "import": "./lib/esm/net/tx.js",
-      "default": "./lib/net/tx.js"
+      "types": "./net/tx.d.ts",
+      "import": "./esm/net/tx.js",
+      "default": "./net/tx.js"
     },
     "./rlp": {
-      "types": "./lib/net/rlp.d.ts",
-      "import": "./lib/esm/net/rlp.js",
-      "default": "./lib/net/rlp.js"
+      "types": "./net/rlp.d.ts",
+      "import": "./esm/net/rlp.js",
+      "default": "./net/rlp.js"
     },
     "./ssz": {
-      "types": "./lib/net/ssz.d.ts",
-      "import": "./lib/esm/net/ssz.js",
-      "default": "./lib/net/ssz.js"
+      "types": "./net/ssz.d.ts",
+      "import": "./esm/net/ssz.js",
+      "default": "./net/ssz.js"
     },
     "./tx": {
-      "types": "./lib/tx.d.ts",
-      "import": "./lib/esm/tx.js",
-      "default": "./lib/tx.js"
+      "types": "./tx.d.ts",
+      "import": "./esm/tx.js",
+      "default": "./tx.js"
     },
     "./utils": {
-      "types": "./lib/utils.d.ts",
-      "import": "./lib/esm/utils.js",
-      "default": "./lib/utils.js"
+      "types": "./utils.d.ts",
+      "import": "./esm/utils.js",
+      "default": "./utils.js"
     }
   },
   "keywords": [

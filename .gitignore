@@ -1,5 +1,9 @@
 node_modules
 /build/micro-eth-signer.js
-/lib
-/index.js
-/index.d.ts
+/esm
+*.d.ts
+*.d.ts.map
+*.js.map
+/*.js
+/abi
+/net
