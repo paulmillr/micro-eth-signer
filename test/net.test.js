@@ -1,9 +1,9 @@
 import { deepStrictEqual, throws } from 'node:assert';
 import { describe, should } from 'micro-should';
-import { tokenFromSymbol } from '../lib/esm/abi/index.js';
-import { FetchProvider, ENS, Chainlink, UniswapV3 } from '../lib/esm/net/index.js';
-import { ethDecimal, numberTo0xHex } from '../lib/esm/utils.js';
-import * as netTx from '../lib/esm/net/tx.js';
+import { tokenFromSymbol } from '../esm/abi/index.js';
+import { FetchProvider, ENS, Chainlink, UniswapV3 } from '../esm/net/index.js';
+import { ethDecimal, numberTo0xHex } from '../esm/utils.js';
+import * as netTx from '../esm/net/tx.js';
 // These real network responses from real nodes, captured by fetchReplay
 import { default as NET_TX_REPLAY } from './vectors/rpc/transactions.js';
 import { default as NET_ENS_REPLAY } from './vectors/rpc/ens.js';

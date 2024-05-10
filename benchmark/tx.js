@@ -2,8 +2,8 @@ import { compare, utils as butils } from 'micro-bmark';
 
 import { parseGwei } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
-import * as micro from '../lib/esm/index.js';
-import { amounts } from '../lib/esm/utils.js';
+import * as micro from '../esm/index.js';
+import { amounts } from '../esm/utils.js';
 import * as viem from 'viem';
 import * as ethers from 'ethers';
 
@@ -14,7 +14,7 @@ const TO_ADDR = '0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266';
 const TX =
   '0x02f86b014584b2d05e008504a817c80082520894f39fd6e51aad88f6f4ce6ab8827279cfffb922668080c080a0a9ff766b8c2faa724e9658625e7c18c6694b1e8d1d740aa4075a5191abccd73ca008a1238402eb55cf19edcd197daf1b73c94d74bd16a1d590897956e6f881b326';
 
-  console.log(micro.Transaction.fromHex(TX).removeSignature().signBy(PRIV).toHex());
+console.log(micro.Transaction.fromHex(TX).removeSignature().signBy(PRIV).toHex());
 
 const TX_PARAMS = {
   ethers: {

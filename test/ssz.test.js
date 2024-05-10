@@ -2,7 +2,7 @@ import { deepStrictEqual, throws } from 'node:assert';
 import { readdirSync, readFileSync } from 'node:fs';
 import { describe, should } from 'micro-should';
 import { hexToBytes, bytesToHex } from '@noble/hashes/utils';
-import * as SSZ from '../lib/esm/ssz.js';
+import * as SSZ from '../esm/ssz.js';
 import * as snappy from 'snappyjs';
 import * as yaml from 'yaml';
 

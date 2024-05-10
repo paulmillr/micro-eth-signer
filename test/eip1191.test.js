@@ -1,7 +1,7 @@
 import { deepStrictEqual, throws } from 'node:assert';
 import { describe, should } from 'micro-should';
-import { addr } from '../lib/esm/address.js';
-import { Transaction } from '../lib/esm/index.js';
+import { addr } from '../esm/address.js';
+import { Transaction } from '../esm/index.js';
 
 const VECTORS = [
   {
