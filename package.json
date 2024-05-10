@@ -2,10 +2,7 @@
   "name": "micro-eth-signer",
   "version": "0.8.1",
   "description": "Minimal library for Ethereum transactions, addresses and smart contracts",
-  "files": [
-    "lib",
-    "src"
-  ],
+  "files": ["lib", "src"],
   "main": "lib/index.js",
   "module": "lib/esm/index.js",
   "types": "lib/index.d.ts",
@@ -44,6 +41,11 @@
       "types": "./lib/net/index.d.ts",
       "import": "./lib/esm/net/index.js",
       "default": "./lib/net/index.js"
+    },
+    "./net/tx": {
+      "types": "./lib/net/tx.d.ts",
+      "import": "./lib/esm/net/tx.js",
+      "default": "./lib/net/tx.js"
     },
     "./rlp": {
       "types": "./lib/net/rlp.d.ts",

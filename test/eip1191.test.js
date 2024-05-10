@@ -1,6 +1,5 @@
 import { deepStrictEqual, throws } from 'node:assert';
 import { describe, should } from 'micro-should';
-import { hexToBytes } from '@noble/hashes/utils';
 import { addr } from '../lib/esm/address.js';
 import { Transaction } from '../lib/esm/index.js';
 

@@ -112,7 +112,7 @@ type YRS = Partial<{ chainId: bigint; yParity: number; r: bigint; s: bigint }>;
 // Case: unsigned tx for cold wallet for different chains, like mainnet & testnet.
 //   - otherwise v = yParity + 2*chainId + 35
 //   - allows to keep legacy logic here, instead of copying to Transaction
-const legacySig = {
+export const legacySig = {
   encode: (data: VRS) => {
     const { v, r, s } = data;
     if (v === undefined) return { chainId: undefined };

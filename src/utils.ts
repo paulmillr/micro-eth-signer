@@ -17,6 +17,7 @@ export type Web3CallArgs = Partial<{
 export type Web3Provider = {
   ethCall: (args: Web3CallArgs) => Promise<string>;
   estimateGas: (args: Web3CallArgs) => Promise<bigint>;
+  call: (method: string, ...args: any[]) => Promise<any>;
 };
 
 const ETH_PRECISION = 18;

@@ -24,24 +24,25 @@ For [Deno](https://deno.land), ensure to use [npm specifier](https://deno.land/m
 For React Native, you may need a [polyfill for getRandomValues](https://github.com/LinusU/react-native-get-random-values).
 If you don't like NPM, a standalone [eth-signer.js](https://github.com/paulmillr/micro-eth-signer/releases) is also available.
 
-- [Create and sign transactions](#create-and-sign-transactions)
-- [Create and checksum addresses](#create-and-checksum-addresses)
-- [Generate random keys and addresses](#generate-random-keys-and-addresses)
-- [Human-readable hints](#human-readable-hints)
-  - [Decoding transactions](#decoding-transactions)
-  - [Decoding events](#decoding-events)
+- [Transactions: create, sign](#create-and-sign-transactions)
+- [Addresses: create, checksum](#create-and-checksum-addresses)
+- [Generate random wallet](#generate-random-keys-and-addresses)
+- [Fetch balances and history using RPC](#fetch-balances-and-history-using-rpc)
 - [Call smart contracts](#call-smart-contracts)
   - [Fetch Chainlink oracle prices](#fetch-chainlink-oracle-prices)
   - [Swap tokens with Uniswap](#swap-tokens-with-uniswap)
 - [ABI type inference](#abi-type-inference)
-- [RLP parsing](#rlp-parsing)
-- [SSZ parsing](#ssz-parsing)
+- Parsing
+  - [Human-readable transaction hints](#human-readable-transaction-hints)
+  - [Human-readable event hints](#human-readable-event-hints)
+  - [RLP parsing](#rlp-parsing)
+  - [SSZ parsing](#ssz-parsing)
 - [Sign and verify messages](#sign-and-verify-messages)
 - [Security](#security)
 - [Performance](#performance)
 - [License](#license)
 
-### Create and sign transactions
+### Transactions: create, sign
 
 ```ts
 import { addr, amounts, Transaction } from 'micro-eth-signer';
@@ -61,7 +62,7 @@ console.log('address is same', tx.sender === senderAddr);
 
 We support legacy, EIP2930, EIP1559 and EIP4844 (Dencun / Cancun) transactions.
 
-### Create and checksum addresses
+### Addresses: create, checksum
 
 ```ts
 import { addr } from 'micro-eth-signer';
@@ -78,7 +79,7 @@ console.log(
 );
 ```
 
-### Generate random keys and addresses
+### Generate random wallet
 
 ```ts
 import { addr } from 'micro-eth-signer';
@@ -88,93 +89,20 @@ console.log(random.privateKey, random.address);
 // 0x26d930712fd2f612a107A70fd0Ad79b777cD87f6
 ```
 
-### Human-readable hints
-
-#### Decoding transactions
-
-The transaction sent ERC-20 USDT token between addresses. The library produces a following hint:
-
-> Transfer 22588 USDT to 0xdac17f958d2ee523a2206206994597c13d831ec7
+### Fetch balances and history using RPC
 
 ```ts
-import { decodeTx } from 'micro-eth-signer/abi';
-
-const tx =
-  '0xf8a901851d1a94a20082c12a94dac17f958d2ee523a2206206994597c13d831ec780b844a9059cbb000000000000000000000000dac17f958d2ee523a2206206994597c13d831ec7000000000000000000000000000000000000000000000000000000054259870025a066fcb560b50e577f6dc8c8b2e3019f760da78b4c04021382ba490c572a303a42a0078f5af8ac7e11caba9b7dc7a64f7bdc3b4ce1a6ab0a1246771d7cc3524a7200';
-// Decode tx information
-deepStrictEqual(decodeTx(tx), {
-  name: 'transfer',
-  signature: 'transfer(address,uint256)',
-  value: {
-    to: '0xdac17f958d2ee523a2206206994597c13d831ec7',
-    value: 22588000000n,
-  },
-  hint: 'Transfer 22588 USDT to 0xdac17f958d2ee523a2206206994597c13d831ec7',
-});
-```
-
-Or if you have already decoded tx:
-
-```ts
-import { decodeData } from 'micro-eth-signer/abi';
-
-const to = '0x7a250d5630b4cf539739df2c5dacb4c659f2488d';
-const data =
-  '7ff36ab5000000000000000000000000000000000000000000000000ab54a98ceb1f0ad30000000000000000000000000000000000000000000000000000000000000080000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa96045000000000000000000000000000000000000000000000000000000006fd9c6ea0000000000000000000000000000000000000000000000000000000000000002000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2000000000000000000000000106d3c66d22d2dd0446df23d7f5960752994d600';
-const value = 100000000000000000n;
-
-deepStrictEqual(decodeData(to, data, value, { customContracts }), {
-  name: 'swapExactETHForTokens',
-  signature: 'swapExactETHForTokens(uint256,address[],address,uint256)',
-  value: {
-    amountOutMin: 12345678901234567891n,
-    path: [
-      '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2',
-      '0x106d3c66d22d2dd0446df23d7f5960752994d600',
-    ],
-    to: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
-    deadline: 1876543210n,
-  },
-});
-
-// With custom tokens/contracts
-const customContracts = {
-  '0x106d3c66d22d2dd0446df23d7f5960752994d600': { abi: 'ERC20', symbol: 'LABRA', decimals: 9 },
-};
-deepStrictEqual(decodeData(to, data, value, { customContracts }), {
-  name: 'swapExactETHForTokens',
-  signature: 'swapExactETHForTokens(uint256,address[],address,uint256)',
-  value: {
-    amountOutMin: 12345678901234567891n,
-    path: [
-      '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2',
-      '0x106d3c66d22d2dd0446df23d7f5960752994d600',
-    ],
-    to: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
-    deadline: 1876543210n,
-  },
-  hint: 'Swap 0.1 ETH for at least 12345678901.234567891 LABRA. Expires at Tue, 19 Jun 2029 06:00:10 GMT',
-});
-```
-
-#### Decoding events
-
-Decoding the event produces the following hint:
-
-> Allow 0xe592427a0aece92de3edee1f18e0157c05861564 spending up to 1000 BAT from 0xd8da6bf26964af9d7eed9e03e53415d37aa96045
-
-```ts
-import { decodeEvent } from 'micro-eth-signer/abi';
-
-const to = '0x0d8775f648430679a709e98d2b0cb6250d2887ef';
-const topics = [
-  '0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925',
-  '0x000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa96045',
-  '0x000000000000000000000000e592427a0aece92de3edee1f18e0157c05861564',
-];
-const data = '0x00000000000000000000000000000000000000000000003635c9adc5dea00000';
-const einfo = decodeEvent(to, topics, data);
-console.log(einfo);
+import { TxProvider, calcTransfersDiff } from 'micro-eth-signer/net/tx';
+const txp = TxProvider(fetchProvider(fetch));
+const addr = '0x26d930712fd2f612a107A70fd0Ad79b777cD87f6';
+const _2 = await txp.height();
+const _3 = await txp.transfers(addr);
+const _4 = await txp.allowances(addr);
+const _5 = await txp.tokenBalances(addr);
+// High-level methods are `height`, `unspent`, `transfers`, `allowances` and `tokenBalances`.
+//
+// Low-level methods are `blockInfo`, `internalTransactions`, `ethLogs`, `tokenTransfers`, `wethTransfers`,
+// `tokenInfo` and `txInfo`.
 ```
 
 ### Call smart contracts
@@ -278,7 +206,96 @@ There are following limitations:
 
 Check out [`src/net/ens.ts`](./src/net/ens.ts) for type-safe contract execution example.
 
-### RLP parsing
+### Parsers
+
+#### Human-readable transaction hints
+
+The transaction sent ERC-20 USDT token between addresses. The library produces a following hint:
+
+> Transfer 22588 USDT to 0xdac17f958d2ee523a2206206994597c13d831ec7
+
+```ts
+import { decodeTx } from 'micro-eth-signer/abi';
+
+const tx =
+  '0xf8a901851d1a94a20082c12a94dac17f958d2ee523a2206206994597c13d831ec780b844a9059cbb000000000000000000000000dac17f958d2ee523a2206206994597c13d831ec7000000000000000000000000000000000000000000000000000000054259870025a066fcb560b50e577f6dc8c8b2e3019f760da78b4c04021382ba490c572a303a42a0078f5af8ac7e11caba9b7dc7a64f7bdc3b4ce1a6ab0a1246771d7cc3524a7200';
+// Decode tx information
+deepStrictEqual(decodeTx(tx), {
+  name: 'transfer',
+  signature: 'transfer(address,uint256)',
+  value: {
+    to: '0xdac17f958d2ee523a2206206994597c13d831ec7',
+    value: 22588000000n,
+  },
+  hint: 'Transfer 22588 USDT to 0xdac17f958d2ee523a2206206994597c13d831ec7',
+});
+```
+
+Or if you have already decoded tx:
+
+```ts
+import { decodeData } from 'micro-eth-signer/abi';
+
+const to = '0x7a250d5630b4cf539739df2c5dacb4c659f2488d';
+const data =
+  '7ff36ab5000000000000000000000000000000000000000000000000ab54a98ceb1f0ad30000000000000000000000000000000000000000000000000000000000000080000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa96045000000000000000000000000000000000000000000000000000000006fd9c6ea0000000000000000000000000000000000000000000000000000000000000002000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2000000000000000000000000106d3c66d22d2dd0446df23d7f5960752994d600';
+const value = 100000000000000000n;
+
+deepStrictEqual(decodeData(to, data, value, { customContracts }), {
+  name: 'swapExactETHForTokens',
+  signature: 'swapExactETHForTokens(uint256,address[],address,uint256)',
+  value: {
+    amountOutMin: 12345678901234567891n,
+    path: [
+      '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2',
+      '0x106d3c66d22d2dd0446df23d7f5960752994d600',
+    ],
+    to: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
+    deadline: 1876543210n,
+  },
+});
+
+// With custom tokens/contracts
+const customContracts = {
+  '0x106d3c66d22d2dd0446df23d7f5960752994d600': { abi: 'ERC20', symbol: 'LABRA', decimals: 9 },
+};
+deepStrictEqual(decodeData(to, data, value, { customContracts }), {
+  name: 'swapExactETHForTokens',
+  signature: 'swapExactETHForTokens(uint256,address[],address,uint256)',
+  value: {
+    amountOutMin: 12345678901234567891n,
+    path: [
+      '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2',
+      '0x106d3c66d22d2dd0446df23d7f5960752994d600',
+    ],
+    to: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
+    deadline: 1876543210n,
+  },
+  hint: 'Swap 0.1 ETH for at least 12345678901.234567891 LABRA. Expires at Tue, 19 Jun 2029 06:00:10 GMT',
+});
+```
+
+#### Human-readable event hints
+
+Decoding the event produces the following hint:
+
+> Allow 0xe592427a0aece92de3edee1f18e0157c05861564 spending up to 1000 BAT from 0xd8da6bf26964af9d7eed9e03e53415d37aa96045
+
+```ts
+import { decodeEvent } from 'micro-eth-signer/abi';
+
+const to = '0x0d8775f648430679a709e98d2b0cb6250d2887ef';
+const topics = [
+  '0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925',
+  '0x000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa96045',
+  '0x000000000000000000000000e592427a0aece92de3edee1f18e0157c05861564',
+];
+const data = '0x00000000000000000000000000000000000000000000003635c9adc5dea00000';
+const einfo = decodeEvent(to, topics, data);
+console.log(einfo);
+```
+
+#### RLP parsing
 
 We implement RLP in just 100 lines of code, powered by [packed](https://github.com/paulmillr/micro-packed):
 
@@ -287,7 +304,7 @@ import { RLP } from 'micro-eth-signer/rlp';
 RLP.decode(RLP.encode('dog'));
 ```
 
-### SSZ parsing
+#### SSZ parsing
 
 Simple serialize (SSZ) is the serialization method used on the Beacon Chain.
 We implement RLP in just 900 lines of code, powered by [packed](https://github.com/paulmillr/micro-packed):
