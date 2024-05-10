@@ -4,8 +4,8 @@ import { describe, should } from 'micro-should';
 import { addr, Transaction, messenger } from '../lib/esm/index.js';
 import { RawTx, RlpTx, __tests } from '../lib/esm/tx.js';
 import { add0x, createDecimal, ethHex, formatters } from '../lib/esm/utils.js';
-import { default as TX_VECTORS } from './vectors/transactions.json' assert { type: 'json' };
-import { default as EIP155_VECTORS } from './vectors/eips/eip155.json' assert { type: 'json' };
+import { default as TX_VECTORS } from './vectors/transactions.json' with { type: 'json' };
+import { default as EIP155_VECTORS } from './vectors/eips/eip155.json' with { type: 'json' };
 import * as ethTests from './vectors/eth-tests-tx-vectors.js';
 import { getEthersVectors, getViemVectors } from './util.js';
 
@@ -147,8 +147,8 @@ const SKIPPED_ERRORS = {
     'TransactionWithLeadingZerosValue',
     'TransactionWithLeadingZerosNonce',
     'TransactionWithRvaluePrefixed00BigInt',
-  ]
-}
+  ],
+};
 
 function log(...args) {
   console.log(
@@ -753,7 +753,8 @@ describe('messenger', () => {
     const privateKey = '0x43ff8d9ae58f6f2ef437bd3543362d1d842ecca3b6cc578b46e862b47fd60020';
     const address = '0xba20188aE2Bc7dd72eD8d0c4936154a49b17f08A';
     const msg = 'noble';
-    const sig = '0x425fbe7b4d5078c4f6538f6ae13c385874ce31478324feacf1795e2403bedc3d6e8204d3cc870c95bad45bdfa6e1f631044c8886d0ff8af93923f9bc051b16841b';
+    const sig =
+      '0x425fbe7b4d5078c4f6538f6ae13c385874ce31478324feacf1795e2403bedc3d6e8204d3cc870c95bad45bdfa6e1f631044c8886d0ff8af93923f9bc051b16841b';
     deepStrictEqual(messenger.sign(msg, privateKey), sig);
     deepStrictEqual(messenger.verify(sig, msg, address), true);
   });
@@ -765,8 +766,8 @@ describe('messenger', () => {
       const isValid = messenger.verify(sig, msg, address);
       deepStrictEqual(isValid, true, i);
     }
-  })
-})
+  });
+});
 
 // ESM is broken.
 import url from 'node:url';

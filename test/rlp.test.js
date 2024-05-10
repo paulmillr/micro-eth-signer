@@ -5,10 +5,10 @@ import { RLP } from '../lib/esm/rlp.js';
 import { ethHex, ethHexNoLeadingZero } from '../lib/esm/utils.js';
 import { ENCODE_TESTS, DECODE_TESTS, INVALID } from './vectors/monorepo/rlp.js';
 import { getEthersVectors, getViemVectors } from './util.js';
-import { default as RLP_TEST } from './vectors/ethereum-tests/RLPTests/rlptest.json' assert { type: 'json' };
-import { default as INVALID_RLP } from './vectors/ethereum-tests/RLPTests/invalidRLPTest.json' assert { type: 'json' };
-import { default as RANDOM_RLP } from './vectors/ethereum-tests/RLPTests/RandomRLPTests/example.json' assert { type: 'json' };
-import { default as EIP2930 } from './vectors/monorepo/eip2930blockRLP.json' assert { type: 'json' };
+import { default as RLP_TEST } from './vectors/ethereum-tests/RLPTests/rlptest.json' with { type: 'json' };
+import { default as INVALID_RLP } from './vectors/ethereum-tests/RLPTests/invalidRLPTest.json' with { type: 'json' };
+import { default as RANDOM_RLP } from './vectors/ethereum-tests/RLPTests/RandomRLPTests/example.json' with { type: 'json' };
+import { default as EIP2930 } from './vectors/monorepo/eip2930blockRLP.json' with { type: 'json' };
 
 const VIEM_RLP = getViemVectors('rlp.json.gz');
 const ETHERS_RLP = getEthersVectors('rlp.json.gz');
@@ -17,10 +17,12 @@ describe('RLP', () => {
   describe('@ethereumjs/rlp', () => {
     should('encode basic', () => {
       for (const [k, v] of Object.entries(ENCODE_TESTS))
-        for (const inp of v) deepStrictEqual(ethHexNoLeadingZero.encode(RLP.encode(inp)), `0x${k}`, 'encode');
+        for (const inp of v)
+          deepStrictEqual(ethHexNoLeadingZero.encode(RLP.encode(inp)), `0x${k}`, 'encode');
     });
     should('decode basic', () => {
-      const toArr = (elm) => (Array.isArray(elm) ? elm.map(toArr) : ethHexNoLeadingZero.encode(elm));
+      const toArr = (elm) =>
+        Array.isArray(elm) ? elm.map(toArr) : ethHexNoLeadingZero.encode(elm);
       for (const k in DECODE_TESTS)
         deepStrictEqual(toArr(RLP.decode(ethHexNoLeadingZero.decode(k))), DECODE_TESTS[k]);
     });
