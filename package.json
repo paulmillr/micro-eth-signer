@@ -3,9 +3,9 @@
   "version": "0.8.1",
   "description": "Minimal library for Ethereum transactions, addresses and smart contracts",
   "files": ["abi", "esm", "net", "src", "*.js", "*.d.ts", "*.js.map", "*.d.ts.map"],
-  "main": "lib/index.js",
-  "module": "lib/esm/index.js",
-  "types": "lib/index.d.ts",
+  "main": "index.js",
+  "module": "esm/index.js",
+  "types": "index.d.ts",
   "dependencies": {
     "@noble/curves": "~1.4.0",
     "@noble/hashes": "~1.4.0",
@@ -41,11 +41,6 @@
       "types": "./net/index.d.ts",
       "import": "./esm/net/index.js",
       "default": "./net/index.js"
-    },
-    "./net/tx": {
-      "types": "./net/tx.d.ts",
-      "import": "./esm/net/tx.js",
-      "default": "./net/tx.js"
     },
     "./rlp": {
       "types": "./net/rlp.d.ts",

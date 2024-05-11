@@ -6,7 +6,7 @@ Minimal library for Ethereum transactions, addresses and smart contracts.
 - 🔻 Tree-shaking-friendly: use only what's necessary, other code won't be included
 - 🔍 Reliable: 150MB of test vectors from EIPs, ethers and viem
 - ✍️ Create, sign and decode transactions using human-readable hints
-- 🌍 Fetch historical transactions and token balances from an archive node
+- 🌍 Fetch balances and history from an archive node
 - 🆎 Call smart contracts: Chainlink and Uniswap APIs are included
 - 🦺 Typescript-friendly ABI, RLP and SSZ decoding
 - 🪶 1200 lines for core functionality
@@ -27,7 +27,7 @@ If you don't like NPM, a standalone [eth-signer.js](https://github.com/paulmillr
 - [Transactions: create, sign](#create-and-sign-transactions)
 - [Addresses: create, checksum](#create-and-checksum-addresses)
 - [Generate random wallet](#generate-random-keys-and-addresses)
-- [Fetch balances and history using RPC](#fetch-balances-and-history-using-rpc)
+- [Fetch balances and history from an archive node](#fetch-balances-and-history-from-an-archive-node)
 - [Call smart contracts](#call-smart-contracts)
   - [Fetch Chainlink oracle prices](#fetch-chainlink-oracle-prices)
   - [Swap tokens with Uniswap](#swap-tokens-with-uniswap)
@@ -89,23 +89,21 @@ console.log(random.privateKey, random.address);
 // 0x26d930712fd2f612a107A70fd0Ad79b777cD87f6
 ```
 
-### Fetch balances and history using RPC
+### Fetch balances and history from an archive node
 
 ```ts
-import { TxProvider, calcTransfersDiff } from 'micro-eth-signer/net/tx';
-const txp = TxProvider(fetchProvider(fetch));
+import { ArchiveNodeProvider, FetchProvider, calcTransfersDiff } from 'micro-eth-signer/net';
+const prov = new ArchiveNodeProvider(new FetchProvider(globalThis.fetch)); // use built-in fetch()
 const addr = '0x26d930712fd2f612a107A70fd0Ad79b777cD87f6';
-const _2 = await txp.height();
-const _3 = await txp.transfers(addr);
-const _4 = await txp.allowances(addr);
-const _5 = await txp.tokenBalances(addr);
-// High-level methods are `height`, `unspent`, `transfers`, `allowances` and `tokenBalances`.
-//
-// Low-level methods are `blockInfo`, `internalTransactions`, `ethLogs`, `tokenTransfers`, `wethTransfers`,
-// `tokenInfo` and `txInfo`.
+for (let method of ['height', 'unspent', 'transfers', 'allowances', 'tokenBalances']) {
+  console.log(method, await prov[method](addr));
+}
+// Other available methods:
+// `blockInfo`, `internalTransactions`, `ethLogs`,
+// `tokenTransfers`, `wethTransfers`, `tokenInfo` and `txInfo`
 ```
 
-An archive node is required. Reth has 100-block window limit, which means it's too slow for now.
+Erigon is preferred as archive node software. Reth has 100-block window limit, which means it's too slow for now.
 
 ### Call smart contracts
 

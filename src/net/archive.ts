@@ -7,7 +7,7 @@ import { ContractInfo, createContract, events, ERC20, WETH } from '../abi/index.
 Methods to fetch list of transactions from any ETH node RPC.
 It should be easy. However, this is sparta^W ethereum, so, prepare to suffer.
 
-The network is not directly called: `TxProvider#rpc` calls `Web3Provider`.
+The network is not directly called: `ArchiveNodeProvider#rpc` calls `Web3Provider`.
 
 - There is no simple & fast API inside nodes, all external API create their own namespace for this
 - API is different between nodes: erigon uses streaming, other nodes use pagination
@@ -335,7 +335,7 @@ function validateLogOpts(opts: Record<string, unknown>) {
  * Low-level methods are `blockInfo`, `internalTransactions`, `ethLogs`, `tokenTransfers`, `wethTransfers`,
  * `tokenInfo` and `txInfo`.
  */
-export class TxProvider {
+export class ArchiveNodeProvider {
   constructor(private provider: Web3Provider) {}
 
   // The low-level place where network calls are done

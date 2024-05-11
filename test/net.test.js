@@ -1,9 +1,15 @@
-import { deepStrictEqual, throws } from 'node:assert';
+import { deepStrictEqual } from 'node:assert';
 import { describe, should } from 'micro-should';
 import { tokenFromSymbol } from '../esm/abi/index.js';
-import { FetchProvider, ENS, Chainlink, UniswapV3 } from '../esm/net/index.js';
+import {
+  ArchiveNodeProvider,
+  calcTransfersDiff,
+  FetchProvider,
+  ENS,
+  Chainlink,
+  UniswapV3,
+} from '../esm/net/index.js';
 import { ethDecimal, numberTo0xHex } from '../esm/utils.js';
-import * as netTx from '../esm/net/tx.js';
 // These real network responses from real nodes, captured by fetchReplay
 import { default as NET_TX_REPLAY } from './vectors/rpc/transactions.js';
 import { default as NET_ENS_REPLAY } from './vectors/rpc/ens.js';
@@ -58,7 +64,7 @@ const fetchReplay = (logs, offline = true) => {
 describe('Network', () => {
   should('ENS', async () => {
     const replay = fetchReplay(NET_ENS_REPLAY);
-    const provider = FetchProvider(REAL_NETWORK ? fetch : replay, NODE_URL, NODE_HEADERS);
+    const provider = new FetchProvider(REAL_NETWORK ? fetch : replay, NODE_URL, NODE_HEADERS);
     const ens = new ENS(provider);
     const vitalikAddr = await ens.nameToAddress('vitalik.eth');
     const vitalikName = await ens.addressToName(vitalikAddr);
@@ -69,7 +75,7 @@ describe('Network', () => {
   should('Chainlink', async () => {
     const replay = fetchReplay(NET_CHAINLINK_REPLAY);
 
-    const provider = FetchProvider(REAL_NETWORK ? fetch : replay, NODE_URL, NODE_HEADERS);
+    const provider = new FetchProvider(REAL_NETWORK ? fetch : replay, NODE_URL, NODE_HEADERS);
     const chainlink = new Chainlink(provider);
     const btcPrice = await chainlink.coinPrice('BTC');
     deepStrictEqual(btcPrice, 69369.10271);
@@ -78,7 +84,7 @@ describe('Network', () => {
 
   should('UniswapV3', async () => {
     const replay = fetchReplay(NET_UNISWAP_REPLAY);
-    const provider = FetchProvider(REAL_NETWORK ? fetch : replay, NODE_URL, NODE_HEADERS);
+    const provider = new FetchProvider(REAL_NETWORK ? fetch : replay, NODE_URL, NODE_HEADERS);
     const univ3 = new UniswapV3(provider);
     // Actual code
     const vitalikAddr = '0xd8da6bf26964af9d7eed9e03e53415d37aa96045';
@@ -102,7 +108,7 @@ describe('Network', () => {
 
   should('estimateGas', async () => {
     const replay = fetchReplay(NET_ESTIMATE_GAS_REPLAY);
-    const provider = FetchProvider(REAL_NETWORK ? fetch : replay, NODE_URL, NODE_HEADERS);
+    const provider = new FetchProvider(REAL_NETWORK ? fetch : replay, NODE_URL, NODE_HEADERS);
     const gasLimit = await provider.estimateGas({
       from: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
       to: '0xe592427a0aece92de3edee1f18e0157c05861564',
@@ -118,8 +124,8 @@ describe('Network', () => {
     // Perfect for tests: only has a few transactions and provides different types of txs.
     const addr = '0x6994eCe772cC4aBb5C9993c065a34C94544A4087';
     const replay = fetchReplay(NET_TX_REPLAY, true);
-    const provider = FetchProvider(REAL_NETWORK ? fetch : replay, 'NODE_URL', {});
-    const tx = new netTx.TxProvider(provider);
+    const provider = new FetchProvider(REAL_NETWORK ? fetch : replay, 'NODE_URL', {});
+    const tx = new ArchiveNodeProvider(provider);
     // Blocks
     deepStrictEqual(await tx.blockInfo(15_010_733), NET_TX_VECTORS.block);
     // Internal transactions sanity
@@ -168,7 +174,7 @@ describe('Network', () => {
     const transfers = (await tx.transfers(addr)).map((i) => ({ ...i, info: undefined }));
     deepStrictEqual(transfers, NET_TX_VECTORS.transfers);
 
-    const diff = netTx.calcTransfersDiff(transfers);
+    const diff = calcTransfersDiff(transfers);
     const diffLast = diff[diff.length - 1];
     // From etherscan
     // 0.000130036071955215
