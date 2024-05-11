@@ -23,6 +23,8 @@ export default class FetchProvider implements Web3Provider {
     readonly rpcUrl: string,
     options: NetworkOpts = {}
   ) {
+    if (typeof fetchFunction !== 'function') throw new Error('fetchFunction is required');
+    if (typeof rpcUrl !== 'string') throw new Error('rpcUrl is required');
     this.concurrencyLimit = options.concurrencyLimit == null ? 0 : options.concurrencyLimit;
     this.currentlyFetching = 0;
     this.headers = options.headers || {};
@@ -65,6 +67,7 @@ export default class FetchProvider implements Web3Provider {
     });
   }
   private async rpc(method: string, ...params: any[]): Promise<string> {
+    if (typeof method !== 'string') throw new Error('rpc method name must be a string');
     const body = {
       jsonrpc: '2.0',
       id: 0,

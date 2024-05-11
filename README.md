@@ -92,18 +92,39 @@ console.log(random.privateKey, random.address);
 ### Fetch balances and history from an archive node
 
 ```ts
-import { ArchiveNodeProvider, FetchProvider, calcTransfersDiff } from 'micro-eth-signer/net';
-const prov = new ArchiveNodeProvider(new FetchProvider(globalThis.fetch)); // use built-in fetch()
-const addr = '0x26d930712fd2f612a107A70fd0Ad79b777cD87f6';
-for (let method of ['height', 'unspent', 'transfers', 'allowances', 'tokenBalances']) {
-  console.log(method, await prov[method](addr));
-}
-// Other available methods:
-// `blockInfo`, `internalTransactions`, `ethLogs`,
-// `tokenTransfers`, `wethTransfers`, `tokenInfo` and `txInfo`
+import { ArchiveNodeProvider, FetchProvider } from 'micro-eth-signer/net';
+const RPC_URL = 'http://localhost:8545'; // URL to any RPC
+const rpc = new FetchProvider(globalThis.fetch, RPC_URL); // use built-in fetch()
+const prov = new ArchiveNodeProvider(rpc);
+const addr = '0xd8da6bf26964af9d7eed9e03e53415d37aa96045';
+
+const block = await prov.blockInfo(await prov.height());
+console.log('current block', block.number, block.timestamp, block.baseFeePerGas);
+console.log('info for addr', addr, await prov.unspent(addr));
+
+// ENS example:
+// import { ENS } from 'micro-eth-signer/net'; const ens = new ENS(rpc), addr = await ens.nameToAddress('vitalik.eth');
+
+// Other methods of ArchiveNodeProvider:
+// blockInfo(block: number): Promise<BlockInfo>; // {baseFeePerGas, hash, timestamp...}
+// height(): Promise<number>;
+// internalTransactions(address: string, opts?: TraceOpts): Promise<any[]>;
+// ethLogsSingle(topics: Topics, opts: LogOpts): Promise<Log[]>;
+// ethLogs(topics: Topics, opts?: LogOpts): Promise<Log[]>;
+// tokenTransfers(address: string, opts?: LogOpts): Promise<[Log[], Log[]]>;
+// wethTransfers(address: string, opts?: LogOpts): Promise<[Log[]]>;
+// txInfo(txHash: string, opts?: TxInfoOpts): Promise<{
+//   type: "legacy" | "eip2930" | "eip1559" | "eip4844"; info: any; receipt: any; raw: string | undefined;
+// }>;
+// tokenInfo(address: string): Promise<TokenInfo | undefined>;
+// transfers(address: string, opts?: TraceOpts & LogOpts): Promise<TxTransfers[]>;
+// allowances(address: string, opts?: LogOpts): Promise<TxAllowances>;
+// tokenBalances(address: string, tokens: string[]): Promise<Record<string, bigint>>;
 ```
 
-Erigon is preferred as archive node software. Reth has 100-block window limit, which means it's too slow for now.
+Basic data can be fetched from any node.
+
+Historical balances, transactions and others can only be fetched from an archive node, such as Erigon or Reth.
 
 ### Call smart contracts
 
