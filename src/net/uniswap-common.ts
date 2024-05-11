@@ -1,4 +1,4 @@
-import { Web3Provider, ethHex, ethDecimal, createDecimal } from '../utils.js';
+import { Web3Provider, ethHex, ethDecimal, isBytes, createDecimal } from '../utils.js';
 import { addr } from '../index.js';
 import { tokenFromSymbol } from '../abi/index.js';
 
@@ -46,7 +46,7 @@ export async function awaitDeep<T, E extends boolean | undefined>(
   let promises: Promise<any>[] = [];
   const traverse = (o: any): any => {
     if (Array.isArray(o)) return o.map((i) => traverse(i));
-    if (o instanceof Uint8Array) return o; // TODO: replace with isBytes
+    if (isBytes(o)) return o;
     if (isPromise(o)) return { awaitDeep: promises.push(o) };
     if (typeof o === 'object') {
       let ret: Record<string, any> = {};
@@ -65,7 +65,7 @@ export async function awaitDeep<T, E extends boolean | undefined>(
   }
   const trBack = (o: any): any => {
     if (Array.isArray(o)) return o.map((i) => trBack(i));
-    if (o instanceof Uint8Array) return o; // TODO: replace with isBytes
+    if (isBytes(o)) return o;
     if (typeof o === 'object') {
       if (typeof o === 'object' && o.awaitDeep) return values[o.awaitDeep - 1];
       let ret: Record<string, any> = {};

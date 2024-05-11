@@ -1,5 +1,6 @@
 import * as P from 'micro-packed';
 import { sha256 } from '@noble/hashes/sha2';
+import { isBytes } from './utils.js';
 /*
 
 Simple serialize (SSZ) is the serialization method used on the Beacon Chain.
@@ -410,7 +411,7 @@ export const union = (
  */
 export const bytelist = (maxLen: number): SSZCoder<Uint8Array> => {
   const coder = P.validate(P.bytes(null), (value) => {
-    if (!(value instanceof Uint8Array) || value.length > maxLen)
+    if (!isBytes(value) || value.length > maxLen)
       throw new Error(`SSZ/bytelist: wrong value=${value}`);
     return value;
   });

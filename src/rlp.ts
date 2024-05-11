@@ -1,5 +1,7 @@
 import { numberToVarBytesBE } from '@noble/curves/abstract/utils';
 import * as P from 'micro-packed';
+import { isBytes } from './utils.js';
+
 // Spec-compliant RLP in 100 lines of code.
 export type RLPInput = string | number | Uint8Array | bigint | RLPInput[] | null;
 // length: first 3 bit !== 111 ? 6 bit length : 3bit lenlen
@@ -75,7 +77,7 @@ export const RLP = P.apply(rlpInner, {
     if (data == null) return this.decode(empty);
     switch (typeof data) {
       case 'object':
-        if (P.isBytes(data)) {
+        if (isBytes(data)) {
           if (data.length === 1) {
             const head = data[0];
             if (head < 128) return { TAG: 'byte', data: head };

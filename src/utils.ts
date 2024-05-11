@@ -1,5 +1,7 @@
-import { hexToBytes as _hexToBytes, bytesToHex } from '@noble/hashes/utils';
+import { isBytes as _isBytes, hexToBytes as _hexToBytes, bytesToHex } from '@noble/hashes/utils';
 import { Coder, coders } from 'micro-packed';
+
+export const isBytes = _isBytes;
 
 // There is no network code in the library.
 // The types are used to check external network provider interfaces.

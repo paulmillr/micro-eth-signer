@@ -71,7 +71,6 @@ function basePaths(a: string, b: string, exactOutput: boolean = false) {
   for (let c of BASES) {
     for (let fee1 in Fee) {
       for (let fee2 in Fee) {
-        // TODO: replace with ethHex
         let path = [wA, packFee(fee1), c.contract, packFee(fee2), wB].map((i) => ethHex.decode(i));
         if (exactOutput) path = path.reverse();
         res.push({ path: concatBytes(...path) });

@@ -1,7 +1,7 @@
 import * as P from 'micro-packed';
 import { addr } from './address.js';
 import { RLP } from './rlp.js';
-import { amounts, ethHex } from './utils.js';
+import { isBytes, amounts, ethHex } from './utils.js';
 
 // Transaction parsers
 
@@ -97,7 +97,7 @@ function ensure32<T>(b: any & { length: number }): T {
   return b;
 }
 function ensureBlob(hash: Uint8Array): Uint8Array {
-  if (!P.isBytes(hash) || hash.length !== 32)
+  if (!isBytes(hash) || hash.length !== 32)
     throw new Error('blobVersionedHashes must contain 32-byte Uint8Array-s');
   return hash;
 }
