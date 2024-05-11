@@ -72,8 +72,8 @@ const nonChecksummedAddress = '0x0089d53f703f7e0843953d48133f74ce247184c2';
 const checksummedAddress = addr.addChecksum(nonChecksummedAddress);
 console.log(
   checksummedAddress, // 0x0089d53F703f7E0843953D48133f74cE247184c2
-  addr.verifyChecksum(checksummedAddress), // true
-  addr.verifyChecksum(nonChecksummedAddress), // also true
+  addr.isValid(checksummedAddress), // true
+  addr.isValid(nonChecksummedAddress), // also true
   addr.fromPrivateKey(priv),
   addr.fromPublicKey(pub)
 );

@@ -736,7 +736,7 @@ describe('Transactions', () => {
       throws(() => Transaction.prepare({ ...tx, to: 1 }), 'to=1');
       throws(() => Transaction.prepare({ ...tx, to: new Uint8Array(0) }), 'to=u8a(0)');
       throws(() => Transaction.prepare({ ...tx, to: new Uint8Array(20) }), 'to=u8a(20)');
-      Transaction.prepare({ ...tx, to: '1'.repeat(40) });
+      throws(() => Transaction.prepare({ ...tx, to: '1'.repeat(40) }), 'to=no_0x');
       throws(() => Transaction.prepare({ ...tx, to: '1'.repeat(41) }), 'to=1*41');
       throws(() => Transaction.prepare({ ...tx, to: '1'.repeat(42) }), 'to=1*42');
       Transaction.prepare({ ...tx, to: '0x' + '1'.repeat(40) });

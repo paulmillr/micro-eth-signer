@@ -6,9 +6,6 @@ import { astr, add0x, ethHex, strip0x } from './utils.js';
 
 export const addr = {
   RE: /^(0[xX])?([0-9a-fA-F]{40})?$/,
-  // Not much support, only RSK for now
-  EIP1991_CHAINS: [30n, 31n],
-
   parse(address: string) {
     astr(address);
     const res = address.match(addr.RE) || [];
@@ -21,28 +18,15 @@ export const addr = {
     return { hasPrefix, data };
   },
 
-  isValid(address: string) {
-    try {
-      const a = addr.parse(address);
-      return a && a.hasPrefix;
-    } catch (error) {
-      return false;
-    }
-  },
-
   /**
    * Address checksum is calculated by hashing with keccak_256.
    * It hashes *string*, not a bytearray: keccak('beef') not keccak([0xbe, 0xef])
    * @param nonChecksummedAddress
    * @returns checksummed address
    */
-  addChecksum(nonChecksummedAddress: string, chainId = 1n): string {
-    if (typeof chainId !== 'bigint')
-      throw new Error(`address.addChecksum wrong chainId=${chainId}`);
-    const hasEIP1191 = addr.EIP1991_CHAINS.includes(chainId);
+  addChecksum(nonChecksummedAddress: string): string {
     const low = addr.parse(nonChecksummedAddress).data.toLowerCase();
-    const hashInput = hasEIP1191 ? `${chainId}0x${low}` : low;
-    const hash = bytesToHex(keccak_256(hashInput));
+    const hash = bytesToHex(keccak_256(low));
     let checksummed = '';
     for (let i = 0; i < low.length; i++) {
       const hi = Number.parseInt(hash[i], 16);
@@ -83,11 +67,18 @@ export const addr = {
    * Verifies checksum if the address is checksummed.
    * Always returns true when the address is not checksummed.
    */
-  verifyChecksum(checksummedAddress: string, chainId = 1n): boolean {
-    const { data: address } = addr.parse(checksummedAddress);
+  isValid(checksummedAddress: string): boolean {
+    let parsed: { hasPrefix: boolean; data: string };
+    try {
+      parsed = addr.parse(checksummedAddress);
+    } catch (error) {
+      return false;
+    }
+    const { data: address, hasPrefix } = parsed;
+    if (!hasPrefix) return false;
     const low = address.toLowerCase();
     const upp = address.toUpperCase();
     if (address === low || address === upp) return true;
-    return addr.addChecksum(low, chainId) === checksummedAddress;
+    return addr.addChecksum(low) === checksummedAddress;
   },
 };

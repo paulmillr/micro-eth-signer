@@ -328,10 +328,10 @@ export const RawTx = P.apply(createTxMap(TxVersions), {
   // NOTE: we apply checksum to addresses here, since chainId is not available inside coders
   // By construction 'to' field is decoded before anything about chainId is known
   encode: (data) => {
-    data.data.to = addr.addChecksum(data.data.to, data.data.chainId);
+    data.data.to = addr.addChecksum(data.data.to);
     if (data.type !== 'legacy' && data.data.accessList) {
       for (const item of data.data.accessList) {
-        item[0] = addr.addChecksum(item[0], data.data.chainId);
+        item[0] = addr.addChecksum(item[0]);
       }
     }
     return data;
@@ -402,9 +402,8 @@ const validators: Record<string, (num: any, { strict, type, data }: ValidationOp
     if (strict) minmax(num, amounts.minGasLimit, amounts.maxGasLimit);
     else minmax(num, 0n, amounts.maxUint64);
   },
-  to(address: string, { data }: ValidationOpts) {
-    const chainId = typeof data.chainId === 'bigint' ? data.chainId : undefined;
-    if (!addr.verifyChecksum(address, chainId)) throw new Error('address checksum does not match');
+  to(address: string) {
+    if (!addr.isValid(address)) throw new Error('address checksum does not match');
   },
   value(num: bigint) {
     abig(num);
@@ -422,12 +421,10 @@ const validators: Record<string, (num: any, { strict, type, data }: ValidationOp
     abig(num);
     if (strict) minmax(num, 1n, amounts.maxChainId, '>= 1 and <= 2**32-1');
   },
-  accessList(list: [string, string[]][], { data }: ValidationOpts) {
+  accessList(list: [string, string[]][]) {
     // NOTE: we cannot handle this validation in coder, since it requires chainId to calculate correct checksum
-    const chainId = typeof data.chainId === 'bigint' ? data.chainId : undefined;
     for (const [address, _] of list) {
-      if (!addr.verifyChecksum(address, chainId))
-        throw new Error('address checksum does not match');
+      if (!addr.isValid(address)) throw new Error('address checksum does not match');
     }
   },
 };
