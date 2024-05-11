@@ -2,11 +2,11 @@
 
 Minimal library for Ethereum transactions, addresses and smart contracts.
 
-- 🔓 Secure: 3 deps, audited [noble](https://paulmillr.com/noble/) cryptography
+- 🔓 Secure: 3 deps, audited [noble](https://paulmillr.com/noble/) cryptography, no network code
 - 🔻 Tree-shaking-friendly: use only what's necessary, other code won't be included
-- 🌍 No network code: simplified auditing and offline usage
 - 🔍 Reliable: 150MB of test vectors from EIPs, ethers and viem
-- ✍️ Transactions: Create, sign and decode complex txs using human-readable hints
+- ✍️ Create, sign and decode transactions using human-readable hints
+- 🌍 Fetch historical transactions and token balances from an archive node
 - 🆎 Call smart contracts: Chainlink and Uniswap APIs are included
 - 🦺 Typescript-friendly ABI, RLP and SSZ decoding
 - 🪶 1200 lines for core functionality
@@ -104,6 +104,8 @@ const _5 = await txp.tokenBalances(addr);
 // Low-level methods are `blockInfo`, `internalTransactions`, `ethLogs`, `tokenTransfers`, `wethTransfers`,
 // `tokenInfo` and `txInfo`.
 ```
+
+An archive node is required. Reth has 100-block window limit, which means it's too slow for now.
 
 ### Call smart contracts
 
