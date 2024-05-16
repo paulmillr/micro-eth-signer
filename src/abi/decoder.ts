@@ -14,19 +14,17 @@ There is some really crazy stuff going on here with Typescript types.
 function EPad<T>(p: P.CoderType<T>) {
   return P.padLeft(32, p, P.ZeroPad);
 }
-// Save pointers values next to array. ETH only stuff.
-// By some reason, ptr value inside arrays is placed right after ptr.
-// This should work by default without 'wrappedArray'.
-// TODO: Debug more later.
-function wrappedArray<T>(len: P.Length, inner: P.CoderType<T>): P.CoderType<T[]> {
+
+// Main difference between regular array: length stored outside and offsets calculated without length
+function ethArray<T>(inner: P.CoderType<T>): P.CoderType<T[]> {
   return P.wrap({
-    size: typeof len === 'number' && inner.size ? len * inner.size : undefined,
+    size: undefined,
     encodeStream: (w: P.Writer, value: T[]) => {
-      w.length(len, value.length);
+      U256BE_LEN.encodeStream(w, value.length);
       w.bytes(P.array(value.length, inner).encode(value));
     },
     decodeStream: (r: P.Reader): T[] =>
-      P.array(r.length(len), inner).decodeStream(r.offsetReader(r.pos)),
+      P.array(U256BE_LEN.decodeStream(r), inner).decodeStream(r.offsetReader(r.pos)),
   });
 }
 
@@ -38,19 +36,19 @@ const ethInt = (bits: number, signed = false) => {
     throw new Error('ethInt: invalid numeric type');
   const _bits = BigInt(bits);
   const inner = P.bigint(32, false, signed);
-  return P.wrap({
-    size: inner.size,
-    encodeStream: (w: P.Writer, value: bigint) => {
-      const _value = BigInt(value);
-      P.checkBounds(w, _value, _bits, !!signed);
-      inner.encodeStream(w, BigInt(_value));
-    },
-    decodeStream: (r: P.Reader): bigint => {
-      const value = inner.decodeStream(r);
-      P.checkBounds(r, value, _bits, !!signed);
+  return P.validate(
+    P.wrap({
+      size: inner.size,
+      encodeStream: (w: P.Writer, value: bigint) => inner.encodeStream(w, value),
+      decodeStream: (r: P.Reader): bigint => inner.decodeStream(r),
+    }),
+    (value) => {
+      // TODO: validate useful for narrowing types, need to add support in types?
+      if (typeof value === 'number') value = BigInt(value);
+      P.utils.checkBounds(value, _bits, !!signed);
       return value;
-    },
-  });
+    }
+  );
 };
 
 // Ugly hack, because tuple of pointers considered "dynamic" without any reason.
@@ -169,7 +167,7 @@ export function mapComponent<T extends BaseComponent>(c: T): P.CoderType<MapType
       return out as any;
     } else {
       // Dynamic array
-      return P.pointer(PTR, wrappedArray(U256BE_LEN, inner)) as any;
+      return P.pointer(PTR, ethArray(inner)) as any;
     }
   }
   if (c.type === 'tuple') {
@@ -198,7 +196,7 @@ export function mapComponent<T extends BaseComponent>(c: T): P.CoderType<MapType
     return P.pointer(PTR, P.padRight(32, P.string(U256BE_LEN), P.ZeroPad)) as any;
   if (c.type === 'bytes')
     return P.pointer(PTR, P.padRight(32, P.bytes(U256BE_LEN), P.ZeroPad)) as any;
-  if (c.type === 'address') return EPad(P.hex(20, false, true)) as any;
+  if (c.type === 'address') return EPad(P.hex(20, { isLE: false, with0x: true })) as any;
   if (c.type === 'bool') return EPad(P.bool) as any;
   if ((m = /^(u?)int([0-9]+)?$/.exec(c.type)))
     return ethInt(m[2] ? +m[2] : 256, m[1] !== 'u') as any;

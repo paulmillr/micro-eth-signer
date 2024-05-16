@@ -158,7 +158,7 @@ const array = <T>(len: P.Length, inner: SSZCoder<T>): P.CoderType<T[]> => {
         // definitions are hardcoded. Also, pointers very strict here.
         for (let i = 0; i < offsets.length; i++) {
           const pos = offsets[i];
-          const next = i + 1 < offsets.length ? offsets[i + 1] : r.data.length;
+          const next = i + 1 < offsets.length ? offsets[i + 1] : r.totalBytes;
           if (next < pos) throw r.err('SSZ/array: decreasing offset');
           const len = next - pos;
           if (r.pos !== pos) throw r.err('SSZ/array: wrong offset');
@@ -248,7 +248,7 @@ export const container = <T extends Record<string, SSZCoder<any>>>(
         // TODO: how to merge this with array?
         const name = offsetFields[i];
         const pos = offsets[i];
-        const next = i + 1 < offsets.length ? offsets[i + 1] : r.data.length;
+        const next = i + 1 < offsets.length ? offsets[i + 1] : r.totalBytes;
         if (next < pos) throw r.err('SSZ/container: decreasing offset');
         const len = next - pos;
         if (r.pos !== pos) throw r.err('SSZ/container: wrong offset');
@@ -353,13 +353,6 @@ export const bitlist = (maxLen: number): SSZCoder<boolean[]> => {
     },
   };
 };
-// Breaks pointer offsets
-// TODO: move to packed?
-const noop = <T>(inner: P.CoderType<T>): P.CoderType<T> =>
-  P.wrap({
-    encodeStream: (w, value) => w.bytes(inner.encode(value)),
-    decodeStream: (r) => inner.decode(r.bytes(r.leftBytes)),
-  });
 
 /**
  * Union type (None is null)
@@ -379,7 +372,7 @@ export const union = (
     P.tag(
       P.U8,
       Object.fromEntries(
-        types.map((t, i) => [i, t === null ? P.magicBytes(P.EMPTY) : noop(t)]) as any
+        types.map((t, i) => [i, t === null ? P.magicBytes(P.EMPTY) : P.prefix(null, t)]) as any
       )
     ),
     {

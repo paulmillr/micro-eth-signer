@@ -9,7 +9,7 @@
   "dependencies": {
     "@noble/curves": "~1.4.0",
     "@noble/hashes": "~1.4.0",
-    "micro-packed": "~0.5.3"
+    "micro-packed": "~0.6.2"
   },
   "devDependencies": {
     "@paulmillr/jsbt": "0.1.0",
