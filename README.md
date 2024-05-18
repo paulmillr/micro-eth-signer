@@ -46,7 +46,7 @@ If you don't like NPM, a standalone [eth-signer.js](https://github.com/paulmillr
 
 ```ts
 import { addr, Transaction, weigwei, weieth } from 'micro-eth-signer';
-const privateKey = '0x6b911fd37cdf5c81d4c0adb1ab7fa822ed253ab0ad9aa18d77257c88b29b718e';
+const privKey = '0x6b911fd37cdf5c81d4c0adb1ab7fa822ed253ab0ad9aa18d77257c88b29b718e';
 const senderAddr = addr.fromPrivateKey(privateKey);
 const unsignedTx = Transaction.prepare({
   to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
@@ -134,8 +134,7 @@ User explicitly passes built-in function `fetch` to enable network access to JSO
 #### Fetch Chainlink oracle prices
 
 ```ts
-import FetchProvider from 'micro-eth-signer/net/provider';
-import Chainlink from 'micro-eth-signer/net/chainlink';
+import { FetchProvider, Chainlink } from 'micro-eth-signer/net';
 const provider = new FetchProvider(thisGlobal.fetch, 'https://nodes.mewapi.io/rpc/eth', {
   Origin: 'https://www.myetherwallet.com',
 });
@@ -143,6 +142,16 @@ const link = new Chainlink(provider);
 const btc = await link.coinPrice('BTC');
 const bat = await link.tokenPrice('BAT');
 console.log({ btc, bat }); // BTC 19188.68870991, BAT 0.39728989 in USD
+```
+
+#### Resolve ENS address
+
+```ts
+import { FetchProvider, ENS } from 'micro-eth-signer/net';
+const RPC_URL = 'http://127.0.0.1:8545';
+const provider = new FetchProvider(thisGlobal.fetch, RPC_URL);
+const ens = new ENS(provider);
+const vitalikAddr = await ens.nameToAddress('vitalik.eth');
 ```
 
 #### Swap tokens with Uniswap
@@ -155,16 +164,15 @@ Swap 12.12 USDT to BAT with uniswap V3 defaults of 0.5% slippage, 30 min expirat
 
 ```ts
 import { tokenFromSymbol } from 'micro-eth-signer/abi';
-import FetchProvider from 'micro-eth-signer/net/provider';
-// import Uniswap2 from 'micro-eth-signer/net/uniswap-v2';
-import Uniswap3 from 'micro-eth-signer/net/uniswap-v3';
+import { FetchProvider, UniswapV3 } from 'micro-eth-signer/net'; // or UniswapV2
 
-const provider = new FetchProvider(thisGlobal.fetch, 'https://nodes.mewapi.io/rpc/eth', {
+const RPC_URL = 'https://nodes.mewapi.io/rpc/eth';
+const provider = new FetchProvider(thisGlobal.fetch, RPC_URL, {
   Origin: 'https://www.myetherwallet.com',
 });
 const USDT = tokenFromSymbol('USDT');
 const BAT = tokenFromSymbol('BAT');
-const u3 = new Uniswap3(provider); // or new UniswapV2(provider)
+const u3 = new UniswapV3(provider); // or new UniswapV2(provider)
 const fromAddress = '0xd8da6bf26964af9d7eed9e03e53415d37aa96045';
 const toAddress = '0xd8da6bf26964af9d7eed9e03e53415d37aa96045';
 const swap = await u3.swap(USDT, BAT, '12.12', { slippagePercent: 0.5, ttl: 30 * 60 });
