@@ -30,6 +30,7 @@ If you don't like NPM, a standalone [eth-signer.js](https://github.com/paulmillr
 - [Fetch balances and history from an archive node](#fetch-balances-and-history-from-an-archive-node)
 - [Call smart contracts](#call-smart-contracts)
   - [Fetch Chainlink oracle prices](#fetch-chainlink-oracle-prices)
+  - [Resolve ENS address](#resolve-ens-address)
   - [Swap tokens with Uniswap](#swap-tokens-with-uniswap)
 - [ABI type inference](#abi-type-inference)
 - Parsing
