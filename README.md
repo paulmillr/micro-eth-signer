@@ -45,7 +45,8 @@ If you don't like NPM, a standalone [eth-signer.js](https://github.com/paulmillr
 ### Transactions: create, sign
 
 ```ts
-import { addr, amounts, Transaction } from 'micro-eth-signer';
+import { addr, Transaction } from 'micro-eth-signer';
+import { amounts } from 'micro-eth-signer/utils';
 const privateKey = '0x6b911fd37cdf5c81d4c0adb1ab7fa822ed253ab0ad9aa18d77257c88b29b718e';
 const senderAddr = addr.fromPrivateKey(privateKey);
 const unsignedTx = Transaction.prepare({
