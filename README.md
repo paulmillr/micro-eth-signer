@@ -48,14 +48,14 @@ If you don't like NPM, a standalone [eth-signer.js](https://github.com/paulmillr
 ```ts
 import { addr, Transaction, weigwei, weieth } from 'micro-eth-signer';
 const privKey = '0x6b911fd37cdf5c81d4c0adb1ab7fa822ed253ab0ad9aa18d77257c88b29b718e';
-const senderAddr = addr.fromPrivateKey(privateKey);
+const senderAddr = addr.fromPrivateKey(privKey);
 const unsignedTx = Transaction.prepare({
   to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
   maxFeePerGas: weigwei.decode('100'), // 100 gwei in wei
   value: weieth.decode('1.1'), // 1.1 eth in wei
   nonce: 0n,
 });
-const tx = unsignedTx.signBy(privateKey); // Uint8Array is also accepted
+const tx = unsignedTx.signBy(privKey); // Uint8Array is also accepted
 console.log('signed tx', tx, tx.toHex());
 console.log('need total wei', tx.calcAmounts().wei.amountWithFee);
 console.log('need total eth', tx.calcAmounts().humanized.amountWithFee);
