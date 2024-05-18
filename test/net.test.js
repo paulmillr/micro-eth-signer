@@ -9,7 +9,7 @@ import {
   Chainlink,
   UniswapV3,
 } from '../esm/net/index.js';
-import { ethDecimal, numberTo0xHex } from '../esm/utils.js';
+import { weieth, numberTo0xHex } from '../esm/utils.js';
 // These real network responses from real nodes, captured by fetchReplay
 import { default as NET_TX_REPLAY } from './vectors/rpc/transactions.js';
 import { default as NET_ENS_REPLAY } from './vectors/rpc/ens.js';
@@ -112,7 +112,7 @@ describe('Network', () => {
     const gasLimit = await provider.estimateGas({
       from: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
       to: '0xe592427a0aece92de3edee1f18e0157c05861564',
-      value: numberTo0xHex(ethDecimal.decode('1.23')),
+      value: numberTo0xHex(weieth.decode('1.23')),
       data: '0xc04b8d59000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa960450000000000000000000000000000000000000000000000000000019077fd30000000000000000000000000000000000000000000000000001111d67bb1bb0000000000000000000000000000000000000000000000000102d6906ca33403f40b0000000000000000000000000000000000000000000000000000000000000042c02aaa39b223fe8d0a0e5c4f27ead9083c756cc20001f4a0b86991c6218b36c1d19d4a2e9eb0ce3606eb480001f46b175474e89094c44da98b954eedeac495271d0f000000000000000000000000000000000000000000000000000000000000',
     });
     deepStrictEqual(gasLimit, 236082n);

@@ -11,9 +11,9 @@ import {
 } from './tx.js';
 // prettier-ignore
 import {
-  amounts, astr, add0x, ethHex, ethHexNoLeadingZero, strip0x, ethDecimal, cloneDeep,
+  amounts, astr, add0x, ethHex, ethHexNoLeadingZero, strip0x, weieth, weigwei, cloneDeep,
 } from './utils.js';
-export { addr };
+export { addr, weigwei, weieth };
 
 // The file exports Transaction, but actual (RLP) parsing logic is done in `./tx`
 
@@ -216,9 +216,9 @@ export class Transaction<T extends TxType> {
     const amountWithFee = fee + amount;
     const wei = { amount, fee, amountWithFee };
     const humanized = {
-      amount: ethDecimal.encode(amount),
-      fee: ethDecimal.encode(fee),
-      amountWithFee: ethDecimal.encode(amountWithFee),
+      amount: weieth.encode(amount),
+      fee: weieth.encode(fee),
+      amountWithFee: weieth.encode(amountWithFee),
     };
     return { wei, humanized };
   }

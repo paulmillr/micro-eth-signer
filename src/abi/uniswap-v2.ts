@@ -1,4 +1,4 @@
-import { createDecimal, ethDecimal } from '../utils.js';
+import { createDecimal, weieth } from '../utils.js';
 import { HintOpt } from './decoder.js';
 import { addHints } from './common.js';
 
@@ -25,27 +25,25 @@ const hints = {
   swapETHForExactTokens(v: any, opt: HintOpt) {
     const last = uniToken(v.path, opt, v.amountOut, false);
     if (!opt.amount || !last) throw new Error('Not enough info');
-    return `Swap up to ${ethDecimal.encode(opt.amount)} ETH for exact ${last}. ${uniTs(
-      v.deadline
-    )}`;
+    return `Swap up to ${weieth.encode(opt.amount)} ETH for exact ${last}. ${uniTs(v.deadline)}`;
   },
 
   swapExactETHForTokens(v: any, opt: HintOpt) {
     const last = uniToken(v.path, opt, v.amountOutMin, false);
     if (!opt.amount || !last) throw new Error('Not enough info');
-    return `Swap ${ethDecimal.encode(opt.amount)} ETH for at least ${last}. ${uniTs(v.deadline)}`;
+    return `Swap ${weieth.encode(opt.amount)} ETH for at least ${last}. ${uniTs(v.deadline)}`;
   },
 
   swapExactETHForTokensSupportingFeeOnTransferTokens(v: any, opt: HintOpt) {
     const last = uniToken(v.path, opt, v.amountOutMin, false);
     if (!opt.amount || !last) throw new Error('Not enough info');
-    return `Swap ${ethDecimal.encode(opt.amount)} ETH for at least ${last}. ${uniTs(v.deadline)}`;
+    return `Swap ${weieth.encode(opt.amount)} ETH for at least ${last}. ${uniTs(v.deadline)}`;
   },
 
   swapExactTokensForETH(v: any, opt: HintOpt) {
     const first = uniToken(v.path, opt, v.amountIn, true);
     if (!first) throw new Error('Not enough info');
-    return `Swap exact ${first} for at least ${ethDecimal.encode(v.amountOutMin)} ETH. ${uniTs(
+    return `Swap exact ${first} for at least ${weieth.encode(v.amountOutMin)} ETH. ${uniTs(
       v.deadline
     )}`;
   },
@@ -53,7 +51,7 @@ const hints = {
   swapExactTokensForETHSupportingFeeOnTransferTokens(v: any, opt: HintOpt) {
     const first = uniToken(v.path, opt, v.amountIn, true);
     if (!first) throw new Error('Not enough info');
-    return `Swap exact ${first} for at least ${ethDecimal.encode(v.amountOutMin)} ETH. ${uniTs(
+    return `Swap exact ${first} for at least ${weieth.encode(v.amountOutMin)} ETH. ${uniTs(
       v.deadline
     )}`;
   },
@@ -61,9 +59,7 @@ const hints = {
   swapTokensForExactETH(v: any, opt: HintOpt) {
     const first = uniToken(v.path, opt, v.amountInMax, true);
     if (!first) throw new Error('Not enough info');
-    return `Swap up to ${first} for exact ${ethDecimal.encode(v.amountOut)} ETH. ${uniTs(
-      v.deadline
-    )}`;
+    return `Swap up to ${first} for exact ${weieth.encode(v.amountOut)} ETH. ${uniTs(v.deadline)}`;
   },
 
   swapExactTokensForTokens(v: any, opt: HintOpt) {

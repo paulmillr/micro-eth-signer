@@ -1,4 +1,4 @@
-import { Web3Provider, ethHex, ethDecimal, isBytes, createDecimal } from '../utils.js';
+import { Web3Provider, ethHex, weieth, isBytes, createDecimal } from '../utils.js';
 import { addr } from '../index.js';
 import { tokenFromSymbol } from '../abi/index.js';
 
@@ -162,7 +162,7 @@ export abstract class UniswapAbstract {
             opt
           );
           return {
-            amount: ethDecimal.encode(txUni.value),
+            amount: weieth.encode(txUni.value),
             address: txUni.to,
             expectedAmount,
             data: ethHex.encode(txUni.data),

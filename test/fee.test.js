@@ -1,7 +1,7 @@
 import { deepStrictEqual } from 'node:assert';
 import { describe, should } from 'micro-should';
 import { Transaction } from '../esm/index.js';
-import { ethDecimal, gweiDecimal } from '../esm/utils.js';
+import { weieth, weigwei } from '../esm/utils.js';
 
 // NOTE: other libraries doesn't support fee estimation, so there is no crosstests for now :(
 // But we need some tests to avoid accidental breakage.
@@ -11,8 +11,8 @@ describe('Fees', () => {
       type: 'legacy',
       to: '0x27b1fdb04752bbc536007a920d24acb045561c26',
       nonce: 1n,
-      value: ethDecimal.decode('1'),
-      gasPrice: gweiDecimal.decode('2'),
+      value: weieth.decode('1'),
+      gasPrice: weigwei.decode('2'),
     });
     // 21k * 2 = 42
     deepStrictEqual(tx.calcAmounts(), {
@@ -27,8 +27,8 @@ describe('Fees', () => {
       type: 'legacy',
       to: '0x27b1fdb04752bbc536007a920d24acb045561c26',
       nonce: 1n,
-      value: ethDecimal.decode('1.23'),
-      gasPrice: gweiDecimal.decode('55.3'),
+      value: weieth.decode('1.23'),
+      gasPrice: weigwei.decode('55.3'),
     });
     deepStrictEqual(tx2.calcAmounts(), {
       wei: {
@@ -43,9 +43,9 @@ describe('Fees', () => {
     const tx = Transaction.prepare({
       to: '0x27b1fdb04752bbc536007a920d24acb045561c26',
       nonce: 1n,
-      value: ethDecimal.decode('1'),
-      maxFeePerGas: gweiDecimal.decode('2'),
-      maxPriorityFeePerGas: gweiDecimal.decode('1'),
+      value: weieth.decode('1'),
+      maxFeePerGas: weigwei.decode('2'),
+      maxPriorityFeePerGas: weigwei.decode('1'),
     });
     // 21k * 2 = 42
     deepStrictEqual(tx.calcAmounts(), {
@@ -59,9 +59,9 @@ describe('Fees', () => {
     const tx2 = Transaction.prepare({
       to: '0x27b1fdb04752bbc536007a920d24acb045561c26',
       nonce: 1n,
-      value: ethDecimal.decode('1.23'),
-      maxFeePerGas: gweiDecimal.decode('55.3'),
-      maxPriorityFeePerGas: gweiDecimal.decode('2'),
+      value: weieth.decode('1.23'),
+      maxFeePerGas: weigwei.decode('55.3'),
+      maxPriorityFeePerGas: weigwei.decode('2'),
     });
     // 21k * 2 = 42
     deepStrictEqual(tx2.calcAmounts(), {

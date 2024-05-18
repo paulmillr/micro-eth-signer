@@ -3,7 +3,7 @@ import { describe, should } from 'micro-should';
 import { bytesToHex, concatBytes, hexToBytes } from '@noble/hashes/utils';
 import * as uniswap2 from '../esm/net/uniswap-v2.js';
 import * as uniswap3 from '../esm/net/uniswap-v3.js';
-import { ethDecimal, strip0x } from '../esm/utils.js';
+import { weieth, strip0x } from '../esm/utils.js';
 
 const vitalik = '0xd8da6bf26964af9d7eed9e03e53415d37aa96045';
 const TS = 1876543210;
@@ -56,7 +56,7 @@ describe('uniswap', () => {
     );
   });
   should('amount', () => {
-    const dec = (n) => ethDecimal.encode(n);
+    const dec = (n) => weieth.encode(n);
     const [rA, rB] = [296640198432632702024n, 365918988101684615226n];
     deepStrictEqual(dec(uniswap2.amount(rA, rB, 1000000000000000000n)), '1.225724583682887052');
     deepStrictEqual(dec(uniswap2.amount(rA, rB, 100000000000000000000n)), '92.047496716230633056');

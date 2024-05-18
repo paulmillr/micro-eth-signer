@@ -129,14 +129,18 @@ export function zip<A, B>(a: A[], b: B[]): [A, B][] {
 }
 
 export const createDecimal = coders.decimal;
-export const ethDecimal = createDecimal(ETH_PRECISION);
-export const gweiDecimal = createDecimal(GWEI_PRECISION);
+export const weieth = createDecimal(ETH_PRECISION);
+export const weigwei = createDecimal(GWEI_PRECISION);
+
+// legacy. TODO: remove
+export const ethDecimal = weieth;
+export const gweiDecimal = weigwei;
 
 export const formatters = {
   // returns decimal that costs exactly $0.01 in given precision (using price)
   // formatDecimal(perCentDecimal(prec, price), prec) * price == '0.01'
   perCentDecimal(precision: number, price: number): bigint {
-    const fiatPrec = ethDecimal;
+    const fiatPrec = weieth;
     //x * price = 0.01
     //x = 0.01/price = 1/100 / price = 1/(100*price)
     // float does not have enough precision
