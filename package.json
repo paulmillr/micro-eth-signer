@@ -1,6 +1,6 @@
 {
   "name": "micro-eth-signer",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "description": "Minimal library for Ethereum transactions, addresses and smart contracts",
   "files": ["abi", "esm", "net", "src", "*.js", "*.d.ts", "*.js.map", "*.d.ts.map"],
   "main": "index.js",
@@ -9,7 +9,7 @@
   "dependencies": {
     "@noble/curves": "~1.4.0",
     "@noble/hashes": "~1.4.0",
-    "micro-packed": "~0.6.2"
+    "micro-packed": "~0.6.3"
   },
   "devDependencies": {
     "@paulmillr/jsbt": "0.1.0",
