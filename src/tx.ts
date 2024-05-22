@@ -392,10 +392,13 @@ const validators: Record<string, (num: any, { strict, type, data }: ValidationOp
     if (strict) minmax(num, 1n, amounts.maxGasPrice, '>= 1 wei and < 10000 gwei');
     else minmax(num, 0n, amounts.maxUint64);
   },
-  maxPriorityFeePerGas(num: bigint, { strict }: ValidationOpts) {
+  maxPriorityFeePerGas(num: bigint, { strict, data }: ValidationOpts) {
     abig(num);
     if (strict) minmax(num, 0n, amounts.maxGasPrice, '>= 1 wei and < 10000 gwei');
     else minmax(num, 0n, amounts.maxUint64, '>= 1 wei and < 10000 gwei');
+    if (strict && data && typeof data.maxFeePerGas === 'bigint' && data.maxFeePerGas < num) {
+      throw new Error(`cannot be bigger than maxFeePerGas=${data.maxFeePerGas}`);
+    }
   },
   gasLimit(num: bigint, { strict }: ValidationOpts) {
     abig(num);

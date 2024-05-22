@@ -73,6 +73,36 @@ describe('Fees', () => {
       humanized: { amount: '1.23', fee: '0.0011613', amountWithFee: '1.2311613' },
     });
   });
+  should('Whole amount', () => {
+    const tx = Transaction.prepare({
+      to: '0x27b1fdb04752bbc536007a920d24acb045561c26',
+      nonce: 1n,
+      value: weieth.decode('1'),
+      maxFeePerGas: weigwei.decode('2'),
+      maxPriorityFeePerGas: weigwei.decode('1'),
+    });
+    const tx2 = tx.setWholeAmount(weieth.decode('1'));
+    deepStrictEqual(tx.calcAmounts(), {
+      wei: {
+        amount: 1000000000000000000n,
+        fee: 42000000000000n,
+        amountWithFee: 1000042000000000000n,
+      },
+      humanized: { amount: '1', fee: '0.000042', amountWithFee: '1.000042' },
+    });
+    deepStrictEqual(tx2.raw, {
+      to: '0x27b1fdb04752bbc536007a920d24acb045561c26',
+      value: 999958000000000000n,
+      nonce: 1n,
+      maxFeePerGas: 2000000000n,
+      maxPriorityFeePerGas: 2000000000n,
+      gasLimit: 21000n,
+      accessList: [],
+      chainId: 1n,
+      data: '',
+      type: 'eip1559',
+    });
+  });
 });
 
 // ESM is broken.

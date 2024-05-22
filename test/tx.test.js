@@ -8,6 +8,7 @@ import { default as TX_VECTORS } from './vectors/transactions.json' with { type:
 import { default as EIP155_VECTORS } from './vectors/eips/eip155.json' with { type: 'json' };
 import * as ethTests from './vectors/eth-tests-tx-vectors.js';
 import { getEthersVectors, getViemVectors } from './util.js';
+import { weigwei } from '../esm/utils.js';
 
 const ETHERS_TX = getEthersVectors('transactions.json.gz');
 const VIEM_TX = getViemVectors('transaction.json.gz');
@@ -594,11 +595,11 @@ describe('Transactions', () => {
         to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
         nonce: 0n,
         value: 1n,
-        maxFeePerGas: 2n,
+        maxFeePerGas: weigwei.decode('2'),
       }).signBy('6b911fd37cdf5c81d4c0adb1ab7fa822ed253ab0ad9aa18d77257c88b29b718e');
       deepStrictEqual(
         tx.toHex(true),
-        '0x02f8660180843b9aca000282520894df90dea0e0bf5ca6d2a7f0cb86874ba6714f463e0180c080a010cec9f4f7616a0da8b613e91300b424fd07522dae38c7a7a691ca70dbcef8b9a06f21a20cf1356f369c06eb995f3bfe01a24dc2dd7194c80bd4558df5fca02a26'
+        '0x02f86a0180843b9aca00847735940082520894df90dea0e0bf5ca6d2a7f0cb86874ba6714f463e0180c080a09448b25a696cb0f66945be1844711a5f6979c6cbf060e4f7b5a53e0dceeb3bdca004c61d9b91ecea687f78aa7e65108438e9b12a4fe90b1f70b0956134dfaba18f'
       );
       const tx2 = Transaction.prepare({
         type: 'eip2930',
@@ -632,7 +633,7 @@ describe('Transactions', () => {
         to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
         nonce: 0n,
         value: 1n,
-        maxFeePerGas: 2n,
+        maxFeePerGas: weigwei.decode('2'),
         maxPriorityFeePerGas: 1n,
         gasLimit: 21000n,
         chainId: 1n,
@@ -645,7 +646,7 @@ describe('Transactions', () => {
             to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
             nonce: 0n,
             value: 1n,
-            maxFeePerGas: 2n,
+            maxFeePerGas: weigwei.decode('2'),
             maxPriorityFeePerGas: 1n,
             gasLimit: 21000n,
             chainId: 1n,
@@ -660,7 +661,7 @@ describe('Transactions', () => {
             to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
             nonce: 0n,
             value: 1n,
-            maxFeePerGas: 2n,
+            maxFeePerGas: weigwei.decode('2'),
             maxPriorityFeePerGas: 1n,
             gasLimit: 21000n,
             chainId: 1n,
@@ -681,7 +682,7 @@ describe('Transactions', () => {
             nonce: 0n,
             value: 1n,
             gasPrice: 1n,
-            maxFeePerGas: 2n,
+            maxFeePerGas: weigwei.decode('2'),
           }),
         'gasPrice + eip1559, prepare'
       );
@@ -692,7 +693,7 @@ describe('Transactions', () => {
             nonce: 0n,
             value: 1n,
             gasPrice: 1n,
-            maxFeePerGas: 2n,
+            maxFeePerGas: weigwei.decode('2'),
           }),
         'gasPrice + eip1559'
       );
@@ -704,7 +705,7 @@ describe('Transactions', () => {
             nonce: 0n,
             value: 1n,
             gasPrice: 1n,
-            maxFeePerGas: 2n,
+            maxFeePerGas: weigwei.decode('2'),
           },
           'maxFeePerGas+legacy'
         )
@@ -713,14 +714,14 @@ describe('Transactions', () => {
         to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
         nonce: 0n,
         value: 1n,
-        maxFeePerGas: 2n,
+        maxFeePerGas: weigwei.decode('2'),
       });
       throws(() =>
         Transaction.prepare({
           to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
           nonce: 0n,
           value: 1n,
-          maxFeePerGas: 2n,
+          maxFeePerGas: weigwei.decode('2'),
           r: 1n,
           s: 1n,
         })
@@ -731,7 +732,7 @@ describe('Transactions', () => {
         to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
         nonce: 0n,
         value: 1n,
-        maxFeePerGas: 2n,
+        maxFeePerGas: weigwei.decode('2'),
       };
       throws(() => Transaction.prepare({ ...tx, to: 1 }), 'to=1');
       throws(() => Transaction.prepare({ ...tx, to: new Uint8Array(0) }), 'to=u8a(0)');

@@ -134,14 +134,39 @@ export class Transaction<T extends TxType> {
     // Copy all fields, so we can validate unexpected ones.
     return new Transaction(type, sortRawData(Object.assign(raw, data)), strict, false);
   }
-  // Not static to avoid overrides
-  setWholeAmount(accountBalance: bigint) {
+  /**
+   * Creates transaction which sends whole account balance. Does two things:
+   * 1. `amount = accountBalance - maxFeePerGas * gasLimit`
+   * 2. `maxPriorityFeePerGas = maxFeePerGas`
+   *
+   * Every eth block sets a fee for all its transactions, called base fee.
+   * maxFeePerGas indicates how much gas user is able to spend in the worst case.
+   * If the block's base fee is 5 gwei, while user is able to spend 10 gwei in maxFeePerGas,
+   * the transaction would only consume 5 gwei. That means, base fee is unknown
+   * before the transaction is included in a block.
+   *
+   * By setting priorityFee to maxFee, we make the process deterministic:
+   * `maxFee = 10, maxPriority = 10, baseFee = 5` would always spend 10 gwei.
+   * In the end, the balance would become 0.
+   *
+   * WARNING: using the method would decrease privacy of a transfer, because
+   * payments for services have specific amounts, and not *the whole amount*.
+   * @param accountBalance - account balance in wei
+   * @param burnRemaining - send unspent fee to miners. When false, some "small amount" would remain
+   * @returns new transaction with adjusted amounts
+   */
+  setWholeAmount(accountBalance: bigint, burnRemaining = true): Transaction<T> {
     if (typeof accountBalance !== 'bigint' || accountBalance <= 0n)
       throw new Error('account balance must be bigger than 0');
     const { fee } = this.calcAmounts().wei;
     const amountToSend = accountBalance - fee;
     if (amountToSend <= 0n) throw new Error('account balance must be bigger than fee of ' + fee);
-    return new Transaction(this.type, { ...this.raw, value: amountToSend });
+    const raw = { ...this.raw, value: amountToSend };
+    if (!['legacy', 'eip2930'].includes(this.type) && burnRemaining) {
+      const r = raw as SpecifyVersionNeg<['legacy', 'eip2930']>;
+      r.maxPriorityFeePerGas = r.maxFeePerGas;
+    }
+    return new Transaction(this.type, raw);
   }
   static fromRawBytes(bytes: Uint8Array, strict = false) {
     const raw = RawTx.decode(bytes);

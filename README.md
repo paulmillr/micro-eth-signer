@@ -26,19 +26,21 @@ If you don't like NPM, a standalone [eth-signer.js](https://github.com/paulmillr
 
 - [Transactions: create, sign](#create-and-sign-transactions)
 - [Addresses: create, checksum](#create-and-checksum-addresses)
-- [Generate random wallet](#generate-random-keys-and-addresses)
-- [Fetch balances and history from an archive node](#fetch-balances-and-history-from-an-archive-node)
-- [Call smart contracts](#call-smart-contracts)
+- [Create random wallet](#create-random-wallet)
+- [Network and smart contracts](#network-and-smart-contracts)
+  - [Fetch balances and history from an archive node](#fetch-balances-and-history-from-an-archive-node)
   - [Fetch Chainlink oracle prices](#fetch-chainlink-oracle-prices)
   - [Resolve ENS address](#resolve-ens-address)
   - [Swap tokens with Uniswap](#swap-tokens-with-uniswap)
-- [ABI type inference](#abi-type-inference)
 - Parsing
   - [Human-readable transaction hints](#human-readable-transaction-hints)
   - [Human-readable event hints](#human-readable-event-hints)
+  - [ABI type inference](#abi-type-inference)
   - [RLP parsing](#rlp-parsing)
   - [SSZ parsing](#ssz-parsing)
-- [Sign and verify messages](#sign-and-verify-messages)
+- Utilities
+  - [Send whole account balance](#send-whole-account-balance)
+  - [Sign and verify messages](#sign-and-verify-messages)
 - [Security](#security)
 - [Performance](#performance)
 - [License](#license)
@@ -57,8 +59,7 @@ const unsignedTx = Transaction.prepare({
 });
 const tx = unsignedTx.signBy(privKey); // Uint8Array is also accepted
 console.log('signed tx', tx, tx.toHex());
-console.log('need total wei', tx.calcAmounts().wei.amountWithFee);
-console.log('need total eth', tx.calcAmounts().humanized.amountWithFee);
+console.log('need total', tx.calcAmounts()); // wei & humanized formats
 console.log('address is same', tx.sender === senderAddr);
 ```
 
@@ -81,7 +82,7 @@ console.log(
 );
 ```
 
-### Generate random wallet
+### Create random wallet
 
 ```ts
 import { addr } from 'micro-eth-signer';
@@ -91,7 +92,14 @@ console.log(random.privateKey, random.address);
 // 0x26d930712fd2f612a107A70fd0Ad79b777cD87f6
 ```
 
-### Fetch balances and history from an archive node
+### Network and smart contracts
+
+We don't have _actual network code_ in the package:
+all network code is deferred to FetchProvider, which must be initialized with a
+method, conforming to built-in `fetch`. This means, you are able to completely control
+all network requests.
+
+#### Fetch balances and history from an archive node
 
 ```ts
 import { ArchiveNodeProvider, FetchProvider } from 'micro-eth-signer/net';
@@ -127,10 +135,6 @@ console.log('info for addr', addr, await prov.unspent(addr));
 Basic data can be fetched from any node.
 
 Historical balances, transactions and others can only be fetched from an archive node, such as Erigon or Reth.
-
-### Call smart contracts
-
-User explicitly passes built-in function `fetch` to enable network access to JSON-RPC web3 node.
 
 #### Fetch Chainlink oracle prices
 
@@ -180,62 +184,6 @@ const swap = await u3.swap(USDT, BAT, '12.12', { slippagePercent: 0.5, ttl: 30 *
 const swapData = await swap.tx(fromAddress, toAddress);
 console.log(swapData.amount, swapData.expectedAmount, swapData.allowance);
 ```
-
-### ABI type inference
-
-The ABI is type-safe when `as const` is specified:
-
-```ts
-import { createContract } from 'micro-eth-signer/abi';
-const PAIR_CONTRACT = [
-  {
-    type: 'function',
-    name: 'getReserves',
-    outputs: [
-      { name: 'reserve0', type: 'uint112' },
-      { name: 'reserve1', type: 'uint112' },
-      { name: 'blockTimestampLast', type: 'uint32' },
-    ],
-  },
-] as const;
-
-const contract = createContract(PAIR_CONTRACT);
-// Would create following typescript type:
-{
-  getReserves: {
-    encodeInput: () => Uint8Array;
-    decodeOutput: (b: Uint8Array) => {
-      reserve0: bigint;
-      reserve1: bigint;
-      blockTimestampLast: bigint;
-    };
-  }
-}
-```
-
-We're parsing values as:
-
-```js
-// no inputs
-{} -> encodeInput();
-// single input
-{inputs: [{type: 'uint'}]} -> encodeInput(bigint);
-// all inputs named
-{inputs: [{type: 'uint', name: 'lol'}, {type: 'address', name: 'wut'}]} -> encodeInput({lol: bigint, wut: string})
-// at least one input is unnamed
-{inputs: [{type: 'uint', name: 'lol'}, {type: 'address'}]} -> encodeInput([bigint, string])
-// Same applies for output!
-```
-
-There are following limitations:
-
-- Fixed size arrays can have 999 elements at max: string[], string[1], ..., string[999]
-- Fixed size 2d arrays can have 39 elements at max: string[][], string[][1], ..., string[39][39]
-- Which is enough for almost all cases
-- ABI must be described as constant value: `[...] as const`
-- We're not able to handle contracts with method overload (same function names with different args) — the code will still work, but not types
-
-Check out [`src/net/ens.ts`](./src/net/ens.ts) for type-safe contract execution example.
 
 ### Parsers
 
@@ -326,6 +274,62 @@ const einfo = decodeEvent(to, topics, data);
 console.log(einfo);
 ```
 
+#### ABI type inference
+
+The ABI is type-safe when `as const` is specified:
+
+```ts
+import { createContract } from 'micro-eth-signer/abi';
+const PAIR_CONTRACT = [
+  {
+    type: 'function',
+    name: 'getReserves',
+    outputs: [
+      { name: 'reserve0', type: 'uint112' },
+      { name: 'reserve1', type: 'uint112' },
+      { name: 'blockTimestampLast', type: 'uint32' },
+    ],
+  },
+] as const;
+
+const contract = createContract(PAIR_CONTRACT);
+// Would create following typescript type:
+{
+  getReserves: {
+    encodeInput: () => Uint8Array;
+    decodeOutput: (b: Uint8Array) => {
+      reserve0: bigint;
+      reserve1: bigint;
+      blockTimestampLast: bigint;
+    };
+  }
+}
+```
+
+We're parsing values as:
+
+```js
+// no inputs
+{} -> encodeInput();
+// single input
+{inputs: [{type: 'uint'}]} -> encodeInput(bigint);
+// all inputs named
+{inputs: [{type: 'uint', name: 'lol'}, {type: 'address', name: 'wut'}]} -> encodeInput({lol: bigint, wut: string})
+// at least one input is unnamed
+{inputs: [{type: 'uint', name: 'lol'}, {type: 'address'}]} -> encodeInput([bigint, string])
+// Same applies for output!
+```
+
+There are following limitations:
+
+- Fixed size arrays can have 999 elements at max: string[], string[1], ..., string[999]
+- Fixed size 2d arrays can have 39 elements at max: string[][], string[][1], ..., string[39][39]
+- Which is enough for almost all cases
+- ABI must be described as constant value: `[...] as const`
+- We're not able to handle contracts with method overload (same function names with different args) — the code will still work, but not types
+
+Check out [`src/net/ens.ts`](./src/net/ens.ts) for type-safe contract execution example.
+
 #### RLP parsing
 
 We implement RLP in just 100 lines of code, powered by [packed](https://github.com/paulmillr/micro-packed):
@@ -355,6 +359,43 @@ const msg = 'noble';
 const sig = messenger.sign(msg, privateKey);
 const isValid = messenger.verify(sig, msg, address);
 ```
+
+### Utilities
+
+#### Send whole account balance
+
+```ts
+import { addr, Transaction, weigwei, weieth } from 'micro-eth-signer';
+const privKey = '0x6b911fd37cdf5c81d4c0adb1ab7fa822ed253ab0ad9aa18d77257c88b29b718e';
+const senderAddr = addr.fromPrivateKey(privKey);
+const unsignedTx = Transaction.prepare({
+  to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
+  maxFeePerGas: weigwei.decode('100'), // 100 gwei in wei
+  value: weieth.decode('1.1'), // 1.1 eth in wei
+  nonce: 0n,
+});
+
+const CURRENT_BALANCE = '1.7182050000017'; // eth
+const txSendingWholeBalance = unsignedTx.setWholeAmount(weieth.decode(CURRENT_BALANCE));
+```
+
+Creates transaction which sends whole account balance. Does two things:
+
+1. `amount = accountBalance - maxFeePerGas * gasLimit`
+2. `maxPriorityFeePerGas = maxFeePerGas`
+
+Every eth block sets a fee for all its transactions, called base fee.
+maxFeePerGas indicates how much gas user is able to spend in the worst case.
+If the block's base fee is 5 gwei, while user is able to spend 10 gwei in maxFeePerGas,
+the transaction would only consume 5 gwei. That means, base fee is unknown
+before the transaction is included in a block.
+
+By setting priorityFee to maxFee, we make the process deterministic:
+`maxFee = 10, maxPriority = 10, baseFee = 5` would always spend 10 gwei.
+In the end, the balance would become 0.
+
+WARNING: using the method would decrease privacy of a transfer, because
+payments for services have specific amounts, and not _the whole amount_.
 
 ## Security
 
