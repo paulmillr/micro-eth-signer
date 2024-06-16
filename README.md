@@ -24,9 +24,9 @@ For [Deno](https://deno.land), ensure to use [npm specifier](https://deno.land/m
 For React Native, you may need a [polyfill for getRandomValues](https://github.com/LinusU/react-native-get-random-values).
 If you don't like NPM, a standalone [eth-signer.js](https://github.com/paulmillr/micro-eth-signer/releases) is also available.
 
+- [Create random wallet](#create-random-wallet)
 - [Transactions: create, sign](#create-and-sign-transactions)
 - [Addresses: create, checksum](#create-and-checksum-addresses)
-- [Create random wallet](#create-random-wallet)
 - [Network and smart contracts](#network-and-smart-contracts)
   - [Fetch balances and history from an archive node](#fetch-balances-and-history-from-an-archive-node)
   - [Fetch Chainlink oracle prices](#fetch-chainlink-oracle-prices)
@@ -45,22 +45,30 @@ If you don't like NPM, a standalone [eth-signer.js](https://github.com/paulmillr
 - [Performance](#performance)
 - [License](#license)
 
+### Create random wallet
+
+```ts
+import { addr } from 'micro-eth-signer';
+const random = addr.random(); // Secure: uses CSPRNG
+console.log(random.privateKey, random.address);
+// '0x17ed046e6c4c21df770547fad9a157fd17b48b35fe9984f2ff1e3c6a62700bae'
+// '0x26d930712fd2f612a107A70fd0Ad79b777cD87f6'
+```
+
 ### Transactions: create, sign
 
 ```ts
-import { addr, Transaction, weigwei, weieth } from 'micro-eth-signer';
-const privKey = '0x6b911fd37cdf5c81d4c0adb1ab7fa822ed253ab0ad9aa18d77257c88b29b718e';
-const senderAddr = addr.fromPrivateKey(privKey);
-const unsignedTx = Transaction.prepare({
+import { Transaction, weigwei, weieth } from 'micro-eth-signer';
+const tx = Transaction.prepare({
   to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
-  maxFeePerGas: weigwei.decode('100'), // 100 gwei in wei
-  value: weieth.decode('1.1'), // 1.1 eth in wei
+  value: weieth.decode('1.1'), // 1.1eth in wei
+  maxFeePerGas: weigwei.decode('100'), // 100gwei in wei (priority fee is 1 gwei)
   nonce: 0n,
 });
-const tx = unsignedTx.signBy(privKey); // Uint8Array is also accepted
-console.log('signed tx', tx, tx.toHex());
-console.log('need total', tx.calcAmounts()); // wei & humanized formats
-console.log('address is same', tx.sender === senderAddr);
+// Uses `random` from example above. Alternatively, pass 0x hex string or Uint8Array
+const signedTx = tx.signBy(random.privateKey);
+console.log('signed tx', signedTx, signedTx.toHex());
+console.log('need total', signedTx.calcAmounts()); // wei & humanized formats
 ```
 
 We support legacy, EIP2930, EIP1559 and EIP4844 (Dencun / Cancun) transactions.
@@ -80,16 +88,6 @@ console.log(
   addr.fromPrivateKey(priv),
   addr.fromPublicKey(pub)
 );
-```
-
-### Create random wallet
-
-```ts
-import { addr } from 'micro-eth-signer';
-const random = addr.random(); // Secure: uses CSPRNG
-console.log(random.privateKey, random.address);
-// 0x17ed046e6c4c21df770547fad9a157fd17b48b35fe9984f2ff1e3c6a62700bae
-// 0x26d930712fd2f612a107A70fd0Ad79b777cD87f6
 ```
 
 ### Network and smart contracts
@@ -354,9 +352,9 @@ EIP-712 is not supported yet.
 
 ```ts
 import { addr, messenger } from 'micro-eth-signer';
-const { privateKey, address } = addr.random();
+const rand = addr.random();
 const msg = 'noble';
-const sig = messenger.sign(msg, privateKey);
+const sig = messenger.sign(msg, rand.privateKey);
 const isValid = messenger.verify(sig, msg, address);
 ```
 

@@ -43,13 +43,13 @@
       "default": "./net/index.js"
     },
     "./rlp": {
-      "types": "./net/rlp.d.ts",
-      "import": "./esm/net/rlp.js",
-      "default": "./net/rlp.js"
+      "types": "./rlp.d.ts",
+      "import": "./esm/rlp.js",
+      "default": "./rlp.js"
     },
     "./ssz": {
-      "types": "./net/ssz.d.ts",
-      "import": "./esm/net/ssz.js",
+      "types": "./ssz.d.ts",
+      "import": "./esm/ssz.js",
       "default": "./net/ssz.js"
     },
     "./tx": {

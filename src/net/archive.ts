@@ -369,6 +369,9 @@ export class ArchiveNodeProvider {
   async height(): Promise<number> {
     return Number.parseInt(await this.rpc('eth_blockNumber'));
   }
+  async maxPriorityFeePerGas(): Promise<BigInt> {
+    return BigInt(await this.rpc('eth_maxPriorityFeePerGas'));
+  }
 
   async traceFilterSingle(address: string, opts: TraceOpts = {}) {
     const res = await this.rpc('trace_filter', {
