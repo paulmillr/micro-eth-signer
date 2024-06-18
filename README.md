@@ -28,6 +28,7 @@ If you don't like NPM, a standalone [eth-signer.js](https://github.com/paulmillr
 - [Transactions: create, sign](#create-and-sign-transactions)
 - [Addresses: create, checksum](#create-and-checksum-addresses)
 - [Network and smart contracts](#network-and-smart-contracts)
+  - [Init network](#init-network)
   - [Fetch balances and history from an archive node](#fetch-balances-and-history-from-an-archive-node)
   - [Fetch Chainlink oracle prices](#fetch-chainlink-oracle-prices)
   - [Resolve ENS address](#resolve-ens-address)
@@ -92,26 +93,46 @@ console.log(
 
 ### Network and smart contracts
 
-We don't have _actual network code_ in the package:
-all network code is deferred to FetchProvider, which must be initialized with a
-method, conforming to built-in `fetch`. This means, you are able to completely control
-all network requests.
+A common problem in web3 libraries is how complex they are to audit with regards to network calls.
+
+In eth-signer, all network calls are done with user-provided function, conforming to built-in `fetch()`:
+
+1. This makes library network-free, which simplifies auditability
+2. User fully controls all network requests
+
+It's recommended to use [micro-ftch](https://github.com/paulmillr/micro-ftch),
+which works on top of fetch and implements killswitch, logging, concurrency limits and other features.
+
+#### Init network
+
+Most APIs (chainlink, uniswap) expect instance of ArchiveNodeProvider.
+The call stack would look like this:
+
+- `Chainlink` => `ArchiveNodeProvider` => `jsonrpc` => `fetch`
+
+To initialize ArchiveNodeProvider, do the following:
+
+```js
+// Requests are made with fetch(), a built-in method
+import { jsonrpc } from 'micro-ftch';
+import { ArchiveNodeProvider } from 'micro-eth-signer/net';
+const RPC_URL = 'http://localhost:8545';
+const prov = new ArchiveNodeProvider(jsonrpc(fetch, RPC_URL));
+
+// Example using mewapi RPC
+const RPC_URL_2 = 'https://nodes.mewapi.io/rpc/eth';
+const prov2 = new ArchiveNodeProvider(
+  jsonrpc(fetch, RPC_URL_2, { Origin: 'https://www.myetherwallet.com' })
+);
+```
 
 #### Fetch balances and history from an archive node
 
 ```ts
-import { ArchiveNodeProvider, FetchProvider } from 'micro-eth-signer/net';
-const RPC_URL = 'http://localhost:8545'; // URL to any RPC
-const rpc = new FetchProvider(globalThis.fetch, RPC_URL); // use built-in fetch()
-const prov = new ArchiveNodeProvider(rpc);
 const addr = '0xd8da6bf26964af9d7eed9e03e53415d37aa96045';
-
 const block = await prov.blockInfo(await prov.height());
 console.log('current block', block.number, block.timestamp, block.baseFeePerGas);
 console.log('info for addr', addr, await prov.unspent(addr));
-
-// ENS example:
-// import { ENS } from 'micro-eth-signer/net'; const ens = new ENS(rpc), addr = await ens.nameToAddress('vitalik.eth');
 
 // Other methods of ArchiveNodeProvider:
 // blockInfo(block: number): Promise<BlockInfo>; // {baseFeePerGas, hash, timestamp...}
@@ -137,11 +158,8 @@ Historical balances, transactions and others can only be fetched from an archive
 #### Fetch Chainlink oracle prices
 
 ```ts
-import { FetchProvider, Chainlink } from 'micro-eth-signer/net';
-const provider = new FetchProvider(thisGlobal.fetch, 'https://nodes.mewapi.io/rpc/eth', {
-  Origin: 'https://www.myetherwallet.com',
-});
-const link = new Chainlink(provider);
+import { Chainlink } from 'micro-eth-signer/net';
+const link = new Chainlink(prov);
 const btc = await link.coinPrice('BTC');
 const bat = await link.tokenPrice('BAT');
 console.log({ btc, bat }); // BTC 19188.68870991, BAT 0.39728989 in USD
@@ -150,10 +168,8 @@ console.log({ btc, bat }); // BTC 19188.68870991, BAT 0.39728989 in USD
 #### Resolve ENS address
 
 ```ts
-import { FetchProvider, ENS } from 'micro-eth-signer/net';
-const RPC_URL = 'http://127.0.0.1:8545';
-const provider = new FetchProvider(thisGlobal.fetch, RPC_URL);
-const ens = new ENS(provider);
+import { ENS } from 'micro-eth-signer/net';
+const ens = new ENS(prov);
 const vitalikAddr = await ens.nameToAddress('vitalik.eth');
 ```
 
@@ -167,15 +183,11 @@ Swap 12.12 USDT to BAT with uniswap V3 defaults of 0.5% slippage, 30 min expirat
 
 ```ts
 import { tokenFromSymbol } from 'micro-eth-signer/abi';
-import { FetchProvider, UniswapV3 } from 'micro-eth-signer/net'; // or UniswapV2
+import { UniswapV3 } from 'micro-eth-signer/net'; // or UniswapV2
 
-const RPC_URL = 'https://nodes.mewapi.io/rpc/eth';
-const provider = new FetchProvider(thisGlobal.fetch, RPC_URL, {
-  Origin: 'https://www.myetherwallet.com',
-});
 const USDT = tokenFromSymbol('USDT');
 const BAT = tokenFromSymbol('BAT');
-const u3 = new UniswapV3(provider); // or new UniswapV2(provider)
+const u3 = new UniswapV3(prov); // or new UniswapV2(provider)
 const fromAddress = '0xd8da6bf26964af9d7eed9e03e53415d37aa96045';
 const toAddress = '0xd8da6bf26964af9d7eed9e03e53415d37aa96045';
 const swap = await u3.swap(USDT, BAT, '12.12', { slippagePercent: 0.5, ttl: 30 * 60 });

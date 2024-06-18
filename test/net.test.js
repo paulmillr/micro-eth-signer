@@ -4,88 +4,48 @@ import { tokenFromSymbol } from '../esm/abi/index.js';
 import {
   ArchiveNodeProvider,
   calcTransfersDiff,
-  FetchProvider,
   ENS,
   Chainlink,
   UniswapV3,
 } from '../esm/net/index.js';
+import * as mftch from 'micro-ftch';
 import { weieth, numberTo0xHex } from '../esm/utils.js';
-// These real network responses from real nodes, captured by fetchReplay
+// These real network responses from real nodes, captured by replayable
 import { default as NET_TX_REPLAY } from './vectors/rpc/transactions.js';
 import { default as NET_ENS_REPLAY } from './vectors/rpc/ens.js';
 import { default as NET_CHAINLINK_REPLAY } from './vectors/rpc/chainlink.js';
 import { default as NET_UNISWAP_REPLAY } from './vectors/rpc/uniswap.js';
 import { default as NET_ESTIMATE_GAS_REPLAY } from './vectors/rpc/estimateGas.js';
 import { default as NET_TX_VECTORS } from './vectors/rpc/parsed-transactions.js';
+import { default as NET_TX_SLOW_REPLAY } from './vectors/rpc/net_transfers_slow.js';
+import { default as NET_TX_BATCH_REPLAY } from './vectors/rpc/net_transfers_batch.js';
 
-const NODE_URL = 'https://NODE_URL';
-const NODE_HEADERS = {};
-// NOTE: most tests check for specific values and will fail because of price changes
-const REAL_NETWORK = false;
+const NODE_URL = 'https://NODE_URL/';
+const getKey = (url, opt) => JSON.stringify({ url: NODE_URL, opt });
 
-const getKey = (url, opt) => {
-  const _opt = { ...opt, headers: { ...opt.headers } };
-  // Hide real node url/keys in test logs
-  for (const k in NODE_HEADERS) delete _opt.headers[k];
-  url = 'https://NODE_URL/';
-  return JSON.stringify({ url, opt: _opt });
-};
-
-// both fetchReplay & fetchLogger, this allows to replay partially
-const fetchReplay = (logs, offline = true) => {
-  const accessed = new Set();
-  const ftch = async (url, opt) => {
-    const key = getKey(url, opt);
-    accessed.add(key);
-    if (!logs[key]) {
-      if (offline) throw new Error(`fetchReplay: unknown request=${key}`);
-      console.log(`fetchReplay: missing request for ${url}`);
-      const res = await fetch(url, opt);
-      return {
-        json: async () => {
-          const json = await res.json();
-          const key = getKey(url, opt);
-          logs[key] = JSON.stringify(json);
-          return json;
-        },
-      };
-    }
-    return { json: () => JSON.parse(logs[key]) };
-  };
-  ftch.logs = logs;
-  ftch.accessed = accessed;
-  return ftch;
-};
-
-// FetchProvider(fetch) -> do network request
-// FetchProvider(fetchReplay(logs, false)) -> log request to replay
-// FetchPRovider(fetchReplay(logs)) -> replay recorded logs
+function initProv(replayJson) {
+  const replay = mftch.replayable(fetch, replayJson, { getKey, offline: true });
+  const provider = mftch.jsonrpc(replay, NODE_URL);
+  const archive = new ArchiveNodeProvider(provider);
+  return archive;
+}
 
 describe('Network', () => {
   should('ENS', async () => {
-    const replay = fetchReplay(NET_ENS_REPLAY);
-    const provider = new FetchProvider(REAL_NETWORK ? fetch : replay, NODE_URL, NODE_HEADERS);
-    const ens = new ENS(provider);
+    const ens = new ENS(initProv(NET_ENS_REPLAY));
     const vitalikAddr = await ens.nameToAddress('vitalik.eth');
     const vitalikName = await ens.addressToName(vitalikAddr);
-    //    console.log('LOGS', logger.logs);
     deepStrictEqual(vitalikAddr, '0xd8da6bf26964af9d7eed9e03e53415d37aa96045');
     deepStrictEqual(vitalikName, 'vitalik.eth');
   });
   should('Chainlink', async () => {
-    const replay = fetchReplay(NET_CHAINLINK_REPLAY);
-
-    const provider = new FetchProvider(REAL_NETWORK ? fetch : replay, NODE_URL, NODE_HEADERS);
-    const chainlink = new Chainlink(provider);
+    const chainlink = new Chainlink(initProv(NET_CHAINLINK_REPLAY));
     const btcPrice = await chainlink.coinPrice('BTC');
     deepStrictEqual(btcPrice, 69369.10271);
-    //console.log('LOGS', logger.logs);
   });
 
   should('UniswapV3', async () => {
-    const replay = fetchReplay(NET_UNISWAP_REPLAY);
-    const provider = new FetchProvider(REAL_NETWORK ? fetch : replay, NODE_URL, NODE_HEADERS);
-    const univ3 = new UniswapV3(provider);
+    const univ3 = new UniswapV3(initProv(NET_UNISWAP_REPLAY));
     // Actual code
     const vitalikAddr = '0xd8da6bf26964af9d7eed9e03e53415d37aa96045';
     const DAI = tokenFromSymbol('DAI');
@@ -103,29 +63,24 @@ describe('Network', () => {
       data: '0xc04b8d59000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa960450000000000000000000000000000000000000000000000000000019077fd30000000000000000000000000000000000000000000000000001111d67bb1bb0000000000000000000000000000000000000000000000000102d6906ca33403f40b0000000000000000000000000000000000000000000000000000000000000042c02aaa39b223fe8d0a0e5c4f27ead9083c756cc20001f4a0b86991c6218b36c1d19d4a2e9eb0ce3606eb480001f46b175474e89094c44da98b954eedeac495271d0f000000000000000000000000000000000000000000000000000000000000',
       allowance: undefined,
     });
-    //console.log('LOGS', logger.logs);
   });
 
   should('estimateGas', async () => {
-    const replay = fetchReplay(NET_ESTIMATE_GAS_REPLAY);
-    const provider = new FetchProvider(REAL_NETWORK ? fetch : replay, NODE_URL, NODE_HEADERS);
-    const gasLimit = await provider.estimateGas({
+    const archive = initProv(NET_ESTIMATE_GAS_REPLAY);
+    const gasLimit = await archive.estimateGas({
       from: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
       to: '0xe592427a0aece92de3edee1f18e0157c05861564',
       value: numberTo0xHex(weieth.decode('1.23')),
       data: '0xc04b8d59000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa960450000000000000000000000000000000000000000000000000000019077fd30000000000000000000000000000000000000000000000000001111d67bb1bb0000000000000000000000000000000000000000000000000102d6906ca33403f40b0000000000000000000000000000000000000000000000000000000000000042c02aaa39b223fe8d0a0e5c4f27ead9083c756cc20001f4a0b86991c6218b36c1d19d4a2e9eb0ce3606eb480001f46b175474e89094c44da98b954eedeac495271d0f000000000000000000000000000000000000000000000000000000000000',
     });
     deepStrictEqual(gasLimit, 236082n);
-    //console.log('LOGS', logger.logs);
   });
 
   should('Transactions', async () => {
     // Random address from abi tests which test for fingerprinted data in encoding.
     // Perfect for tests: only has a few transactions and provides different types of txs.
     const addr = '0x6994eCe772cC4aBb5C9993c065a34C94544A4087';
-    const replay = fetchReplay(NET_TX_REPLAY, true);
-    const provider = new FetchProvider(REAL_NETWORK ? fetch : replay, 'NODE_URL', {});
-    const tx = new ArchiveNodeProvider(provider);
+    const tx = initProv(NET_TX_REPLAY);
     // Blocks
     deepStrictEqual(await tx.blockInfo(15_010_733), NET_TX_VECTORS.block);
     // Internal transactions sanity
@@ -234,13 +189,49 @@ describe('Network', () => {
           115792089237316195423570985008687907853269984665640564039457584007913129639935n,
       },
     });
+  });
 
-    // console.log('---- LOGS ----');
-    // console.log(
-    //   JSON.stringify(
-    //     Object.fromEntries(Object.entries(replay.logs).filter(([k, v]) => replay.accessed.has(k)))
-    //   )
-    // );
+  should('transfers: limitLogs', async () => {
+    const addr = '0x6994eCe772cC4aBb5C9993c065a34C94544A4087';
+    const replay = mftch.replayable(fetch, NET_TX_SLOW_REPLAY, {
+      getKey,
+      offline: true,
+    });
+    const ftch = mftch.ftch(replay, { concurrencyLimit: 1 });
+    const archive = new ArchiveNodeProvider(mftch.jsonrpc(ftch, 'http://SOME_NODE/'));
+    const transfers = (
+      await archive.transfers(addr, {
+        limitLogs: 10_000,
+        fromBlock: 0,
+        toBlock: await archive.height(),
+      })
+    ).map((i) => ({ ...i, info: undefined }));
+    const diff = calcTransfersDiff(transfers);
+    const diffLast = diff[diff.length - 1];
+    deepStrictEqual(diffLast.balances[addr.toLowerCase()], 130036071955215n);
+  });
+
+  should('transfers: limitLogs + batch', async () => {
+    const addr = '0x6994eCe772cC4aBb5C9993c065a34C94544A4087';
+    const replay = mftch.replayable(fetch, NET_TX_BATCH_REPLAY, {
+      getKey,
+      offline: true,
+    });
+    const ftch = mftch.ftch(replay, { concurrencyLimit: 1 });
+    const archive = new ArchiveNodeProvider(
+      mftch.jsonrpc(ftch, 'http://SOME_NODE/', { batchSize: 5 })
+    );
+    // 2061s 566 (faster than without batch)
+    const transfers = (
+      await archive.transfers(addr, {
+        limitLogs: 10_000,
+        fromBlock: 0,
+        toBlock: await archive.height(),
+      })
+    ).map((i) => ({ ...i, info: undefined }));
+    const diff = calcTransfersDiff(transfers);
+    const diffLast = diff[diff.length - 1];
+    deepStrictEqual(diffLast.balances[addr.toLowerCase()], 130036071955215n);
   });
 });
 

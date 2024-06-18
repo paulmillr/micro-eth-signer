@@ -1,4 +1,4 @@
-import { Web3Provider, amounts } from '../utils.js';
+import { Web3Provider, Web3CallArgs, hexToNumber, amounts } from '../utils.js';
 import { Transaction } from '../index.js';
 import { TxVersions, legacySig } from '../tx.js';
 import { ContractInfo, createContract, events, ERC20, WETH } from '../abi/index.js';
@@ -148,7 +148,7 @@ export type Unspent = {
   symbol: 'ETH';
   decimals: number;
   balance: bigint;
-  value?: number;
+  nonce: number;
   // useful for wallets to know if there was transactions related to wallet
   // NOTE: even if nonce is zero, there can be transfers to wallet
   // can be used to check before fetching all transactions
@@ -328,6 +328,10 @@ function validateLogOpts(opts: Record<string, unknown>) {
   validateCallbacks(opts);
 }
 
+export type JsonrpcInterface = {
+  call: (method: string, ...args: any[]) => Promise<any>;
+};
+
 /**
  * Transaction-related code around Web3Provider.
  * High-level methods are `height`, `unspent`, `transfers`, `allowances` and `tokenBalances`.
@@ -335,25 +339,30 @@ function validateLogOpts(opts: Record<string, unknown>) {
  * Low-level methods are `blockInfo`, `internalTransactions`, `ethLogs`, `tokenTransfers`, `wethTransfers`,
  * `tokenInfo` and `txInfo`.
  */
-export class ArchiveNodeProvider {
-  constructor(private provider: Web3Provider) {}
+export class ArchiveNodeProvider implements Web3Provider {
+  constructor(private rpc: JsonrpcInterface) {}
 
-  // The low-level place where network calls are done
-  private rpc(method: string, ...args: any[]) {
-    return this.provider.call(method, ...args);
+  call(method: string, ...args: any[]) {
+    return this.rpc.call(method, ...args);
+  }
+  ethCall(args: Web3CallArgs, tag = 'latest') {
+    return this.rpc.call('eth_call', args, tag);
+  }
+  async estimateGas(args: Web3CallArgs, tag = 'latest') {
+    return hexToNumber(await this.rpc.call('eth_estimateGas', args, tag));
   }
 
   // Timestamp is available only inside blocks
   async blockInfo(block: number): Promise<BlockInfo> {
-    const res = await this.rpc('eth_getBlockByNumber', ethNum(block), false);
+    const res = await this.call('eth_getBlockByNumber', ethNum(block), false);
     fixBlock(res);
     return res;
   }
 
-  async unspent(address: string) {
+  async unspent(address: string): Promise<Unspent> {
     let [balance, nonce] = await Promise.all([
-      this.rpc('eth_getBalance', address, 'latest'),
-      this.rpc('eth_getTransactionCount', address, 'latest'),
+      this.call('eth_getBalance', address, 'latest'),
+      this.call('eth_getTransactionCount', address, 'latest'),
     ]);
     balance = BigInt(balance);
     nonce = BigInt(nonce);
@@ -367,14 +376,11 @@ export class ArchiveNodeProvider {
     };
   }
   async height(): Promise<number> {
-    return Number.parseInt(await this.rpc('eth_blockNumber'));
-  }
-  async maxPriorityFeePerGas(): Promise<BigInt> {
-    return BigInt(await this.rpc('eth_maxPriorityFeePerGas'));
+    return Number.parseInt(await this.call('eth_blockNumber'));
   }
 
   async traceFilterSingle(address: string, opts: TraceOpts = {}) {
-    const res = await this.rpc('trace_filter', {
+    const res = await this.call('trace_filter', {
       fromBlock: ethNum(opts.fromBlock),
       toBlock: ethNum(opts.toBlock),
       toAddress: [address],
@@ -411,7 +417,7 @@ export class ArchiveNodeProvider {
       if (opts.toBlock !== undefined) params.toBlock = ethNum(opts.toBlock);
       if (opts.perRequest !== undefined) params.count = opts.perRequest;
 
-      const res = await this.rpc('trace_filter', params);
+      const res = await this.call('trace_filter', params);
       if (!res.length) break;
       for (const action of res) {
         fixAction(action, opts);
@@ -427,7 +433,7 @@ export class ArchiveNodeProvider {
   async ethLogsSingle(topics: Topics, opts: LogOpts): Promise<Log[]> {
     const req: Record<string, any> = { topics, fromBlock: ethNum(opts.fromBlock || 0) };
     if (opts.toBlock !== undefined) req.toBlock = ethNum(opts.toBlock);
-    const res = await this.rpc('eth_getLogs', req);
+    const res = await this.call('eth_getLogs', req);
     return res.map((i: any) => fixLog(i, opts));
   }
 
@@ -466,8 +472,8 @@ export class ArchiveNodeProvider {
 
   async txInfo(txHash: string, opts: TxInfoOpts = {}) {
     let [info, receipt] = await Promise.all([
-      this.rpc('eth_getTransactionByHash', txHash),
-      this.rpc('eth_getTransactionReceipt', txHash),
+      this.call('eth_getTransactionByHash', txHash),
+      this.call('eth_getTransactionReceipt', txHash),
     ]);
     info = fixTxInfo(info);
     receipt = fixTxReceipt(receipt);
@@ -513,7 +519,7 @@ export class ArchiveNodeProvider {
   async tokenInfo(address: string): Promise<TokenInfo | undefined> {
     // will throw 'Execution reverted' if not ERC20
     try {
-      let c = createContract(ERC20, this.provider, address);
+      let c = createContract(ERC20, this, address);
       const [symbol, decimals] = await Promise.all([c.symbol.call(), c.decimals.call()]);
       return { contract: address, abi: 'ERC20', symbol, decimals: Number(decimals) };
     } catch (e) {
@@ -648,7 +654,7 @@ export class ArchiveNodeProvider {
 
   async tokenBalances(address: string, tokens: string[]): Promise<Record<string, bigint>> {
     const balances = await Promise.all(
-      tokens.map((i) => createContract(ERC20, this.provider, i).balanceOf.call(address))
+      tokens.map((i) => createContract(ERC20, this, i).balanceOf.call(address))
     );
     return Object.fromEntries(tokens.map((i, j) => [i, balances[j]]));
   }
