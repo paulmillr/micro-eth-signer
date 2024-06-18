@@ -158,7 +158,7 @@ export class Transaction<T extends TxType> {
   setWholeAmount(accountBalance: bigint, burnRemaining = true): Transaction<T> {
     if (typeof accountBalance !== 'bigint' || accountBalance <= 0n)
       throw new Error('account balance must be bigger than 0');
-    const { fee } = this.calcAmounts().wei;
+    const fee = this.fee;
     const amountToSend = accountBalance - fee;
     if (amountToSend <= 0n) throw new Error('account balance must be bigger than fee of ' + fee);
     const raw = { ...this.raw, value: amountToSend };
@@ -221,7 +221,8 @@ export class Transaction<T extends TxType> {
   private calcHash(includeSignature: boolean) {
     return bytesToHex(keccak_256(this.toRawBytes(includeSignature)));
   }
-  calcAmounts() {
+  // Calculates MAXIMUM fee in wei that could be spent
+  get fee() {
     const { type, raw } = this;
     // Fee calculation is not exact, real fee can be smaller
     let gasFee;
@@ -236,16 +237,7 @@ export class Transaction<T extends TxType> {
       gasFee = r.maxFeePerGas;
     }
     // TODO: how to calculate 4844 fee?
-    const fee = raw.gasLimit * gasFee;
-    const amount = raw.value;
-    const amountWithFee = fee + amount;
-    const wei = { amount, fee, amountWithFee };
-    const humanized = {
-      amount: weieth.encode(amount),
-      fee: weieth.encode(fee),
-      amountWithFee: weieth.encode(amountWithFee),
-    };
-    return { wei, humanized };
+    return raw.gasLimit * gasFee;
   }
   clone() {
     return new Transaction(this.type, cloneDeep(this.raw));

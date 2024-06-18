@@ -15,14 +15,7 @@ describe('Fees', () => {
       gasPrice: weigwei.decode('2'),
     });
     // 21k * 2 = 42
-    deepStrictEqual(tx.calcAmounts(), {
-      wei: {
-        amount: 1000000000000000000n,
-        fee: 42000000000000n,
-        amountWithFee: 1000042000000000000n,
-      },
-      humanized: { amount: '1', fee: '0.000042', amountWithFee: '1.000042' },
-    });
+    deepStrictEqual(tx.fee, 42000000000000n);
     const tx2 = Transaction.prepare({
       type: 'legacy',
       to: '0x27b1fdb04752bbc536007a920d24acb045561c26',
@@ -30,14 +23,7 @@ describe('Fees', () => {
       value: weieth.decode('1.23'),
       gasPrice: weigwei.decode('55.3'),
     });
-    deepStrictEqual(tx2.calcAmounts(), {
-      wei: {
-        amount: 1230000000000000000n,
-        fee: 1161300000000000n,
-        amountWithFee: 1231161300000000000n,
-      },
-      humanized: { amount: '1.23', fee: '0.0011613', amountWithFee: '1.2311613' },
-    });
+    deepStrictEqual(tx2.fee, 1161300000000000n);
   });
   should('EIP1559', () => {
     const tx = Transaction.prepare({
@@ -48,14 +34,7 @@ describe('Fees', () => {
       maxPriorityFeePerGas: weigwei.decode('1'),
     });
     // 21k * 2 = 42
-    deepStrictEqual(tx.calcAmounts(), {
-      wei: {
-        amount: 1000000000000000000n,
-        fee: 42000000000000n,
-        amountWithFee: 1000042000000000000n,
-      },
-      humanized: { amount: '1', fee: '0.000042', amountWithFee: '1.000042' },
-    });
+    deepStrictEqual(tx.fee, 42000000000000n);
     const tx2 = Transaction.prepare({
       to: '0x27b1fdb04752bbc536007a920d24acb045561c26',
       nonce: 1n,
@@ -64,14 +43,7 @@ describe('Fees', () => {
       maxPriorityFeePerGas: weigwei.decode('2'),
     });
     // 21k * 2 = 42
-    deepStrictEqual(tx2.calcAmounts(), {
-      wei: {
-        amount: 1230000000000000000n,
-        fee: 1161300000000000n,
-        amountWithFee: 1231161300000000000n,
-      },
-      humanized: { amount: '1.23', fee: '0.0011613', amountWithFee: '1.2311613' },
-    });
+    deepStrictEqual(tx2.fee, 1161300000000000n);
   });
   should('Whole amount', () => {
     const tx = Transaction.prepare({
@@ -82,14 +54,7 @@ describe('Fees', () => {
       maxPriorityFeePerGas: weigwei.decode('1'),
     });
     const tx2 = tx.setWholeAmount(weieth.decode('1'));
-    deepStrictEqual(tx.calcAmounts(), {
-      wei: {
-        amount: 1000000000000000000n,
-        fee: 42000000000000n,
-        amountWithFee: 1000042000000000000n,
-      },
-      humanized: { amount: '1', fee: '0.000042', amountWithFee: '1.000042' },
-    });
+    deepStrictEqual(tx.fee, 42000000000000n);
     deepStrictEqual(tx2.raw, {
       to: '0x27b1fdb04752bbc536007a920d24acb045561c26',
       value: 999958000000000000n,

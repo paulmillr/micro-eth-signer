@@ -69,7 +69,7 @@ const tx = Transaction.prepare({
 // Uses `random` from example above. Alternatively, pass 0x hex string or Uint8Array
 const signedTx = tx.signBy(random.privateKey);
 console.log('signed tx', signedTx, signedTx.toHex());
-console.log('need total', signedTx.calcAmounts()); // wei & humanized formats
+console.log('fee', signedTx.fee);
 ```
 
 We support legacy, EIP2930, EIP1559 and EIP4844 (Dencun / Cancun) transactions.
