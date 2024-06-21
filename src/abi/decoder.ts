@@ -114,16 +114,17 @@ type ArrType<T extends string> = `${T}[${'' | ThreeDigits}]`;
 type Arr2dType<T extends string> = `${T}[${'' | ThrityDigits}][${'' | ThrityDigits}]`;
 
 // [{name: 'a', type: 'string'}, {name: 'b', type: 'uint'}] -> {a: string, b: bigint};
-export type MapTuple<T> = T extends ArrLike<Component<string> & { name: string }>
-  ? {
-      [K in T[number] as K['name']]: MapType<K>;
-    }
-  : T extends ArrLike<Component<string>>
-    ? // [{name: 'a', type: 'string'}, {type: 'uint'}] -> [string, bigint];
-      {
-        [K in keyof T]: T[K] extends BaseComponent ? MapType<T[K]> : unknown;
+export type MapTuple<T> =
+  T extends ArrLike<Component<string> & { name: string }>
+    ? {
+        [K in T[number] as K['name']]: MapType<K>;
       }
-    : unknown;
+    : T extends ArrLike<Component<string>>
+      ? // [{name: 'a', type: 'string'}, {type: 'uint'}] -> [string, bigint];
+        {
+          [K in keyof T]: T[K] extends BaseComponent ? MapType<T[K]> : unknown;
+        }
+      : unknown;
 
 // prettier-ignore
 export type MapType<T extends BaseComponent> =
@@ -315,15 +316,14 @@ export type ContractTypeFilter<T> = {
   [K in keyof T]: T[K] extends FunctionType & { name: string } ? T[K] : never;
 };
 
-export type ContractType<T extends Array<FnArg>, N, F = ContractTypeFilter<T>> = F extends ArrLike<
-  FunctionType & { name: string }
->
-  ? {
-      [K in F[number] as K['name']]: N extends Web3Provider
-        ? ContractMethodNet<K>
-        : ContractMethod<K>;
-    }
-  : never;
+export type ContractType<T extends Array<FnArg>, N, F = ContractTypeFilter<T>> =
+  F extends ArrLike<FunctionType & { name: string }>
+    ? {
+        [K in F[number] as K['name']]: N extends Web3Provider
+          ? ContractMethodNet<K>
+          : ContractMethod<K>;
+      }
+    : never;
 
 function fnSignature(o: FnArg): string {
   if (!o.type) throw new Error('ABI.fnSignature wrong argument');
@@ -418,14 +418,12 @@ export type EventMethod<T extends EventType> = {
   topics: (values: TopicsValue<ArgsType<T['inputs']>>) => (string | null)[];
 };
 
-export type ContractEventType<
-  T extends Array<FnArg>,
-  F = ContractEventTypeFilter<T>,
-> = F extends ArrLike<EventType>
-  ? {
-      [K in F[number] as K['name']]: EventMethod<K>;
-    }
-  : never;
+export type ContractEventType<T extends Array<FnArg>, F = ContractEventTypeFilter<T>> =
+  F extends ArrLike<EventType>
+    ? {
+        [K in F[number] as K['name']]: EventMethod<K>;
+      }
+    : never;
 
 // TODO: try to simplify further
 export function events<T extends ArrLike<FnArg>>(abi: T): ContractEventType<Writable<T>> {

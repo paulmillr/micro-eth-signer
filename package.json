@@ -14,7 +14,7 @@
   ],
   "main": "index.js",
   "module": "esm/index.js",
-  "types": "index.d.ts",
+  "types": "esm/index.d.ts",
   "dependencies": {
     "@noble/curves": "~1.4.0",
     "@noble/hashes": "~1.4.0",
@@ -25,9 +25,9 @@
     "micro-bmark": "0.3.1",
     "micro-ftch": "0.4.0",
     "micro-should": "0.4.0",
-    "prettier": "3.1.1",
+    "prettier": "3.3.2",
     "snappyjs": "0.7.0",
-    "typescript": "5.3.2",
+    "typescript": "5.5.2",
     "yaml": "2.4.1"
   },
   "author": "Paul Miller (https://paulmillr.com)",
@@ -38,39 +38,32 @@
   "license": "MIT",
   "exports": {
     ".": {
-      "types": "./index.d.ts",
       "import": "./esm/index.js",
-      "default": "./index.js"
+      "require": "./index.js"
     },
     "./abi": {
-      "types": "./abi/index.d.ts",
       "import": "./esm/abi/index.js",
-      "default": "./abi/index.js"
+      "require": "./abi/index.js"
     },
     "./net": {
-      "types": "./net/index.d.ts",
       "import": "./esm/net/index.js",
-      "default": "./net/index.js"
+      "require": "./net/index.js"
     },
     "./rlp": {
-      "types": "./rlp.d.ts",
       "import": "./esm/rlp.js",
-      "default": "./rlp.js"
+      "require": "./rlp.js"
     },
     "./ssz": {
-      "types": "./ssz.d.ts",
       "import": "./esm/ssz.js",
-      "default": "./net/ssz.js"
+      "require": "./ssz.js"
     },
     "./tx": {
-      "types": "./tx.d.ts",
       "import": "./esm/tx.js",
-      "default": "./tx.js"
+      "require": "./tx.js"
     },
     "./utils": {
-      "types": "./utils.d.ts",
       "import": "./esm/utils.js",
-      "default": "./utils.js"
+      "require": "./utils.js"
     }
   },
   "keywords": [

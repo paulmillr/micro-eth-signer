@@ -3,7 +3,7 @@
 Minimal library for Ethereum transactions, addresses and smart contracts.
 
 - 🔓 Secure: 3 deps, audited [noble](https://paulmillr.com/noble/) cryptography, no network code
-- 🔻 Tree-shaking-friendly: use only what's necessary, other code won't be included
+- 🔻 Tree-shakeable: unused code is excluded from your builds
 - 🔍 Reliable: 150MB of test vectors from EIPs, ethers and viem
 - ✍️ Create, sign and decode transactions using human-readable hints
 - 🌍 Fetch balances and history from an archive node
