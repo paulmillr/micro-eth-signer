@@ -45,6 +45,10 @@
       "import": "./esm/abi/index.js",
       "require": "./abi/index.js"
     },
+    "./address": {
+      "import": "./esm/address.js",
+      "require": "./address.js"
+    },
     "./net": {
       "import": "./esm/net/index.js",
       "require": "./net/index.js"
