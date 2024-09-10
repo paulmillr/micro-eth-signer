@@ -16,12 +16,12 @@
   "module": "esm/index.js",
   "types": "esm/index.d.ts",
   "dependencies": {
-    "@noble/curves": "~1.4.0",
-    "@noble/hashes": "~1.4.0",
+    "@noble/curves": "~1.6.0",
+    "@noble/hashes": "~1.5.0",
     "micro-packed": "~0.6.3"
   },
   "devDependencies": {
-    "@paulmillr/jsbt": "0.1.0",
+    "@paulmillr/jsbt": "0.2.1",
     "micro-bmark": "0.3.1",
     "micro-ftch": "0.4.0",
     "micro-should": "0.4.0",
@@ -49,6 +49,14 @@
       "import": "./esm/address.js",
       "require": "./address.js"
     },
+    "./kzg": {
+      "import": "./esm/kzg.js",
+      "require": "./kzg.js"
+    },
+    "./kzg-mainnet": {
+      "import": "./esm/kzg-mainnet.js",
+      "require": "./kzg-mainnet.js"
+    },
     "./net": {
       "import": "./esm/net/index.js",
       "require": "./net/index.js"
@@ -70,6 +78,7 @@
       "require": "./utils.js"
     }
   },
+  "sideEffects": false,
   "keywords": [
     "ethereum",
     "eth",
@@ -89,8 +98,8 @@
     "build": "tsc && tsc -p tsconfig.esm.json",
     "build:release": "cd build; npm run build:release",
     "bench": "node benchmark/tx.js",
-    "lint": "prettier --print-width 100 --single-quote --check src",
-    "format": "prettier --print-width 100 --single-quote --write src",
+    "lint": "prettier --check src",
+    "format": "prettier --write src",
     "test": "node test/index.js"
   }
 }
