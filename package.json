@@ -69,6 +69,10 @@
       "import": "./esm/tx.js",
       "require": "./tx.js"
     },
+    "./typed-data": {
+      "import": "./esm/typed-data.js",
+      "require": "./typed-data.js"
+    },
     "./utils": {
       "import": "./esm/utils.js",
       "require": "./utils.js"
