@@ -1,1 +1,1 @@
-export { addr, Transaction, messenger } from 'lib';
+export { addr, Transaction } from 'lib';
