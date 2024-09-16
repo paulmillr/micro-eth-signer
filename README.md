@@ -42,7 +42,7 @@ If you don't like NPM, a standalone [eth-signer.js](https://github.com/paulmillr
 - Utilities
   - [KZG EIP-4844 proofs](#kzg-eip-4844-proofs)
   - [Send whole account balance](#send-whole-account-balance)
-  - [Sign and verify messages](#sign-and-verify-messages)
+  - [Sign and verify messages with EIP-191 and EIP-712](#sign-and-verify-messages-with-eip-191-and-eip-712)
 - [Security](#security)
 - [Performance](#performance)
 - [License](#license)
@@ -359,16 +359,69 @@ We implement RLP in just 900 lines of code, powered by [packed](https://github.c
 import * as ssz from 'micro-eth-signer/ssz';
 ```
 
-### Sign and verify messages
+### Sign and verify messages with EIP-191 and EIP-712
 
-EIP-712 is not supported yet.
+We support EIP-191 and EIP-712.
 
 ```ts
-import { addr, messenger } from 'micro-eth-signer';
-const rand = addr.random();
-const msg = 'noble';
-const sig = messenger.sign(msg, rand.privateKey);
-const isValid = messenger.verify(sig, msg, address);
+import * as typed from 'micro-eth-signer/typed-data';
+
+// EIP-191
+const sig = typed.personal.sign(message, privateKey);
+typed.personal.verify(sig, message, address);
+typed.personal.recoverPublicKey(sig, message);
+
+// EIP-712
+const typedData = {
+  types: {
+    EIP712Domain: [
+      { name: 'name', type: 'string' },
+      { name: 'version', type: 'string' },
+      { name: 'chainId', type: 'uint256' },
+      { name: 'verifyingContract', type: 'address' },
+    ],
+    Person: [
+      { name: 'name', type: 'string' },
+      { name: 'wallet', type: 'address' },
+    ],
+    Mail: [
+      { name: 'from', type: 'Person' },
+      { name: 'to', type: 'Person' },
+      { name: 'contents', type: 'string' },
+    ],
+  },
+  primaryType: 'Mail',
+  domain: {
+    name: 'Ether Mail',
+    version: '1',
+    chainId: 1,
+    verifyingContract: '0xCcCCccccCCCCcCCCCCCcCcCccCcCCCcCcccccccC',
+  },
+  message: {
+    from: { name: 'Cow', wallet: '0xCD2a3d9F938E13CD947Ec05AbC7FE734Df8DD826' },
+    to: { name: 'Bob', wallet: '0xbBbBBBBbbBBBbbbBbbBbbbbBBbBbbbbBbBbbBBbB' },
+    contents: 'Hello, Bob!',
+  },
+};
+
+const privateKey = keccak_256('cow');
+const address = addr.fromPrivateKey(privateKey);
+// address === '0xCD2a3d9F938E13CD947Ec05AbC7FE734Df8DD826';
+// typed.encodeData(typedData) === '0xa0ce...'
+);
+const e = typed.encoder(typedData.types, typedData.domain);
+// e._getHash(typedData.primaryType, typedData.message) == '0xbe60...';
+const sig =
+  '0x4355c47d63924e8a72e509b65029052eb6c299d53a04e167c5775fd466751c9d' +
+  '07299936d304c153f6443dfa05f40ff007d72911b6f72307f996231605b91562' +
+  (28).toString(16);
+// e.sign(typedData.primaryType, typedData.message, privateKey) === sig;
+// e.verify(typedData.primaryType, sig, typedData.message, address) === true;
+// e.recoverPublicKey(typedData.primaryType, sig, typedData.message) === address;
+// // Utils
+// typed.signTyped(typedData, privateKey) === sig;
+// typed.verifyTyped(sig, typedData, address) === true;
+// typed.recoverPublicKeyTyped(sig, typedData) === address;
 ```
 
 ### Utilities
