@@ -42,7 +42,7 @@ If you don't like NPM, a standalone [eth-signer.js](https://github.com/paulmillr
 - Utilities
   - [KZG EIP-4844 proofs](#kzg-eip-4844-proofs)
   - [Send whole account balance](#send-whole-account-balance)
-  - [Sign and verify messages with EIP-191 and EIP-712](#sign-and-verify-messages-with-eip-191-and-eip-712)
+  - [Sign and verify messages with EIP-191, EIP-712](#sign-and-verify-messages)
 - [Security](#security)
 - [Performance](#performance)
 - [License](#license)
@@ -359,69 +359,84 @@ We implement RLP in just 900 lines of code, powered by [packed](https://github.c
 import * as ssz from 'micro-eth-signer/ssz';
 ```
 
-### Sign and verify messages with EIP-191 and EIP-712
+### Sign and verify messages
 
-We support EIP-191 and EIP-712.
+#### EIP-191
 
 ```ts
 import * as typed from 'micro-eth-signer/typed-data';
 
-// EIP-191
-const sig = typed.personal.sign(message, privateKey);
-typed.personal.verify(sig, message, address);
-typed.personal.recoverPublicKey(sig, message);
+// Example message
+const message = "Hello, Ethereum!";
+const privateKey = "0x4c0883a69102937d6231471b5dbb6204fe512961708279f1d7b1b8e7e8b1b1e1";
 
-// EIP-712
-const typedData = {
-  types: {
-    EIP712Domain: [
-      { name: 'name', type: 'string' },
-      { name: 'version', type: 'string' },
-      { name: 'chainId', type: 'uint256' },
-      { name: 'verifyingContract', type: 'address' },
-    ],
-    Person: [
-      { name: 'name', type: 'string' },
-      { name: 'wallet', type: 'address' },
-    ],
-    Mail: [
-      { name: 'from', type: 'Person' },
-      { name: 'to', type: 'Person' },
-      { name: 'contents', type: 'string' },
-    ],
-  },
-  primaryType: 'Mail',
-  domain: {
-    name: 'Ether Mail',
-    version: '1',
-    chainId: 1,
-    verifyingContract: '0xCcCCccccCCCCcCCCCCCcCcCccCcCCCcCcccccccC',
-  },
-  message: {
-    from: { name: 'Cow', wallet: '0xCD2a3d9F938E13CD947Ec05AbC7FE734Df8DD826' },
-    to: { name: 'Bob', wallet: '0xbBbBBBBbbBBBbbbBbbBbbbbBBbBbbbbBbBbbBBbB' },
-    contents: 'Hello, Bob!',
-  },
+// Sign the message
+const signature = typed.personal.sign(message, privateKey);
+console.log("Signature:", signature);
+
+// Verify the signature
+const address = "0xYourEthereumAddress";
+const isValid = typed.personal.verify(signature, message, address);
+console.log("Is valid:", isValid);
+```
+
+#### EIP-712
+
+```ts
+import { signTyped, verifyTyped, recoverPublicKeyTyped, EIP712Domain, TypedData } from './typed-data';
+const types = {
+  Person: [
+    { name: 'name', type: 'string' },
+    { name: 'wallet', type: 'address' }
+  ],
+  Mail: [
+    { name: 'from', type: 'Person' },
+    { name: 'to', type: 'Person' },
+    { name: 'contents', type: 'string' }
+  ]
 };
 
-const privateKey = keccak_256('cow');
-const address = addr.fromPrivateKey(privateKey);
-// address === '0xCD2a3d9F938E13CD947Ec05AbC7FE734Df8DD826';
-// typed.encodeData(typedData) === '0xa0ce...'
-);
-const e = typed.encoder(typedData.types, typedData.domain);
-// e._getHash(typedData.primaryType, typedData.message) == '0xbe60...';
-const sig =
-  '0x4355c47d63924e8a72e509b65029052eb6c299d53a04e167c5775fd466751c9d' +
-  '07299936d304c153f6443dfa05f40ff007d72911b6f72307f996231605b91562' +
-  (28).toString(16);
-// e.sign(typedData.primaryType, typedData.message, privateKey) === sig;
-// e.verify(typedData.primaryType, sig, typedData.message, address) === true;
-// e.recoverPublicKey(typedData.primaryType, sig, typedData.message) === address;
-// // Utils
-// typed.signTyped(typedData, privateKey) === sig;
-// typed.verifyTyped(sig, typedData, address) === true;
-// typed.recoverPublicKeyTyped(sig, typedData) === address;
+// Define the domain
+const domain: EIP712Domain = {
+  name: 'Ether Mail',
+  version: '1',
+  chainId: 1,
+  verifyingContract: '0xCcCCccccCCCCcCCCCCCcCcCccCcCCCcCcccccccC',
+  salt: '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef'
+};
+
+// Define the message
+const message = {
+  from: {
+    name: 'Alice',
+    wallet: '0xCcCCccccCCCCcCCCCCCcCcCccCcCCCcCcccccccC'
+  },
+  to: {
+    name: 'Bob',
+    wallet: '0xbBbBBBBbbBBBbbbBbbBbbbbBBbBbbbbBbBbbBBbB'
+  },
+  contents: 'Hello, Bob!'
+};
+
+// Create the typed data
+const typedData: TypedData<typeof types, 'Mail'> = {
+  types,
+  primaryType: 'Mail',
+  domain,
+  message
+};
+
+// Sign the typed data
+const privateKey = "0x4c0883a69102937d6231471b5dbb6204fe512961708279f1d7b1b8e7e8b1b1e1";
+const signature = signTyped(typedData, privateKey);
+console.log("Signature:", signature);
+
+// Verify the signature
+const address = "0xYourEthereumAddress";
+const isValid = verifyTyped(signature, typedData, address);
+
+// Recover the public key
+const publicKey = recoverPublicKeyTyped(signature, typedData);
 ```
 
 ### Utilities
@@ -434,24 +449,28 @@ import { trustedSetup } from 'trusted-setups'; // 400kb, 4-sec init
 import { trustedSetup as fastSetup } from 'trusted-setups/fast.js'; // 800kb, instant init
 
 const kzg = new KZG(trustedSetup);
-// kzg.computeProof(blob, z);
-// kzg.verifyBlobProof(blobs, commitments, proofs);
-```
 
-All methods:
+// Example blob and scalar
+const blob = '0x1234567890abcdef'; // Add actual blob data
+const z = '0x1'; // Add actual scalar
 
-```ts
-type Blob = string | string[] | bigint[];
-type Scalar = string | bigint;
-export declare class KZG {
-  constructor(setup: SetupData);
-  computeProof(blob: Blob, z: bigint | string): [string, string];
-  verifyProof(commitment: string, z: Scalar, y: Scalar, proof: string): boolean;
-  blobToKzgCommitment(blob: Blob): string;
-  computeBlobProof(blob: Blob, commitment: string): string;
-  verifyBlobProof(blob: Blob, commitment: string, proof: string): boolean;
-  verifyBlobProofBatch(blobs: string[], commitments: string[], proofs: string[]): boolean;
-}
+// Compute and verify proof
+const [proof, y] = kzg.computeProof(blob, z);
+console.log('Proof:', proof);
+console.log('Y:', y);
+const commitment = '0x1234567890abcdef'; // Add actual commitment
+const z = '0x1'; // Add actual scalar
+// const y = '0x2'; // Add actual y value
+const proof = '0x3'; // Add actual proof
+const isValid = kzg.verifyProof(commitment, z, y, proof);
+console.log('Is valid:', isValid);
+
+// Compute and verify blob proof
+const blob = '0x1234567890abcdef'; // Add actual blob data
+const commitment = '0x1'; // Add actual commitment
+const proof = kzg.computeBlobProof(blob, commitment);
+console.log('Blob proof:', proof);
+const isValidB = kzg.verifyBlobProof(blob, commitment, proof);
 ```
 
 #### Send whole account balance
@@ -523,7 +542,7 @@ To run benchmarks, execute `npm run bench`.
 
 ## Contributing
 
-Make sure to use recursive cloning for tests:
+Make sure to use recursive cloning for the [eth-vectors](https://github.com/paulmillr/eth-vectors) submodule:
 
     git clone --recursive https://github.com/paulmillr/micro-eth-signer.git
 
