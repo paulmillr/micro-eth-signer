@@ -1,4 +1,4 @@
-import { Web3Provider, Web3CallArgs, hexToNumber, amounts } from '../utils.js';
+import { IWeb3Provider, Web3CallArgs, hexToNumber, amounts } from '../utils.js';
 import { Transaction } from '../index.js';
 import { TxVersions, legacySig } from '../tx.js';
 import { ContractInfo, createContract, events, ERC20, WETH } from '../abi/index.js';
@@ -339,7 +339,7 @@ export type JsonrpcInterface = {
  * Low-level methods are `blockInfo`, `internalTransactions`, `ethLogs`, `tokenTransfers`, `wethTransfers`,
  * `tokenInfo` and `txInfo`.
  */
-export class ArchiveNodeProvider implements Web3Provider {
+export class Web3Provider implements IWeb3Provider {
   constructor(private rpc: JsonrpcInterface) {}
 
   call(method: string, ...args: any[]) {

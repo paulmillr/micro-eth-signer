@@ -1,7 +1,7 @@
 import { keccak_256 } from '@noble/hashes/sha3';
 import { bytesToHex, concatBytes, hexToBytes } from '@noble/hashes/utils';
 import * as P from 'micro-packed';
-import { Web3CallArgs, Web3Provider, add0x, strip0x, omit, zip } from '../utils.js';
+import { Web3CallArgs, IWeb3Provider, add0x, strip0x, omit, zip } from '../utils.js';
 
 /*
 There is NO network code in the file. However, a user can pass
@@ -97,21 +97,6 @@ type ByteIdxType = '' | '1' | '2'  | '3'  | '4'  | '5'  | '6'  | '7'  | '8'  | '
   '10' | '11' | '12' | '13' | '14' | '15' | '16' | '17' | '18' | '19' | '20' | '21' |
   '22' | '23' | '24' | '25' | '26' | '27' | '28' | '29' | '30' | '31' | '32';
 type ByteType = `bytes${ByteIdxType}`;
-// Arrays
-// We support fixed size arrays up to bytes[999], 2d up to bytees[39][39]
-// 1-9
-type DigitsType = '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9';
-// 1-39
-type ThrityDigits = DigitsType | `${'1' | '2' | '3'}${'0' | DigitsType}`;
-// 1-99
-type TwoDigits = DigitsType | `${DigitsType}${'0' | DigitsType}`;
-// 1-999
-type ThreeDigits = TwoDigits | `${TwoDigits}${'0' | DigitsType}`;
-// For static 1d arrays: 1-999: string[], string[1], ..., string[999]
-type ArrType<T extends string> = `${T}[${'' | ThreeDigits}]`;
-// For 2d arrays 1-39 per dimension (99 is too slow, 9k types):
-// string[][], string[][1], ..., string[39][39]
-type Arr2dType<T extends string> = `${T}[${'' | ThrityDigits}][${'' | ThrityDigits}]`;
 
 // [{name: 'a', type: 'string'}, {name: 'b', type: 'uint'}] -> {a: string, b: bigint};
 export type MapTuple<T> =
@@ -127,25 +112,21 @@ export type MapTuple<T> =
       : unknown;
 
 // prettier-ignore
+export type GetType<T extends string> =
+  T extends `${infer Base}[]${infer Rest}` ? GetType<`${Base}${Rest}`>[] : // 'string[]' -> 'string'[]
+  T extends `${infer Base}[${number}]${infer Rest}` ? GetType<`${Base}${Rest}`>[] : // 'string[3]' -> 'string'[]
+  T extends 'address' ? string :
+  T extends 'string' ? string :
+  T extends 'bool' ? boolean :
+  T extends NumberType ? bigint :
+  T extends ByteType ? Uint8Array : 
+  unknown; // default
+
+// prettier-ignore
 export type MapType<T extends BaseComponent> =
-  T extends Component<'string'> ? string :
-  T extends Component<ArrType<'string'>> ? string[] :
-  T extends Component<Arr2dType<'string'>> ? string[][] :
-  T extends Component<'address'> ? string :
-  T extends Component<ArrType<'address'>> ? string[] :
-  T extends Component<Arr2dType<'address'>> ? string[][] :
-  T extends Component<'bool'> ? boolean :
-  T extends Component<ArrType<'bool'>> ? boolean[] :
-  T extends Component<Arr2dType<'bool'>> ? boolean[][] :
-  T extends Component<NumberType> ? bigint :
-  T extends Component<ArrType<NumberType>> ? bigint[] :
-  T extends Component<Arr2dType<NumberType>> ? bigint[][] :
-  T extends Component<ByteType> ? Uint8Array :
-  T extends Component<ArrType<ByteType>> ? Uint8Array[] :
-  T extends Component<Arr2dType<ByteType>> ? Uint8Array[][] :
   T extends Tuple<Array<Component<string>>> ? MapTuple<T['components']> :
-  // Default
-  unknown;
+  T extends Component<infer Type> ? GetType<Type> :
+  unknown; // default
 
 // Re-use ptr for len. u32 should be enough.
 const U256BE_LEN = PTR;
@@ -319,7 +300,7 @@ export type ContractTypeFilter<T> = {
 export type ContractType<T extends Array<FnArg>, N, F = ContractTypeFilter<T>> =
   F extends ArrLike<FunctionType & { name: string }>
     ? {
-        [K in F[number] as K['name']]: N extends Web3Provider
+        [K in F[number] as K['name']]: N extends IWeb3Provider
           ? ContractMethodNet<K>
           : ContractMethod<K>;
       }
@@ -353,9 +334,9 @@ is refered by index position. Unfortunately it is impossible to do args/kwargs, 
 */
 export function createContract<T extends ArrLike<FnArg>>(
   abi: T,
-  net: Web3Provider,
+  net: IWeb3Provider,
   contract?: string
-): ContractType<Writable<T>, Web3Provider>;
+): ContractType<Writable<T>, IWeb3Provider>;
 export function createContract<T extends ArrLike<FnArg>>(
   abi: T,
   net?: undefined,
@@ -363,7 +344,7 @@ export function createContract<T extends ArrLike<FnArg>>(
 ): ContractType<Writable<T>, undefined>;
 export function createContract<T extends ArrLike<FnArg>>(
   abi: T,
-  net?: Web3Provider,
+  net?: IWeb3Provider,
   contract?: string
 ): ContractType<Writable<T>, undefined> {
   // Find non-uniq function names so we can handle overloads

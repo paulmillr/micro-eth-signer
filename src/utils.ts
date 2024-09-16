@@ -16,7 +16,7 @@ export type Web3CallArgs = Partial<{
   tag: number | 'latest' | 'earliest' | 'pending';
 }>;
 
-export type Web3Provider = {
+export type IWeb3Provider = {
   ethCall: (args: Web3CallArgs) => Promise<string>;
   estimateGas: (args: Web3CallArgs) => Promise<bigint>;
   call: (method: string, ...args: any[]) => Promise<any>;
@@ -91,7 +91,7 @@ export function hexToNumber(hex: string): bigint {
   return hex ? BigInt(add0x(hex)) : 0n;
 }
 
-export function isObject(item: unknown): item is object {
+export function isObject(item: unknown): item is Record<string, any> {
   return item != null && typeof item === 'object';
 }
 

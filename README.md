@@ -5,11 +5,11 @@ Minimal library for Ethereum transactions, addresses and smart contracts.
 - 🔓 Secure: 3 deps, audited [noble](https://paulmillr.com/noble/) cryptography, no network code
 - 🔻 Tree-shakeable: unused code is excluded from your builds
 - 🔍 Reliable: 150MB of test vectors from EIPs, ethers and viem
-- ✍️ Create, sign and decode transactions using human-readable hints
-- 🌍 Fetch balances and history from an archive node
-- 🆎 Call smart contracts: Chainlink and Uniswap APIs are included
-- 🦺 Typescript-friendly ABI, RLP and SSZ decoding
-- 🪶 1200 lines for core functionality
+- ✍️ Transactions: create, sign, decode with human-friendly hints
+- 🆎 Execute contracts in JS: includes Chainlink and Uniswap APIs
+- 🦺 Typescript-friendly: ABI parsing, RLP, SSZ, KZG proof generation & verification
+- 🌍 Archive-node-friendly: fetch balances & history
+- 🪶 Lightweight: 1200 lines for core functionality
 
 Check out article [ZSTs, ABIs, stolen keys and broken legs](https://github.com/paulmillr/micro-eth-signer/discussions/20) about caveats of secure ABI parsing found during development of the library.
 
@@ -40,6 +40,7 @@ If you don't like NPM, a standalone [eth-signer.js](https://github.com/paulmillr
   - [RLP parsing](#rlp-parsing)
   - [SSZ parsing](#ssz-parsing)
 - Utilities
+  - [KZG EIP-4844 proofs](#kzg-eip-4844-proofs)
   - [Send whole account balance](#send-whole-account-balance)
   - [Sign and verify messages](#sign-and-verify-messages)
 - [Security](#security)
@@ -105,23 +106,23 @@ which works on top of fetch and implements killswitch, logging, concurrency limi
 
 #### Init network
 
-Most APIs (chainlink, uniswap) expect instance of ArchiveNodeProvider.
+Most APIs (chainlink, uniswap) expect instance of Web3Provider.
 The call stack would look like this:
 
-- `Chainlink` => `ArchiveNodeProvider` => `jsonrpc` => `fetch`
+- `Chainlink` => `Web3Provider` => `jsonrpc` => `fetch`
 
-To initialize ArchiveNodeProvider, do the following:
+To initialize Web3Provider, do the following:
 
 ```js
 // Requests are made with fetch(), a built-in method
 import { jsonrpc } from 'micro-ftch';
-import { ArchiveNodeProvider } from 'micro-eth-signer/net';
+import { Web3Provider } from 'micro-eth-signer/net';
 const RPC_URL = 'http://localhost:8545';
-const prov = new ArchiveNodeProvider(jsonrpc(fetch, RPC_URL));
+const prov = new Web3Provider(jsonrpc(fetch, RPC_URL));
 
 // Example using mewapi RPC
 const RPC_URL_2 = 'https://nodes.mewapi.io/rpc/eth';
-const prov2 = new ArchiveNodeProvider(
+const prov2 = new Web3Provider(
   jsonrpc(fetch, RPC_URL_2, { Origin: 'https://www.myetherwallet.com' })
 );
 ```
@@ -134,7 +135,7 @@ const block = await prov.blockInfo(await prov.height());
 console.log('current block', block.number, block.timestamp, block.baseFeePerGas);
 console.log('info for addr', addr, await prov.unspent(addr));
 
-// Other methods of ArchiveNodeProvider:
+// Other methods of Web3Provider:
 // blockInfo(block: number): Promise<BlockInfo>; // {baseFeePerGas, hash, timestamp...}
 // height(): Promise<number>;
 // internalTransactions(address: string, opts?: TraceOpts): Promise<any[]>;
@@ -371,6 +372,34 @@ const isValid = messenger.verify(sig, msg, address);
 ```
 
 ### Utilities
+
+#### KZG EIP-4844 proofs
+
+```ts
+import { KZG } from 'micro-eth-signer/kzg';
+import { trustedSetup } from 'trusted-setups'; // 400kb, 4-sec init
+import { trustedSetup as fastSetup } from 'trusted-setups/fast.js'; // 800kb, instant init
+
+const kzg = new KZG(trustedSetup);
+// kzg.computeProof(blob, z);
+// kzg.verifyBlobProof(blobs, commitments, proofs);
+```
+
+All methods:
+
+```ts
+type Blob = string | string[] | bigint[];
+type Scalar = string | bigint;
+export declare class KZG {
+  constructor(setup: SetupData);
+  computeProof(blob: Blob, z: bigint | string): [string, string];
+  verifyProof(commitment: string, z: Scalar, y: Scalar, proof: string): boolean;
+  blobToKzgCommitment(blob: Blob): string;
+  computeBlobProof(blob: Blob, commitment: string): string;
+  verifyBlobProof(blob: Blob, commitment: string, proof: string): boolean;
+  verifyBlobProofBatch(blobs: string[], commitments: string[], proofs: string[]): boolean;
+}
+```
 
 #### Send whole account balance
 

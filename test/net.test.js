@@ -2,7 +2,7 @@ import { deepStrictEqual } from 'node:assert';
 import { describe, should } from 'micro-should';
 import { tokenFromSymbol } from '../esm/abi/index.js';
 import {
-  ArchiveNodeProvider,
+  Web3Provider,
   calcTransfersDiff,
   ENS,
   Chainlink,
@@ -26,7 +26,7 @@ const getKey = (url, opt) => JSON.stringify({ url: NODE_URL, opt });
 function initProv(replayJson) {
   const replay = mftch.replayable(fetch, replayJson, { getKey, offline: true });
   const provider = mftch.jsonrpc(replay, NODE_URL);
-  const archive = new ArchiveNodeProvider(provider);
+  const archive = new Web3Provider(provider);
   return archive;
 }
 
@@ -198,7 +198,7 @@ describe('Network', () => {
       offline: true,
     });
     const ftch = mftch.ftch(replay, { concurrencyLimit: 1 });
-    const archive = new ArchiveNodeProvider(mftch.jsonrpc(ftch, 'http://SOME_NODE/'));
+    const archive = new Web3Provider(mftch.jsonrpc(ftch, 'http://SOME_NODE/'));
     const transfers = (
       await archive.transfers(addr, {
         limitLogs: 10_000,
@@ -218,7 +218,7 @@ describe('Network', () => {
       offline: true,
     });
     const ftch = mftch.ftch(replay, { concurrencyLimit: 1 });
-    const archive = new ArchiveNodeProvider(
+    const archive = new Web3Provider(
       mftch.jsonrpc(ftch, 'http://SOME_NODE/', { batchSize: 5 })
     );
     // 2061s 566 (faster than without batch)

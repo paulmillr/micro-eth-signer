@@ -1,6 +1,6 @@
 import { concatBytes } from '@noble/hashes/utils';
 import { ContractInfo, createContract } from '../abi/decoder.js';
-import { Web3Provider, ethHex } from '../utils.js';
+import { IWeb3Provider, ethHex } from '../utils.js';
 import { default as UNISWAP_V3_ROUTER, UNISWAP_V3_ROUTER_CONTRACT } from '../abi/uniswap-v3.js';
 import * as uni from './uniswap-common.js';
 
@@ -81,7 +81,7 @@ function basePaths(a: string, b: string, exactOutput: boolean = false) {
 }
 
 async function bestPath(
-  net: Web3Provider,
+  net: IWeb3Provider,
   a: string,
   b: string,
   amountIn?: bigint,

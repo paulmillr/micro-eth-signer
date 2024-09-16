@@ -1,4 +1,4 @@
-import { Web3Provider, ethHex, weieth, isBytes, createDecimal } from '../utils.js';
+import { IWeb3Provider, ethHex, weieth, isBytes, createDecimal } from '../utils.js';
 import { addr } from '../index.js';
 import { tokenFromSymbol } from '../abi/index.js';
 
@@ -124,7 +124,7 @@ export abstract class UniswapAbstract {
     outputAmount?: bigint,
     opt?: { slippagePercent: number }
   ): any;
-  constructor(public net: Web3Provider) {}
+  constructor(public net: IWeb3Provider) {}
   // private async coinInfo(netName: string) {
   //   if (!validateAddr(netName)) return;
   //   if (netName === 'eth') return { symbol: 'ETH', decimals: 18 };

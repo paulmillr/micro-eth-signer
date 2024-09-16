@@ -53,10 +53,6 @@
       "import": "./esm/kzg.js",
       "require": "./kzg.js"
     },
-    "./kzg-mainnet": {
-      "import": "./esm/kzg-mainnet.js",
-      "require": "./kzg-mainnet.js"
-    },
     "./net": {
       "import": "./esm/net/index.js",
       "require": "./net/index.js"

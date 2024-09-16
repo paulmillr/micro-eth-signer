@@ -1,5 +1,6 @@
 import * as P from 'micro-packed';
 import * as abi from './abi/decoder.js';
+import * as typed from './typed-data.js';
 // Should not be included in npm package, just for test of typescript compilation
 const assertType = <T>(_value: T) => {};
 const BytesVal = new Uint8Array();
@@ -191,3 +192,97 @@ assertType<{
     }) => (string | null)[];
   };
 }>(abi.events(TRANSFER_EVENT));
+
+// Typed data
+const types = {
+  Person: [
+    { name: 'name', type: 'string' },
+    { name: 'wallet', type: 'address' },
+  ] as const,
+  Mail: [
+    { name: 'from', type: 'Person' },
+    { name: 'to', type: 'Person' },
+    { name: 'contents', type: 'string' },
+  ] as const,
+  Group: [
+    { name: 'members', type: 'Person[]' },
+    { name: 'owner', type: 'Person' },
+  ] as const,
+  Complex0: [
+    { name: 'data', type: 'string[][]' }, // Complex array type
+    { name: 'info', type: 'Mail' },
+  ] as const,
+  Complex1: [
+    { name: 'data', type: 'string[][][]' }, // Complex array type
+    { name: 'info', type: 'Mail' },
+  ] as const,
+  Complex: [
+    { name: 'data', type: 'string[][3][]' }, // Complex array type
+    { name: 'info', type: 'Mail' },
+  ] as const,
+} as const;
+
+assertType<{
+  from?: { name: string; wallet: string };
+  to?: { name: string; wallet: string };
+  contents: string;
+}>(1 as any as typed.GetType<typeof types, 'Mail'>);
+
+assertType<{
+  name: string;
+  wallet: string;
+}>(1 as any as typed.GetType<typeof types, 'Person'>);
+
+assertType<{
+  members: ({ name: string; wallet: string } | undefined)[];
+  owner?: { name: string; wallet: string };
+}>(1 as any as typed.GetType<typeof types, 'Group'>);
+
+assertType<{
+  data: string[][];
+  info?: {
+    from?: { name: string; wallet: string };
+    to?: { name: string; wallet: string };
+    contents: string;
+  };
+}>(1 as any as typed.GetType<typeof types, 'Complex0'>);
+
+assertType<{
+  data: string[][][];
+  info?: {
+    from?: { name: string; wallet: string };
+    to?: { name: string; wallet: string };
+    contents: string;
+  };
+}>(1 as any as typed.GetType<typeof types, 'Complex1'>);
+
+assertType<{
+  data: string[][][];
+  info?: {
+    from?: { name: string; wallet: string };
+    to?: { name: string; wallet: string };
+    contents: string;
+  };
+}>(1 as any as typed.GetType<typeof types, 'Complex'>);
+
+const recursiveTypes = {
+  Node: [
+    { name: 'value', type: 'string' },
+    { name: 'children', type: 'Node[]' },
+  ] as const,
+} as const;
+
+type NodeType = typed.GetType<typeof recursiveTypes, 'Node'>;
+
+assertType<{
+  value: string;
+  children: (NodeType | undefined)[];
+}>(1 as any as typed.GetType<typeof recursiveTypes, 'Node'>);
+
+// const e = typed.encoder(types);
+// e.encodeData('Person', { name: 'test', wallet: 'x' });
+// e.sign({ primaryType: 'Person', message: { name: 'test', wallet: 'x' }, domain: {} }, '');
+
+// e.encodeData('Person', { name: 'test', wallet: 1n }); // should fail
+// e.sign({ primaryType: 'Person', message: {name: 'test'}, domain: {} }, ''); // should fail
+// e.sign({ primaryType: 'Person', message: {name: 'test', wallet: '', s: 3}, domain: {} }, ''); // should fail

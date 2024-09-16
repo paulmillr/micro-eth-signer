@@ -1,6 +1,6 @@
 import { keccak_256 } from '@noble/hashes/sha3';
 import { concatBytes, hexToBytes } from '@noble/hashes/utils';
-import { Web3Provider, ethHex } from '../utils.js';
+import { IWeb3Provider, ethHex } from '../utils.js';
 import { ContractInfo, createContract } from '../abi/decoder.js';
 import { default as UNISWAP_V2_ROUTER, UNISWAP_V2_ROUTER_CONTRACT } from '../abi/uniswap-v2.js';
 import * as uni from './uniswap-common.js';
@@ -32,7 +32,7 @@ export function pairAddress(a: string, b: string, factory: string = FACTORY_ADDR
   return create2(ethHex.decode(factory), keccak_256(data), INIT_CODE_HASH);
 }
 
-async function reserves(net: Web3Provider, a: string, b: string): Promise<[bigint, bigint]> {
+async function reserves(net: IWeb3Provider, a: string, b: string): Promise<[bigint, bigint]> {
   a = uni.wrapContract(a);
   b = uni.wrapContract(b);
   const contract = createContract(PAIR_CONTRACT, net, pairAddress(a, b));
@@ -66,7 +66,7 @@ export function amount(
 export type Path = { path: string[]; amountIn: bigint; amountOut: bigint };
 
 async function bestPath(
-  net: Web3Provider,
+  net: IWeb3Provider,
   tokenA: string,
   tokenB: string,
   amountIn?: bigint,

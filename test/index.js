@@ -9,5 +9,7 @@ import './ens.test.js';
 import './uniswap.test.js';
 import './net.test.js';
 import './ssz.test.js';
+import './kzg.test.js';
+import './typed-data.test.js';
 
 should.run();

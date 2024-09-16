@@ -1,7 +1,7 @@
 import { keccak_256 } from '@noble/hashes/sha3';
 import { concatBytes } from '@noble/hashes/utils';
 import { createContract } from '../abi/decoder.js';
-import { Web3Provider, strip0x } from '../utils.js';
+import { IWeb3Provider, strip0x } from '../utils.js';
 
 // No support for IDN names
 export function namehash(address: string): Uint8Array {
@@ -38,7 +38,7 @@ export default class ENS {
     },
   ] as const;
 
-  constructor(readonly net: Web3Provider) {}
+  constructor(readonly net: IWeb3Provider) {}
 
   async getResolver(name: string): Promise<string | undefined> {
     const contract = createContract(ENS.REGISTRY_CONTRACT, this.net, ENS.REGISTRY);
