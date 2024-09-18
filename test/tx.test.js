@@ -1,9 +1,9 @@
 import { deepStrictEqual, throws } from 'node:assert';
 import { inspect } from 'node:util';
 import { describe, should } from 'micro-should';
-import { addr, Transaction, messenger } from '../esm/index.js';
+import { addr, Transaction, messenger, authorization } from '../esm/index.js';
 import { RawTx, RlpTx, __tests } from '../esm/tx.js';
-import { add0x, createDecimal, ethHex, formatters } from '../esm/utils.js';
+import { add0x, createDecimal, ethHex, formatters, weieth } from '../esm/utils.js';
 import { default as TX_VECTORS } from './vectors/transactions.json' with { type: 'json' };
 import { default as EIP155_VECTORS } from './vectors/eips/eip155.json' with { type: 'json' };
 import * as ethTests from './vectors/eth-tests-tx-vectors.js';
@@ -194,6 +194,75 @@ const convertTx = (raw) => {
 };
 
 describe('Transactions', () => {
+  describe('EIP7702', () => {
+    should('basic', () => {
+      const tx = `0x04f8e3018203118080809470997970c51812dc3a010c7d01b50e0d17dc79c8880de0b6b3a764000080c0f8baf85c0194fba3912ca04dd458c843e2ee08967fc04f3579c28201a480a060fdd29ff912ce880cd3edaf9f932dc61d3dae823ea77e0323f94adb9f6a72fea060fdd29ff912ce880cd3edaf9f932dc61d3dae823ea77e0323f94adb9f6a72fef85a0a9400000000000000000000000000000000000000004501a060fdd29ff912ce880cd3edaf9f932dc61d3dae823ea77e0323f94adb9f6a72fea060fdd29ff912ce880cd3edaf9f932dc61d3dae823ea77e0323f94adb9f6a72fe`;
+      const authList = [
+        {
+          address: '0xFBA3912Ca04dd458c843e2EE08967fC04f3579c2',
+          chainId: 1n,
+          nonce: 420n,
+          r: 0x60fdd29ff912ce880cd3edaf9f932dc61d3dae823ea77e0323f94adb9f6a72fen,
+          s: 0x60fdd29ff912ce880cd3edaf9f932dc61d3dae823ea77e0323f94adb9f6a72fen,
+          yParity: 0,
+        },
+        {
+          address: '0x0000000000000000000000000000000000000000',
+          chainId: 10n,
+          nonce: 69n,
+          r: 0x60fdd29ff912ce880cd3edaf9f932dc61d3dae823ea77e0323f94adb9f6a72fen,
+          s: 0x60fdd29ff912ce880cd3edaf9f932dc61d3dae823ea77e0323f94adb9f6a72fen,
+          yParity: 1,
+        },
+      ];
+      // Parse actual tx
+      const parsed = Transaction.fromHex(tx);
+      deepStrictEqual(parsed.type, 'eip7702');
+      deepStrictEqual(parsed.raw.to.toLowerCase(), '0x70997970c51812dc3a010c7d01b50e0d17dc79c8');
+      deepStrictEqual(parsed.raw.value, weieth.decode('1'));
+      deepStrictEqual(parsed.raw.nonce, 785n);
+      deepStrictEqual(parsed.raw.authorizationList, authList);
+      // Re-create tx from raw value
+      const created = Transaction.prepare(
+        {
+          type: 'eip7702',
+          to: '0x70997970c51812dc3a010c7d01b50e0d17dc79c8',
+          value: weieth.decode('1'),
+          nonce: 785n,
+          maxFeePerGas: 0n,
+          gasLimit: 0n,
+          maxPriorityFeePerGas: 0n,
+          authorizationList: authList,
+        },
+        false
+      );
+      deepStrictEqual(created.toHex(false), tx);
+      // Emulate signing
+      created.raw.r = 0x60fdd29ff912ce880cd3edaf9f932dc61d3dae823ea77e0323f94adb9f6a72fen;
+      created.raw.s = 0x60fdd29ff912ce880cd3edaf9f932dc61d3dae823ea77e0323f94adb9f6a72fen;
+      created.raw.yParity = 1;
+      created.isSigned = true;
+      deepStrictEqual(
+        created.toHex(true),
+        `0x04f90126018203118080809470997970c51812dc3a010c7d01b50e0d17dc79c8880de0b6b3a764000080c0f8baf85c0194fba3912ca04dd458c843e2ee08967fc04f3579c28201a480a060fdd29ff912ce880cd3edaf9f932dc61d3dae823ea77e0323f94adb9f6a72fea060fdd29ff912ce880cd3edaf9f932dc61d3dae823ea77e0323f94adb9f6a72fef85a0a9400000000000000000000000000000000000000004501a060fdd29ff912ce880cd3edaf9f932dc61d3dae823ea77e0323f94adb9f6a72fea060fdd29ff912ce880cd3edaf9f932dc61d3dae823ea77e0323f94adb9f6a72fe01a060fdd29ff912ce880cd3edaf9f932dc61d3dae823ea77e0323f94adb9f6a72fea060fdd29ff912ce880cd3edaf9f932dc61d3dae823ea77e0323f94adb9f6a72fe`
+      );
+      created.raw.yParity = 0;
+      deepStrictEqual(
+        created.toHex(true),
+        `0x04f90126018203118080809470997970c51812dc3a010c7d01b50e0d17dc79c8880de0b6b3a764000080c0f8baf85c0194fba3912ca04dd458c843e2ee08967fc04f3579c28201a480a060fdd29ff912ce880cd3edaf9f932dc61d3dae823ea77e0323f94adb9f6a72fea060fdd29ff912ce880cd3edaf9f932dc61d3dae823ea77e0323f94adb9f6a72fef85a0a9400000000000000000000000000000000000000004501a060fdd29ff912ce880cd3edaf9f932dc61d3dae823ea77e0323f94adb9f6a72fea060fdd29ff912ce880cd3edaf9f932dc61d3dae823ea77e0323f94adb9f6a72fe80a060fdd29ff912ce880cd3edaf9f932dc61d3dae823ea77e0323f94adb9f6a72fea060fdd29ff912ce880cd3edaf9f932dc61d3dae823ea77e0323f94adb9f6a72fe`
+      );
+    });
+    should('sign authorization', () => {
+      const privateKey = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80';
+      const auth = {
+        address: '0xFBA3912Ca04dd458c843e2EE08967fC04f3579c2',
+        chainId: 1n,
+        nonce: 0n,
+      };
+      const signed = authorization.sign(auth, privateKey);
+      deepStrictEqual(authorization.getAuthority(signed), addr.fromPrivateKey(privateKey));
+    });
+  });
   describe('Utils', () => {
     should('legacySig', () => {
       const { legacySig } = __tests;
@@ -491,7 +560,6 @@ describe('Transactions', () => {
             d.maxFeePerBlobGas = 0n;
           if (['eip4844'].includes(etx.type) && d.blobVersionedHashes === undefined)
             d.blobVersionedHashes = [];
-          if (d.accessList) d.accessList = d.accessList.map((i) => [i.address, i.storageKeys]);
           const c = __tests.TxVersions[etx.type];
           // remove fields from wrong version
           for (const k in d) {
@@ -501,7 +569,7 @@ describe('Transactions', () => {
           if (d.chainId === 30n) {
             d.to = d.to.toLowerCase();
             if (d.accessList) {
-              for (const item of d.accessList) item[0] = item[0].toLowerCase();
+              for (const item of d.accessList) item.address = item.address.toLowerCase();
             }
           }
           const preparedTx = Transaction.prepare(d, false);
@@ -557,7 +625,6 @@ describe('Transactions', () => {
           d.maxFeePerBlobGas = 0n;
         if (['eip4844'].includes(etx.type) && d.blobVersionedHashes === undefined)
           d.blobVersionedHashes = [];
-        if (d.accessList) d.accessList = d.accessList.map((i) => [i.address, i.storageKeys]);
         const preparedTx = Transaction.prepare(d, false);
         deepStrictEqual(preparedTx.toHex(false), unsigned);
         const sig = etx.signBy(vtx.privateKey);

@@ -1,57 +1,51 @@
 /*! micro-eth-signer - MIT License (c) 2021 Paul Miller (paulmillr.com) */
 import { secp256k1 } from '@noble/curves/secp256k1';
 import { keccak_256 } from '@noble/hashes/sha3';
-import { bytesToHex } from '@noble/hashes/utils';
+import { bytesToHex, concatBytes } from '@noble/hashes/utils';
 import { UnwrapCoder } from 'micro-packed';
 import { addr } from './address.js';
 // prettier-ignore
 import {
   TxType, TxVersions, TxCoder, RawTx,
   decodeLegacyV, removeSig, sortRawData, validateFields,
+  AuthorizationItem, AuthorizationRequest, authorizationRequest
 } from './tx.js';
+import { RLP } from './rlp.js';
 // prettier-ignore
 import {
-  amounts, astr, add0x, ethHex, ethHexNoLeadingZero, strip0x, weieth, weigwei, cloneDeep,
+  amounts, astr, ethHex, ethHexNoLeadingZero, strip0x, weieth, weigwei, cloneDeep,
 } from './utils.js';
 export { addr, weigwei, weieth };
 
 // The file exports Transaction, but actual (RLP) parsing logic is done in `./tx`
 
 /**
- * Basic message signing & verification. Matches ethers and etherscan behavior.
- * TODO: research whether EIP-191 and EIP-712 are popular, add them.
+ * EIP-7702 Authorizations
  */
-export const messenger = {
-  sign(msg: string, privateKey: string, extraEntropy = undefined) {
-    astr(msg);
-    astr(privateKey);
-    const hash = keccak_256(msg);
-    const sig = secp256k1.sign(hash, ethHex.decode(privateKey), { extraEntropy });
-    const end = sig.recovery === 0 ? '1b' : '1c';
-    return add0x(sig.toCompactHex() + end);
+export const authorization = {
+  _getHash(req: AuthorizationRequest) {
+    const msg = RLP.encode(authorizationRequest.decode(req));
+    return keccak_256(concatBytes(new Uint8Array([0x05]), msg));
   },
-  verify(signature: string, msg: string, address: string) {
-    astr(signature);
-    astr(msg);
-    astr(address);
-    signature = strip0x(signature);
-    if (signature.length !== 65 * 2) throw new Error('invalid signature length');
-    const sigh = signature.slice(0, -2);
-    const end = signature.slice(-2);
-    if (!['1b', '1c'].includes(end)) throw new Error('invalid recovery bit');
-    const sig = secp256k1.Signature.fromCompact(sigh).addRecoveryBit(end === '1b' ? 0 : 1);
-    const hash = keccak_256(msg);
-    const pub = sig.recoverPublicKey(hash).toHex(false);
-    const recoveredAddr = addr.fromPublicKey(pub);
-    return recoveredAddr === address && secp256k1.verify(sig, hash, pub);
+  sign(req: AuthorizationRequest, privateKey: string): AuthorizationItem {
+    astr(privateKey);
+    const sig = secp256k1.sign(this._getHash(req), ethHex.decode(privateKey));
+    return { ...req, r: sig.r, s: sig.s, yParity: sig.recovery };
+  },
+  getAuthority(item: AuthorizationItem) {
+    const { r, s, yParity, ...req } = item;
+    const hash = this._getHash(req);
+    const sig = new secp256k1.Signature(r, s).addRecoveryBit(yParity);
+    const point = sig.recoverPublicKey(hash);
+    return addr.fromPublicKey(point.toHex(false));
   },
 };
-
 // Transaction-related utils.
 
 // 4 fields are required. Others are pre-filled with default values.
 const DEFAULTS = {
   accessList: [], // needs to be .slice()-d to create new reference
+  authorizationList: [],
   chainId: 1n, // mainnet
   data: '',
   gasLimit: 21000n, // TODO: investigate if limit is smaller in eip4844 txs
@@ -128,7 +122,7 @@ export class Transaction<T extends TxType> {
     for (const f in DEFAULTS) {
       if (f !== 'type' && fields.has(f)) {
         raw[f] = DEFAULTS[f as DefaultField];
-        if (f === 'accessList') raw[f] = cloneDeep(raw[f]);
+        if (['accessList', 'authorizationList'].includes(f)) raw[f] = cloneDeep(raw[f]);
       }
     }
     // Copy all fields, so we can validate unexpected ones.

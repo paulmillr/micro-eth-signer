@@ -1,13 +1,7 @@
 import { deepStrictEqual } from 'node:assert';
 import { describe, should } from 'micro-should';
 import { tokenFromSymbol } from '../esm/abi/index.js';
-import {
-  Web3Provider,
-  calcTransfersDiff,
-  ENS,
-  Chainlink,
-  UniswapV3,
-} from '../esm/net/index.js';
+import { Web3Provider, calcTransfersDiff, ENS, Chainlink, UniswapV3 } from '../esm/net/index.js';
 import * as mftch from 'micro-ftch';
 import { weieth, numberTo0xHex } from '../esm/utils.js';
 // These real network responses from real nodes, captured by replayable
@@ -29,6 +23,15 @@ function initProv(replayJson) {
   const archive = new Web3Provider(provider);
   return archive;
 }
+// API change workaround
+const fixTx = (tx) => {
+  if (tx.info.accessList)
+    tx.info.accessList = tx.info.accessList.map(([address, storageKeys]) => ({
+      address,
+      storageKeys,
+    }));
+  return tx;
+};
 
 describe('Network', () => {
   should('ENS', async () => {
@@ -115,7 +118,7 @@ describe('Network', () => {
     );
     deepStrictEqual(
       await tx.txInfo('0xba296ea35b5ff390b8c180ae8f536159dc8723871b43ed7f80e0c218cf171a05'),
-      NET_TX_VECTORS.blobTx
+      fixTx(NET_TX_VECTORS.blobTx)
     );
     deepStrictEqual(
       await tx.txInfo('0x86c5a4350c973cd990105ae461522d01aa313fecbe0a67727e941cd9cee28997'),
@@ -218,9 +221,7 @@ describe('Network', () => {
       offline: true,
     });
     const ftch = mftch.ftch(replay, { concurrencyLimit: 1 });
-    const archive = new Web3Provider(
-      mftch.jsonrpc(ftch, 'http://SOME_NODE/', { batchSize: 5 })
-    );
+    const archive = new Web3Provider(mftch.jsonrpc(ftch, 'http://SOME_NODE/', { batchSize: 5 }));
     // 2061s 566 (faster than without batch)
     const transfers = (
       await archive.transfers(addr, {

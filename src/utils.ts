@@ -100,7 +100,9 @@ export function astr(str: unknown) {
 }
 
 export function cloneDeep<T>(obj: T): T {
-  if (Array.isArray(obj)) {
+  if (obj instanceof Uint8Array) {
+    return Uint8Array.from(obj) as T;
+  } else if (Array.isArray(obj)) {
     return obj.map(cloneDeep) as unknown as T;
   } else if (typeof obj === 'bigint') {
     return BigInt(obj) as unknown as T;

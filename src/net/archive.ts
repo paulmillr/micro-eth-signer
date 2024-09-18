@@ -1,6 +1,6 @@
 import { IWeb3Provider, Web3CallArgs, hexToNumber, amounts } from '../utils.js';
 import { Transaction } from '../index.js';
-import { TxVersions, legacySig } from '../tx.js';
+import { TxVersions, legacySig, AccessList } from '../tx.js';
 import { ContractInfo, createContract, events, ERC20, WETH } from '../abi/index.js';
 
 /*
@@ -104,7 +104,7 @@ export type TxInfo = {
   blockHash: string;
   blockNumber: number;
   hash: string;
-  accessList?: [string, string[]][];
+  accessList?: AccessList;
   transactionIndex: number;
   type: number;
   nonce: bigint;
@@ -263,9 +263,6 @@ function fixTxInfo(info: TxInfo) {
   ] as const) {
     if (info[i] !== undefined && info[i] !== null) info[i] = BigInt(info[i]!);
   }
-  // Same API as Transaction, so we can re-create easily
-  if (info.accessList)
-    info.accessList = info.accessList.map((i: any) => [i.address, i.storageKeys]);
   return info;
 }
 

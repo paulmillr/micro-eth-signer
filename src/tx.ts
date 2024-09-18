@@ -1,7 +1,7 @@
 import * as P from 'micro-packed';
 import { addr } from './address.js';
 import { RLP } from './rlp.js';
-import { isBytes, amounts, ethHex } from './utils.js';
+import { isObject, amounts, ethHex, isBytes } from './utils.js';
 
 // Transaction parsers
 
@@ -64,43 +64,15 @@ function assertYParityValid(elm: number) {
 }
 // We don't know chainId when specific field coded yet.
 const addrCoder = ethHex;
-
-// Parses eip2930 access lists:
-// ["0xde0b295669a9fd93d5f28d9ec85e40f4cb697bae", [
-//    "0x0000000000000000000000000000000000000000000000000000000000000003",
-//    "0x0000000000000000000000000000000000000000000000000000000000000007"
-// ]]
-export type AccessList = [string, string[]][];
-export type BytesAccessList = [Uint8Array, Uint8Array[]][];
-function accessListParser<T, K>(coder: (a: T) => K, mapper: (a: T) => K) {
-  return (data: [T, T[]][]) => {
-    if (!Array.isArray(data)) throw new Error('access list must be an array');
-    return data.map((pair) => {
-      if (!Array.isArray(pair) || pair.length !== 2)
-        throw new Error('access list must have 2 elements');
-      return [coder(pair[0]), pair[1].map(mapper)];
-    });
-  };
-}
-
-// Parses eip4844 blobs:
-// ["0x0000000000000000000000000000000000000000000000000000000000000003"...]
-function blobParser<T, K>(fn: (item: T) => K) {
-  return (data: T[]) => {
-    if (!Array.isArray(data)) throw new Error('blobVersionedHashes must be an array');
-    return data.map(fn);
-  };
-}
-
-function ensure32<T>(b: any & { length: number }): T {
-  if (b.length !== 32) throw new Error('slot must be 32 bytes');
+// Bytes32: VersionedHash, AccessListKey
+function ensure32(b: Uint8Array): Uint8Array {
+  if (!isBytes(b) || b.length !== 32) throw new Error('expected 32 bytes');
   return b;
 }
-function ensureBlob(hash: Uint8Array): Uint8Array {
-  if (!isBytes(hash) || hash.length !== 32)
-    throw new Error('blobVersionedHashes must contain 32-byte Uint8Array-s');
-  return hash;
-}
+const Bytes32: P.Coder<Uint8Array, string> = {
+  encode: (from) => ethHex.encode(ensure32(from)),
+  decode: (to) => ensure32(ethHex.decode(to)),
+};
 
 type VRS = Partial<{ v: bigint; r: bigint; s: bigint }>;
 type YRS = Partial<{ chainId: bigint; yParity: number; r: bigint; s: bigint }>;
@@ -155,6 +127,72 @@ export const legacySig = {
 
 const U64BE = P.coders.reverse(P.bigint(8, false, false, false));
 const U256BE = P.coders.reverse(P.bigint(32, false, false, false));
+
+// Small coder utils
+// TODO: seems generic enought for packed? or RLP (seems useful for structured encoding/decoding of RLP stuff)
+// Basic array coder
+const array = <F, T>(coder: P.Coder<F, T>): P.Coder<F[], T[]> => ({
+  encode(from: F[]) {
+    if (!Array.isArray(from)) throw new Error('expected array');
+    return from.map((i) => coder.encode(i));
+  },
+  decode(to: T[]) {
+    if (!Array.isArray(to)) throw new Error('expected array');
+    return to.map((i) => coder.decode(i));
+  },
+});
+// tuple -> struct
+const struct = <
+  Fields extends Record<string, P.Coder<any, any>>,
+  FromTuple extends {
+    [K in keyof Fields]: Fields[K] extends P.Coder<infer F, any> ? F : never;
+  }[keyof Fields][],
+  ToObject extends { [K in keyof Fields]: Fields[K] extends P.Coder<any, infer T> ? T : never },
+>(
+  fields: Fields
+): P.Coder<FromTuple, ToObject> => ({
+  encode(from: FromTuple) {
+    if (!Array.isArray(from)) throw new Error('expected array');
+    const fNames = Object.keys(fields);
+    if (from.length !== fNames.length) throw new Error('wrong array length');
+    return Object.fromEntries(fNames.map((f, i) => [f, fields[f].encode(from[i])])) as ToObject;
+  },
+  decode(to: ToObject): FromTuple {
+    const fNames = Object.keys(fields);
+    if (!isObject(to)) throw new Error('wrong struct object');
+    return fNames.map((i) => fields[i].decode(to[i])) as FromTuple;
+  },
+});
+
+// U256BE in geth. But it is either 0 or 1. TODO: is this good enough?
+const yParityCoder = P.coders.reverse(
+  P.validate(P.int(1, false, false, false), (elm) => {
+    assertYParityValid(elm);
+    return elm;
+  })
+);
+type CoderOutput<F> = F extends P.Coder<any, infer T> ? T : never;
+
+const accessListItem = struct({ address: addrCoder, storageKeys: array(Bytes32) });
+export type AccessList = CoderOutput<typeof accessListItem>[];
+
+export const authorizationRequest = struct({
+  chainId: U256BE,
+  address: addrCoder,
+  nonce: U64BE,
+});
+// [chain_id, address, nonce, y_parity, r, s]
+const authorizationItem = struct({
+  chainId: U256BE,
+  address: addrCoder,
+  nonce: U64BE,
+  yParity: yParityCoder,
+  r: U256BE,
+  s: U256BE,
+});
+export type AuthorizationItem = CoderOutput<typeof authorizationItem>;
+export type AuthorizationRequest = CoderOutput<typeof authorizationRequest>;
+
 /**
  * Field types, matching geth. Either u64 or u256.
  */
@@ -168,25 +206,14 @@ const coders = {
   to: addrCoder,
   value: U256BE, // "Decimal" coder can be used, but it's harder to work with
   data: ethHex,
-  accessList: {
-    decode: accessListParser(addrCoder.decode, (k) => ensure32(ethHex.decode(k))),
-    encode: accessListParser(addrCoder.encode, (k) => ethHex.encode(ensure32(k))),
-  } as P.Coder<BytesAccessList, AccessList>,
+  accessList: array(accessListItem),
   maxFeePerBlobGas: U256BE,
-  blobVersionedHashes: {
-    decode: blobParser((b) => ensureBlob(ethHex.decode(b))),
-    encode: blobParser((b) => ethHex.encode(ensureBlob(b))),
-  } as P.Coder<Uint8Array[], string[]>,
-  // U256BE in geth. But it is either 0 or 1. TODO: is this good enough?
-  yParity: P.coders.reverse(
-    P.validate(P.int(1, false, false, false), (elm) => {
-      assertYParityValid(elm);
-      return elm;
-    })
-  ),
+  blobVersionedHashes: array(Bytes32),
+  yParity: yParityCoder,
   v: U256BE,
   r: U256BE,
   s: U256BE,
+  authorizationList: array(authorizationItem),
 };
 type Coders = typeof coders;
 type CoderName = keyof Coders;
@@ -222,10 +249,13 @@ const txStruct = <T extends readonly CoderName[], ST extends readonly CoderName[
 ): FieldCoder<
   OptFields<{ [K in T[number]]: FieldType<Coders[K]> }, { [K in ST[number]]: FieldType<Coders[K]> }>
 > => {
+  const allFields = reqf.concat(optf);
   // Check that all fields have known coders
-  reqf.concat(optf).forEach((f) => {
+  allFields.forEach((f) => {
     if (!coders.hasOwnProperty(f)) throw new Error(`coder for field ${f} is not defined`);
   });
+  const reqS = struct(Object.fromEntries(reqf.map((i) => [i, coders[i]])));
+  const allS = struct(Object.fromEntries(allFields.map((i) => [i, coders[i]])));
   // e.g. eip1559 txs have valid lengths of 9 or 12 (unsigned / signed)
   const reql = reqf.length;
   const optl = reql + optf.length;
@@ -235,13 +265,10 @@ const txStruct = <T extends readonly CoderName[], ST extends readonly CoderName[
   // We walk through all indexes in proper order.
   const fcoder: any = P.wrap({
     encodeStream(w, raw: Record<string, any>) {
-      // @ts-ignore TODO: fix type
-      const values = reqf.map((f) => coders[f].decode(raw[f]));
       // If at least one optional key is present, we add whole optional block
-      if (optf.some((f) => raw.hasOwnProperty(f)))
-        // @ts-ignore TODO: fix type
-        optf.forEach((f) => values.push(coders[f].decode(raw[f])));
-      RLP.encodeStream(w, values);
+      const hasOptional = optf.some((f) => raw.hasOwnProperty(f));
+      const sCoder = hasOptional ? allS : reqS;
+      RLP.encodeStream(w, sCoder.decode(raw));
     },
     decodeStream(r): Record<string, any> {
       const decoded = RLP.decodeStream(r);
@@ -249,26 +276,17 @@ const txStruct = <T extends readonly CoderName[], ST extends readonly CoderName[
       const length = decoded.length;
       if (length !== reql && length !== optl)
         throw new Error(`txStruct: wrong inner length=${length}`);
-      const raw = Object.fromEntries(
-        // @ts-ignore TODO: fix type
-        reqf.map((f, i) => [f, coders[f].encode(decoded[i])])
-      );
-      if (length === optl) {
-        if (optf.every((_, i) => isEmpty(decoded[optFieldAt(i)])))
-          throw new Error('all optional fields empty');
-        const rawSig = Object.fromEntries(
-          // @ts-ignore TODO: fix type
-          optf.map((f, i) => [f, coders[f].encode(decoded[optFieldAt(i)])])
-        );
-        Object.assign(raw, rawSig); // mutate raw
-      }
-      return raw;
+      const sCoder = length === optl ? allS : reqS;
+      if (length === optl && optf.every((_, i) => isEmpty(decoded[optFieldAt(i)])))
+        throw new Error('all optional fields empty');
+      // @ts-ignore TODO: fix type (there can be null in RLP)
+      return sCoder.encode(decoded);
     },
   });
 
   fcoder.fields = reqf;
   fcoder.optionalFields = optf;
-  fcoder.setOfAllFields = new Set(reqf.concat(optf, ['type'] as any));
+  fcoder.setOfAllFields = new Set(allFields.concat(['type'] as any));
   return fcoder;
 };
 
@@ -316,12 +334,18 @@ const eip4844 = txStruct([
   'chainId', 'nonce', 'maxPriorityFeePerGas', 'maxFeePerGas', 'gasLimit', 'to', 'value', 'data', 'accessList',
   'maxFeePerBlobGas', 'blobVersionedHashes'] as const,
   ['yParity', 'r', 's'] as const);
+// prettier-ignore
+const eip7702 = txStruct([
+  'chainId', 'nonce', 'maxPriorityFeePerGas', 'maxFeePerGas', 'gasLimit', 'to', 'value', 'data', 'accessList',
+  'authorizationList'] as const,
+  ['yParity', 'r', 's'] as const);
 
 export const TxVersions = {
   legacy, // 0x00 (kinda)
   eip2930, // 0x01
   eip1559, // 0x02
   eip4844, // 0x03
+  eip7702, // 0x04
 };
 
 export const RawTx = P.apply(createTxMap(TxVersions), {
@@ -331,7 +355,12 @@ export const RawTx = P.apply(createTxMap(TxVersions), {
     data.data.to = addr.addChecksum(data.data.to);
     if (data.type !== 'legacy' && data.data.accessList) {
       for (const item of data.data.accessList) {
-        item[0] = addr.addChecksum(item[0]);
+        item.address = addr.addChecksum(item.address);
+      }
+    }
+    if (data.type === 'eip7702' && data.data.authorizationList) {
+      for (const item of data.data.authorizationList) {
+        item.address = addr.addChecksum(item.address);
       }
     }
     return data;
@@ -424,10 +453,19 @@ const validators: Record<string, (num: any, { strict, type, data }: ValidationOp
     abig(num);
     if (strict) minmax(num, 1n, amounts.maxChainId, '>= 1 and <= 2**32-1');
   },
-  accessList(list: [string, string[]][]) {
+  accessList(list: AccessList) {
     // NOTE: we cannot handle this validation in coder, since it requires chainId to calculate correct checksum
-    for (const [address, _] of list) {
+    for (const { address } of list) {
       if (!addr.isValid(address)) throw new Error('address checksum does not match');
+    }
+  },
+  authorizationList(list: AuthorizationItem[], opts: ValidationOpts) {
+    for (const { address, nonce, chainId } of list) {
+      if (!addr.isValid(address)) throw new Error('address checksum does not match');
+      // chainId in authorization list can be zero (==allow any chain)
+      abig(chainId);
+      if (opts.strict) minmax(chainId, 0n, amounts.maxChainId, '>= 0 and <= 2**32-1');
+      this.nonce(nonce, opts);
     }
   },
 };
@@ -494,7 +532,7 @@ export function validateFields(
 const sortedFieldOrder = [
   'to', 'value', 'nonce',
   'maxFeePerGas', 'maxFeePerBlobGas', 'maxPriorityFeePerGas', 'gasPrice', 'gasLimit',
-  'accessList', 'blobVersionedHashes', 'chainId', 'data', 'type',
+  'accessList', 'authorizationList', 'blobVersionedHashes', 'chainId', 'data', 'type',
   'r', 's', 'yParity', 'v'
 ] as const;
 
