@@ -1,7 +1,7 @@
 import { deepStrictEqual, throws } from 'node:assert';
 import { inspect } from 'node:util';
 import { describe, should } from 'micro-should';
-import { addr, Transaction, messenger, authorization } from '../esm/index.js';
+import { addr, Transaction, authorization } from '../esm/index.js';
 import { RawTx, RlpTx, __tests } from '../esm/tx.js';
 import { add0x, createDecimal, ethHex, formatters, weieth } from '../esm/utils.js';
 import { default as TX_VECTORS } from './vectors/transactions.json' with { type: 'json' };
@@ -813,27 +813,6 @@ describe('Transactions', () => {
       Transaction.prepare({ ...tx, nonce: 1n });
       throws(() => Transaction.prepare({ ...tx, nonce: '1' }), 'nonce="1"');
     });
-  });
-});
-
-describe('messenger', () => {
-  should('verify signed message', () => {
-    const privateKey = '0x43ff8d9ae58f6f2ef437bd3543362d1d842ecca3b6cc578b46e862b47fd60020';
-    const address = '0xba20188aE2Bc7dd72eD8d0c4936154a49b17f08A';
-    const msg = 'noble';
-    const sig =
-      '0x425fbe7b4d5078c4f6538f6ae13c385874ce31478324feacf1795e2403bedc3d6e8204d3cc870c95bad45bdfa6e1f631044c8886d0ff8af93923f9bc051b16841b';
-    deepStrictEqual(messenger.sign(msg, privateKey), sig);
-    deepStrictEqual(messenger.verify(sig, msg, address), true);
-  });
-  should('sign and verify 100 times', () => {
-    for (let i = 0; i < 100; i++) {
-      const { privateKey, address } = addr.random();
-      const msg = i.toString();
-      const sig = messenger.sign(msg, privateKey);
-      const isValid = messenger.verify(sig, msg, address);
-      deepStrictEqual(isValid, true, i);
-    }
   });
 });
 
