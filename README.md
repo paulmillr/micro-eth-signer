@@ -445,8 +445,10 @@ const publicKey = recoverPublicKeyTyped(signature, typedData);
 
 ```ts
 import { KZG } from 'micro-eth-signer/kzg';
-import { trustedSetup } from 'trusted-setups'; // 400kb, 4-sec init
-import { trustedSetup as fastSetup } from 'trusted-setups/fast.js'; // 800kb, instant init
+// 400kb, 4-sec init
+import { trustedSetup } from '@paulmillr/trusted-setups';
+// 800kb, instant init
+import { trustedSetup as fastSetup } from '@paulmillr/trusted-setups/fast.js';
 
 const kzg = new KZG(trustedSetup);
 

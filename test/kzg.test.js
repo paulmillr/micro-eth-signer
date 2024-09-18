@@ -3,8 +3,8 @@ import { describe, should } from 'micro-should';
 import { KZG } from '../kzg.js';
 import { jsonGZ } from './util.js';
 import { default as KZG_VERIFY_PROOF } from './vectors/kzg/go_kzg_4844_verify_kzg_proof.json' with { type: 'json' };
-// import { trustedSetup as s_small } from 'trusted-setups';
-// import { trustedSetup as s_fast } from 'trusted-setups/fast.js';
+import { trustedSetup as s_small } from '@paulmillr/trusted-setups';
+import { trustedSetup as s_fast } from '@paulmillr/trusted-setups/fast.js';
 import ROOTS_UN from './vectors/kzg/roots_of_unity.json' with { type: "json" };
 
 // These are same as millions of yaml files in official repo, but easier to use
@@ -95,14 +95,14 @@ function run(kzg) {
 }
 
 // Comment-out until package is published
-// describe('KZG', () => {
-//   describe('trusted_setups/index.js', () => {
-//     run(new KZG(s_small));
-//   });
-//   describe('trusted_setups/fast.js', () => {
-//     run(new KZG(s_fast));
-//   });
-// });
+describe('KZG', () => {
+  describe('trusted_setups/index.js', () => {
+    run(new KZG(s_small));
+  });
+  describe('trusted_setups/fast.js', () => {
+    run(new KZG(s_fast));
+  });
+});
 
 // ESM is broken.
 import url from 'node:url';
