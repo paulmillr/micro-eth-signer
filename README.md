@@ -73,7 +73,7 @@ console.log('signed tx', signedTx, signedTx.toHex());
 console.log('fee', signedTx.fee);
 ```
 
-We support legacy, EIP2930, EIP1559 and EIP4844 (Dencun / Cancun) transactions.
+We support legacy, EIP2930, EIP1559, EIP4844 and EIP7702 transactions.
 
 ### Addresses: create, checksum
 
@@ -353,7 +353,9 @@ RLP.decode(RLP.encode('dog'));
 #### SSZ parsing
 
 Simple serialize (SSZ) is the serialization method used on the Beacon Chain.
-We implement RLP in just 900 lines of code, powered by [packed](https://github.com/paulmillr/micro-packed):
+We support EIP-7495 stable containers.
+
+The implementation is very small, around 1500 lines of code, and is powered by [packed](https://github.com/paulmillr/micro-packed):
 
 ```ts
 import * as ssz from 'micro-eth-signer/ssz';
