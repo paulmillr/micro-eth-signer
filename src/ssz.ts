@@ -1,6 +1,6 @@
 import * as P from 'micro-packed';
 import { sha256 } from '@noble/hashes/sha2';
-import { isBytes } from './utils.js';
+import { isBytes, isObject } from './utils.js';
 /*
 
 Simple serialize (SSZ) is the serialization method used on the Beacon Chain.
@@ -29,12 +29,14 @@ const EMPTY_CHUNK = new Uint8Array(BYTES_PER_CHUNK);
 
 export type SSZCoder<T> = P.CoderType<T> & {
   default: T;
+  info: { type: string };
   // merkleRoot calculated differently for composite types (even if they are fixed size)
   composite: boolean;
   chunkCount: number;
   // It is possible to create prover based on this, but we don't have one yet
   chunks: (value: T) => Uint8Array[];
   merkleRoot: (value: T) => Uint8Array;
+  _isStableCompat: (other: SSZCoder<any>) => boolean;
 };
 
 // Utils for hashing
@@ -99,11 +101,70 @@ const checkSSZ = (o: any) => {
   }
 };
 
-const basic = <T>(inner: P.CoderType<T>, def: T): SSZCoder<T> => ({
+// TODO: improve
+const isStableCompat = <T>(a: SSZCoder<T>, b: SSZCoder<any>): boolean => {
+  if (a === b) return true; // fast path
+  const _a = a as any;
+  const _b = b as any;
+  if (_a.info && _b.info) {
+    const aI = _a.info;
+    const bI = _b.info;
+    // Bitlist[N] / Bitvector[N] field types are compatible if they share the same capacity N.
+    const bitTypes = ['bitList', 'bitVector'];
+    if (bitTypes.includes(aI.type) && bitTypes.includes(bI.type) && aI.N === bI.N) return true;
+    // List[T, N] / Vector[T, N] field types are compatible if T is compatible and if they also share the same capacity N.
+    const listTypes = ['list', 'vector'];
+    if (
+      listTypes.includes(aI.type) &&
+      listTypes.includes(bI.type) &&
+      aI.N === bI.N &&
+      aI.inner._isStableCompat(bI.inner)
+    ) {
+      return true;
+    }
+    // Container / StableContainer[N] field types are compatible if all inner field types are compatible,
+    // if they also share the same field names in the same order, and for StableContainer[N] if they also
+    // share the same capacity N.
+    const contType = ['container', 'stableContainer'];
+    if (contType.includes(aI.type) && contType.includes(bI.type)) {
+      // both stable containers, but different capacity
+      if (aI.N !== undefined && bI.N !== undefined && aI.N !== bI.N) return false;
+      const kA = Object.keys(aI.fields);
+      const kB = Object.keys(bI.fields);
+      if (kA.length !== kB.length) return false;
+      for (let i = 0; i < kA.length; i++) {
+        const fA = kA[i];
+        const fB = kB[i];
+        if (fA !== fB) return false;
+        if (!aI.fields[fA]._isStableCompat(bI.fields[fA])) return false;
+      }
+      return true;
+    }
+    // Profile[X] field types are compatible with StableContainer types compatible with X, and
+    // are compatible with Profile[Y] where Y is compatible with X if also all inner field types
+    // are compatible. Differences solely in optionality do not affect merkleization compatibility.
+    if (aI.type === 'profile' || bI.type === 'profile') {
+      //console.log('PROF PROF?', aI.type, bI.type, aI.container._isStableCompat(bI));
+      if (aI.type === 'profile' && bI.type === 'stableContainer')
+        return aI.container._isStableCompat(b);
+      if (aI.type === 'stableContainer' && bI.type === 'profile')
+        return a._isStableCompat(bI.container);
+      if (aI.type === 'profile' && bI.type === 'profile')
+        return aI.container._isStableCompat(bI.container);
+    }
+  }
+  return false;
+};
+
+const basic = <T>(type: string, inner: P.CoderType<T>, def: T): SSZCoder<T> => ({
   ...inner,
   default: def,
   chunkCount: 1,
   composite: false,
+  info: { type },
+  _isStableCompat(other) {
+    return isStableCompat(this, other);
+  },
   chunks(value: T) {
     return [this.merkleRoot(value)];
   },
@@ -130,13 +191,13 @@ const int = (len: number, small = true) =>
     },
   });
 
-export const uint8 = basic(int(1), 0);
-export const uint16 = basic(int(2), 0);
-export const uint32 = basic(int(4), 0);
-export const uint64 = basic(int(8, false), 0n);
-export const uint128 = basic(int(16, false), 0n);
-export const uint256 = basic(int(32, false), 0n);
-export const boolean = basic(P.bool, false);
+export const uint8 = basic('uint8', int(1), 0);
+export const uint16 = basic('uint16', int(2), 0);
+export const uint32 = basic('uint32', int(4), 0);
+export const uint64 = basic('uint64', int(8, false), 0n);
+export const uint128 = basic('uint128', int(16, false), 0n);
+export const uint256 = basic('uint256', int(32, false), 0n);
+export const boolean = basic('boolean', P.bool, false);
 
 const array = <T>(len: P.Length, inner: SSZCoder<T>): P.CoderType<T[]> => {
   checkSSZ(inner);
@@ -171,14 +232,19 @@ const array = <T>(len: P.Length, inner: SSZCoder<T>): P.CoderType<T[]> => {
   return arr;
 };
 
+type VectorType<T> = SSZCoder<T[]> & { info: { type: 'vector'; N: number; inner: SSZCoder<T> } };
 /**
  * Vector: fixed size ('len') array of elements 'inner'
  */
-export const vector = <T>(len: number, inner: SSZCoder<T>): SSZCoder<T[]> => {
+export const vector = <T>(len: number, inner: SSZCoder<T>): VectorType<T> => {
   if (!Number.isSafeInteger(len) || len <= 0)
     throw new Error(`SSZ/vector: wrong length=${len} (should be positive integer)`);
   return {
     ...array(len, inner),
+    info: { type: 'vector', N: len, inner },
+    _isStableCompat(other) {
+      return isStableCompat(this, other);
+    },
     default: new Array(len).fill(inner.default),
     composite: true,
     chunkCount: inner.composite ? Math.ceil((len * inner.size!) / 32) : len,
@@ -191,10 +257,11 @@ export const vector = <T>(len: number, inner: SSZCoder<T>): SSZCoder<T[]> => {
     },
   };
 };
+type ListType<T> = SSZCoder<T[]> & { info: { type: 'list'; N: number; inner: SSZCoder<T> } };
 /**
  * List: dynamic array of 'inner' elements with length limit maxLen
  */
-export const list = <T>(maxLen: number, inner: SSZCoder<T>): SSZCoder<T[]> => {
+export const list = <T>(maxLen: number, inner: SSZCoder<T>): ListType<T> => {
   checkSSZ(inner);
   const coder = P.validate(array(null, inner), (value) => {
     if (!Array.isArray(value) || value.length > maxLen)
@@ -203,6 +270,10 @@ export const list = <T>(maxLen: number, inner: SSZCoder<T>): SSZCoder<T[]> => {
   });
   return {
     ...coder,
+    info: { type: 'list', N: maxLen, inner },
+    _isStableCompat(other) {
+      return isStableCompat(this, other);
+    },
     composite: true,
     chunkCount: !inner.composite ? Math.ceil((maxLen * inner.size!) / BYTES_PER_CHUNK) : maxLen,
     default: [],
@@ -216,9 +287,35 @@ export const list = <T>(maxLen: number, inner: SSZCoder<T>): SSZCoder<T[]> => {
   };
 };
 
+const wrapPointer = <T>(p: P.CoderType<T>) => (p.size === undefined ? P.pointer(P.U32LE, p) : p);
+const wrapRawPointer = <T>(p: P.CoderType<T>) => (p.size === undefined ? P.U32LE : p);
+
+// TODO: improve, unclear how
+const fixOffsets = (
+  r: P.Reader,
+  fields: Record<string, P.CoderType<any>>,
+  offsetFields: string[],
+  obj: Record<string, any>,
+  offset: number
+) => {
+  const offsets = [];
+  for (const f of offsetFields) offsets.push(obj[f] + offset);
+  for (let i = 0; i < offsets.length; i++) {
+    // TODO: how to merge this with array?
+    const name = offsetFields[i];
+    const pos = offsets[i];
+    const next = i + 1 < offsets.length ? offsets[i + 1] : r.totalBytes;
+    if (next < pos) throw r.err('SSZ/container: decreasing offset');
+    const len = next - pos;
+    if (r.pos !== pos) throw r.err('SSZ/container: wrong offset');
+    obj[name] = fields[name].decode(r.bytes(len));
+  }
+  return obj;
+};
+
 type ContainerCoder<T extends Record<string, SSZCoder<any>>> = SSZCoder<{
   [K in keyof T]: P.UnwrapCoder<T[K]>;
-}>;
+}> & { info: { type: 'container'; fields: T } };
 
 /**
  * Container: Encodes object with multiple fields. P.struct for SSZ.
@@ -228,37 +325,22 @@ export const container = <T extends Record<string, SSZCoder<any>>>(
 ): ContainerCoder<T> => {
   if (!Object.keys(fields).length) throw new Error('SSZ/container: no fields');
   const ptrCoder = P.struct(
-    Object.fromEntries(
-      Object.entries(fields).map(([k, v]) => [k, v.size === undefined ? P.pointer(P.U32LE, v) : v])
-    )
+    Object.fromEntries(Object.entries(fields).map(([k, v]) => [k, wrapPointer(v)]))
   ) as ContainerCoder<T>;
   const fixedCoder = P.struct(
-    Object.fromEntries(
-      Object.entries(fields).map(([k, v]) => [k, v.size === undefined ? P.U32LE : v])
-    )
+    Object.fromEntries(Object.entries(fields).map(([k, v]) => [k, wrapRawPointer(v)]))
   );
   const offsetFields = Object.keys(fields).filter((i) => fields[i].size === undefined);
   const coder = P.wrap({
     encodeStream: ptrCoder.encodeStream,
-    decodeStream: (r) => {
-      const fixed = fixedCoder.decodeStream(r);
-      const offsets = [];
-      for (const f in fields) if (fields[f].size === undefined) offsets.push(fixed[f]);
-      for (let i = 0; i < offsets.length; i++) {
-        // TODO: how to merge this with array?
-        const name = offsetFields[i];
-        const pos = offsets[i];
-        const next = i + 1 < offsets.length ? offsets[i + 1] : r.totalBytes;
-        if (next < pos) throw r.err('SSZ/container: decreasing offset');
-        const len = next - pos;
-        if (r.pos !== pos) throw r.err('SSZ/container: wrong offset');
-        fixed[name] = fields[name].decode(r.bytes(len));
-      }
-      return fixed as any;
-    },
+    decodeStream: (r) => fixOffsets(r, fields, offsetFields, fixedCoder.decodeStream(r), 0) as any,
   }) as ContainerCoder<T>;
   return {
     ...coder,
+    info: { type: 'container', fields },
+    _isStableCompat(other) {
+      return isStableCompat(this, other);
+    },
     size: offsetFields.length ? undefined : fixedCoder.size, // structure is fixed size if all fields is fixed size
     default: Object.fromEntries(Object.entries(fields).map(([k, v]) => [k, v.default])) as {
       [K in keyof T]: P.UnwrapCoder<T[K]>;
@@ -290,17 +372,21 @@ const bitsCoder = (len: number): P.Coder<Uint8Array, boolean[]> => ({
     return res;
   },
 });
-
+type BitVectorType = SSZCoder<boolean[]> & { info: { type: 'bitVector'; N: number } };
 /**
  * BitVector: array of booleans with fixed size
  */
-export const bitvector = (len: number): SSZCoder<boolean[]> => {
+export const bitvector = (len: number): BitVectorType => {
   if (!Number.isSafeInteger(len) || len <= 0)
     throw new Error(`SSZ/bitVector: wrong length=${len} (should be positive integer)`);
   const bytesLen = Math.ceil(len / 8);
   const coder = P.apply(P.bytes(bytesLen), bitsCoder(len));
   return {
     ...coder,
+    info: { type: 'bitVector', N: len },
+    _isStableCompat(other) {
+      return isStableCompat(this, other);
+    },
     default: new Array(len).fill(false),
     composite: true,
     chunkCount: Math.ceil(len / 256),
@@ -312,11 +398,11 @@ export const bitvector = (len: number): SSZCoder<boolean[]> => {
     },
   };
 };
-
+type BitListType = SSZCoder<boolean[]> & { info: { type: 'bitList'; N: number } };
 /**
  * BitList: array of booleans with dynamic size (but maxLen limit)
  */
-export const bitlist = (maxLen: number): SSZCoder<boolean[]> => {
+export const bitlist = (maxLen: number): BitListType => {
   if (!Number.isSafeInteger(maxLen) || maxLen <= 0)
     throw new Error(`SSZ/bitList: wrong max length=${maxLen} (should be positive integer)`);
   let coder: P.CoderType<boolean[]> = P.wrap({
@@ -340,6 +426,10 @@ export const bitlist = (maxLen: number): SSZCoder<boolean[]> => {
   });
   return {
     ...coder,
+    info: { type: 'bitList', N: maxLen },
+    _isStableCompat(other) {
+      return isStableCompat(this, other);
+    },
     size: undefined,
     default: [],
     chunkCount: Math.ceil(maxLen / 256),
@@ -385,6 +475,9 @@ export const union = (
     size: undefined, // union is always variable size
     chunkCount: NaN,
     default: { selector: 0, value: types[0] === null ? null : types[0].default },
+    _isStableCompat(other) {
+      return isStableCompat(this, other);
+    },
     composite: true,
     chunks({ selector, value }) {
       const type = types[selector];
@@ -398,11 +491,13 @@ export const union = (
     },
   };
 };
-
+type ByteListType = SSZCoder<Uint8Array> & {
+  info: { type: 'list'; N: number; inner: typeof byte };
+};
 /**
  * ByteList: same as List(len, SSZ.byte), but returns Uint8Array
  */
-export const bytelist = (maxLen: number): SSZCoder<Uint8Array> => {
+export const bytelist = (maxLen: number): ByteListType => {
   const coder = P.validate(P.bytes(null), (value) => {
     if (!isBytes(value) || value.length > maxLen)
       throw new Error(`SSZ/bytelist: wrong value=${value}`);
@@ -410,6 +505,10 @@ export const bytelist = (maxLen: number): SSZCoder<Uint8Array> => {
   });
   return {
     ...coder,
+    info: { type: 'list', N: maxLen, inner: byte },
+    _isStableCompat(other) {
+      return isStableCompat(this, other);
+    },
     default: new Uint8Array([]),
     composite: true,
     chunkCount: Math.ceil(maxLen / 32),
@@ -421,15 +520,21 @@ export const bytelist = (maxLen: number): SSZCoder<Uint8Array> => {
     },
   };
 };
-
+type ByteVectorType = SSZCoder<Uint8Array> & {
+  info: { type: 'vector'; N: number; inner: typeof byte };
+};
 /**
  * ByteVector: same as Vector(len, SSZ.byte), but returns Uint8Array
  */
-export const bytevector = (len: number): SSZCoder<Uint8Array> => {
+export const bytevector = (len: number): ByteVectorType => {
   if (!Number.isSafeInteger(len) || len <= 0)
     throw new Error(`SSZ/vector: wrong length=${len} (should be positive integer)`);
   return {
     ...P.bytes(len),
+    info: { type: 'vector', N: len, inner: byte },
+    _isStableCompat(other) {
+      return isStableCompat(this, other);
+    },
     default: new Uint8Array(len),
     composite: true,
     chunkCount: Math.ceil(len / 32),
@@ -438,6 +543,220 @@ export const bytevector = (len: number): SSZCoder<Uint8Array> => {
     },
     merkleRoot(value) {
       return merkleize(this.chunks(value));
+    },
+  };
+};
+
+type StableContainerCoder<T extends Record<string, SSZCoder<any>>> = SSZCoder<{
+  [K in keyof T]?: P.UnwrapCoder<T[K]>;
+}> & { info: { type: 'stableContainer'; N: number; fields: T } };
+/**
+ * Same as container, but all values are optional using bitvector as prefix which indicates active fields
+ */
+export const stableContainer = <T extends Record<string, SSZCoder<any>>>(
+  N: number,
+  fields: T
+): StableContainerCoder<T> => {
+  const fieldsNames = Object.keys(fields) as (keyof T)[];
+  const fieldsLen = fieldsNames.length;
+  if (!fieldsLen) throw new Error('SSZ/stableContainer: no fields');
+  if (fieldsLen > N) throw new Error('SSZ/stableContainer: more fields than N');
+  const bv = bitvector(N);
+  const coder = P.wrap({
+    encodeStream: (w, value) => {
+      const bsVal = new Array(N).fill(false);
+      for (let i = 0; i < fieldsLen; i++) if (value[fieldsNames[i]] !== undefined) bsVal[i] = true;
+      bv.encodeStream(w, bsVal);
+      const activeFields = fieldsNames.filter((_, i) => bsVal[i]);
+      const ptrCoder = P.struct(
+        Object.fromEntries(activeFields.map((k) => [k, wrapPointer(fields[k])]))
+      ) as StableContainerCoder<T>;
+      w.bytes(ptrCoder.encode(value));
+    },
+    decodeStream: (r) => {
+      const bsVal = bv.decodeStream(r);
+      for (let i = fieldsLen; i < bsVal.length; i++) {
+        if (bsVal[i] !== false) throw new Error('stableContainer: non-zero padding');
+      }
+      const activeFields = fieldsNames.filter((_, i) => bsVal[i]);
+      const fixedCoder = P.struct(
+        Object.fromEntries(activeFields.map((k) => [k, wrapRawPointer(fields[k])]))
+      );
+      const offsetFields = activeFields.filter((i) => fields[i].size === undefined);
+      return fixOffsets(r, fields, offsetFields as any, fixedCoder.decodeStream(r), bv.size!);
+    },
+  }) as StableContainerCoder<T>;
+  return {
+    ...coder,
+    info: { type: 'stableContainer', N, fields },
+    size: undefined,
+    default: Object.fromEntries(Object.entries(fields).map(([k, _v]) => [k, undefined])) as {
+      [K in keyof T]: P.UnwrapCoder<T[K]>;
+    },
+    _isStableCompat(other) {
+      return isStableCompat(this, other);
+    },
+    composite: true,
+    chunkCount: N,
+    chunks(value: P.UnwrapCoder<StableContainerCoder<T>>) {
+      const res = Object.entries(fields).map(([k, v]) =>
+        value[k] === undefined ? new Uint8Array(32) : v.merkleRoot(value[k])
+      );
+      while (res.length < N) res.push(new Uint8Array(32));
+      return res;
+    },
+    merkleRoot(value: P.UnwrapCoder<StableContainerCoder<T>>) {
+      const bsVal = new Array(N).fill(false);
+      for (let i = 0; i < fieldsLen; i++) if (value[fieldsNames[i]] !== undefined) bsVal[i] = true;
+      return hash(merkleize(this.chunks(value as any)), bv.merkleRoot(bsVal));
+    },
+  };
+};
+
+type ProfileCoder<
+  T extends Record<string, SSZCoder<any>>,
+  OptK extends keyof T & string,
+  ReqK extends keyof T & string,
+> = SSZCoder<{ [K in ReqK]: P.UnwrapCoder<T[K]> } & { [K in OptK]?: P.UnwrapCoder<T[K]> }> & {
+  info: { type: 'profile'; container: StableContainerCoder<T> };
+};
+
+/**
+ * Profile - fixed subset of stableContainer.
+ * - fields and order of fields is exactly same as in underlying container
+ * - some fields may be excluded or required in profile (all fields in stable container are always optional)
+ * - adding new fields to underlying container won't change profile's constructed on top of it,
+ *   because it is required to provide all list of optional fields.
+ * - type of field can be changed inside profile (but we should be very explicit about this) to same shape type.
+ *
+ * @example
+ * // class Shape(StableContainer[4]):
+ * //     side: Optional[uint16]
+ * //     color: Optional[uint8]
+ * //     radius: Optional[uint16]
+ *
+ * // class Square(Profile[Shape]):
+ * //     side: uint16
+ * //     color: uint8
+ *
+ * // class Circle(Profile[Shape]):
+ * //     color: uint8
+ * //     radius: Optional[uint16]
+ * // ->
+ * const Shape = SSZ.stableContainer(4, {
+ *   side: SSZ.uint16,
+ *   color: SSZ.uint8,
+ *   radius: SSZ.uint16,
+ * });
+ * const Square = profile(Shape, [], ['side', 'color']);
+ * const Circle = profile(Shape, ['radius'], ['color']);
+ * const Circle2 = profile(Shape, ['radius'], ['color'], { color: SSZ.byte });
+ */
+export const profile = <
+  T extends Record<string, SSZCoder<any>>,
+  OptK extends keyof T & string,
+  ReqK extends keyof T & string,
+>(
+  c: StableContainerCoder<T>,
+  optFields: OptK[],
+  requiredFields: ReqK[] = [],
+  replaceType: Record<string, any> = {}
+): ProfileCoder<T, OptK, ReqK> => {
+  checkSSZ(c);
+  if (c.info.type !== 'stableContainer') throw new Error('profile: expected stableContainer');
+  const containerFields: Set<string> = new Set(Object.keys(c.info.fields));
+  if (!Array.isArray(optFields)) throw new Error('profile: optional fields should be array');
+  const optFS: Set<string> = new Set(optFields);
+  for (const f of optFS) {
+    if (!containerFields.has(f)) throw new Error(`profile: unexpected optional field ${f}`);
+  }
+  if (!Array.isArray(requiredFields)) throw new Error('profile: required fields should be array');
+  const reqFS: Set<string> = new Set(requiredFields);
+  for (const f of reqFS) {
+    if (!containerFields.has(f)) throw new Error(`profile: unexpected required field ${f}`);
+    if (optFS.has(f as any as OptK))
+      throw new Error(`profile: field ${f} is declared both as optional and required`);
+  }
+  if (!isObject(replaceType)) throw new Error('profile: replaceType should be object');
+  for (const k in replaceType) {
+    if (!containerFields.has(k)) throw new Error(`profile/replaceType: unexpected field ${k}`);
+    if (!replaceType[k]._isStableCompat(c.info.fields[k]))
+      throw new Error(`profile/replaceType: incompatible field ${k}`);
+  }
+  // Order should be same
+  const allFields = Object.keys(c.info.fields).filter((i) => optFS.has(i) || reqFS.has(i));
+  // bv is omitted if all fields are required!
+  const fieldCoders = { ...c.info.fields, ...replaceType };
+  let coder: ProfileCoder<T, OptK, ReqK>;
+  if (optFS.size === 0) {
+    // All fields are required, it is just container, possible with size
+    coder = container(
+      Object.fromEntries(allFields.map((k) => [k, fieldCoders[k]]))
+    ) as any as ProfileCoder<T, OptK, ReqK>;
+  } else {
+    // NOTE: we cannot merge this with stable container,
+    // because some fields are active and some is not (based on required/non-required)
+    const bv = bitvector(optFS.size);
+    const forFields = (fn: (f: string, optPos: number | undefined) => void) => {
+      let optPos = 0;
+      for (const f of allFields) {
+        const isOpt = optFS.has(f);
+        fn(f, isOpt ? optPos : undefined);
+        if (isOpt) optPos++;
+      }
+    };
+    coder = {
+      ...P.wrap({
+        encodeStream: (w, value) => {
+          const bsVal = new Array(optFS.size).fill(false);
+          const ptrCoder: any = {};
+          forFields((f, optPos) => {
+            const val = (value as any)[f];
+            if (optPos !== undefined && val !== undefined) bsVal[optPos] = true;
+            if (optPos === undefined && val === undefined)
+              throw new Error(`profile.encode: empty required field ${f}`);
+            if (val !== undefined) ptrCoder[f] = wrapPointer(fieldCoders[f]);
+          });
+          bv.encodeStream(w, bsVal);
+          w.bytes(P.struct(ptrCoder).encode(value));
+        },
+        decodeStream: (r) => {
+          let bsVal = bv.decodeStream(r);
+          const fixedCoder: any = {};
+          const offsetFields: string[] = [];
+          forFields((f, optPos) => {
+            if (optPos !== undefined && bsVal[optPos] === false) return;
+            if (fieldCoders[f].size === undefined) offsetFields.push(f);
+            fixedCoder[f] = wrapRawPointer(fieldCoders[f]);
+          });
+          return fixOffsets(
+            r,
+            fieldCoders,
+            offsetFields,
+            P.struct(fixedCoder).decodeStream(r),
+            bv.size!
+          ) as any;
+        },
+      }),
+      size: undefined,
+    } as ProfileCoder<T, OptK, ReqK>;
+  }
+  return {
+    ...coder,
+    info: { type: 'profile', container: c },
+    default: Object.fromEntries(Array.from(reqFS).map((f) => [f, fieldCoders[f].default])) as {
+      [K in ReqK]: P.UnwrapCoder<T[K]>;
+    } & { [K in OptK]?: P.UnwrapCoder<T[K]> },
+    _isStableCompat(other) {
+      return isStableCompat(this, other);
+    },
+    composite: true,
+    chunkCount: c.info.N,
+    chunks(value: P.UnwrapCoder<ProfileCoder<T, OptK, ReqK>>) {
+      return c.chunks(value);
+    },
+    merkleRoot(value: P.UnwrapCoder<ProfileCoder<T, OptK, ReqK>>) {
+      return c.merkleRoot(value);
     },
   };
 };
@@ -481,6 +800,16 @@ const SYNC_COMMITTEE_SUBNET_COUNT = 4;
 const NEXT_SYNC_COMMITTEE_DEPTH = 5;
 const BLOCK_BODY_EXECUTION_PAYLOAD_DEPTH = 4;
 const FINALIZED_ROOT_DEPTH = 6;
+// Electra
+const MAX_COMMITTEES_PER_SLOT = 64;
+const PENDING_PARTIAL_WITHDRAWALS_LIMIT = 134217728;
+const PENDING_BALANCE_DEPOSITS_LIMIT = 134217728;
+const PENDING_CONSOLIDATIONS_LIMIT = 262144;
+const MAX_ATTESTER_SLASHINGS_ELECTRA = 1;
+const MAX_ATTESTATIONS_ELECTRA = 8;
+const MAX_DEPOSIT_REQUESTS_PER_PAYLOAD = 8192;
+const MAX_WITHDRAWAL_REQUESTS_PER_PAYLOAD = 16;
+const MAX_CONSOLIDATION_REQUESTS_PER_PAYLOAD = 1;
 
 // We can reduce size if we inline these. But updates for new forks would be hard.
 const Slot = uint64;
@@ -792,6 +1121,37 @@ const LightClientOptimisticUpdate = container({
   sync_aggregate: SyncAggregate,
   signature_slot: Slot,
 });
+// Electra
+const DepositRequest = container({
+  pubkey: BLSPubkey,
+  withdrawal_credentials: Bytes32,
+  amount: Gwei,
+  signature: BLSSignature,
+  index: uint64,
+});
+const WithdrawalRequest = container({
+  source_address: ExecutionAddress,
+  validator_pubkey: BLSPubkey,
+  amount: Gwei,
+});
+const ConsolidationRequest = container({
+  source_address: ExecutionAddress,
+  source_pubkey: BLSPubkey,
+  target_pubkey: BLSPubkey,
+});
+const PendingBalanceDeposit = container({
+  index: ValidatorIndex,
+  amount: Gwei,
+});
+const PendingPartialWithdrawal = container({
+  index: ValidatorIndex,
+  amount: Gwei,
+  withdrawable_epoch: Epoch,
+});
+const PendingConsolidation = container({
+  source_index: ValidatorIndex,
+  target_index: ValidatorIndex,
+});
 
 export const ETH2_TYPES = {
   Slot,
@@ -866,4 +1226,299 @@ export const ETH2_TYPES = {
   LightClientUpdate,
   LightClientOptimisticUpdate,
   LightClientFinalityUpdate,
+  // Electra
+  DepositRequest,
+  WithdrawalRequest,
+  ConsolidationRequest,
+  PendingBalanceDeposit,
+  PendingPartialWithdrawal,
+  PendingConsolidation,
+};
+
+// EIP-7688
+const MAX_ATTESTATION_FIELDS = 8;
+const MAX_INDEXED_ATTESTATION_FIELDS = 8;
+const MAX_EXECUTION_PAYLOAD_FIELDS = 64;
+const MAX_BEACON_BLOCK_BODY_FIELDS = 64;
+const MAX_BEACON_STATE_FIELDS = 128;
+const MAX_EXECUTION_REQUESTS_FIELDS = 16;
+
+const StableAttestation = stableContainer(MAX_ATTESTATION_FIELDS, {
+  aggregation_bits: bitlist(MAX_VALIDATORS_PER_COMMITTEE * MAX_COMMITTEES_PER_SLOT),
+  data: AttestationData,
+  signature: BLSSignature,
+  committee_bits: bitvector(MAX_COMMITTEES_PER_SLOT),
+});
+const StableIndexedAttestation = stableContainer(MAX_INDEXED_ATTESTATION_FIELDS, {
+  attesting_indices: list(MAX_VALIDATORS_PER_COMMITTEE * MAX_COMMITTEES_PER_SLOT, ValidatorIndex),
+  data: AttestationData,
+  signature: BLSSignature,
+});
+const StableAttesterSlashing = container({
+  attestation_1: StableIndexedAttestation,
+  attestation_2: StableIndexedAttestation,
+});
+const StableExecutionRequests = stableContainer(MAX_EXECUTION_REQUESTS_FIELDS, {
+  deposits: list(MAX_DEPOSIT_REQUESTS_PER_PAYLOAD, DepositRequest), // [New in Electra:EIP6110]
+  withdrawals: list(MAX_WITHDRAWAL_REQUESTS_PER_PAYLOAD, WithdrawalRequest), // [New in Electra:EIP7002:EIP7251]
+  consolidations: list(MAX_CONSOLIDATION_REQUESTS_PER_PAYLOAD, ConsolidationRequest), // [New in Electra:EIP7251]
+});
+const StableExecutionPayload = stableContainer(MAX_EXECUTION_PAYLOAD_FIELDS, {
+  parent_hash: Hash32,
+  fee_recipient: ExecutionAddress,
+  state_root: Bytes32,
+  receipts_root: Bytes32,
+  logs_bloom: bytevector(BYTES_PER_LOGS_BLOOM),
+  prev_randao: Bytes32,
+  block_number: uint64,
+  gas_limit: uint64,
+  gas_used: uint64,
+  timestamp: uint64,
+  extra_data: bytelist(MAX_EXTRA_DATA_BYTES),
+  base_fee_per_gas: uint256,
+  block_hash: Hash32,
+  transactions: list(MAX_TRANSACTIONS_PER_PAYLOAD, Transaction),
+  withdrawals: list(MAX_WITHDRAWALS_PER_PAYLOAD, Withdrawal), // [New in Capella]
+  blob_gas_used: uint64,
+  excess_blob_gas: uint64,
+  deposit_requests: list(MAX_DEPOSIT_REQUESTS_PER_PAYLOAD, DepositRequest), // [New in Electra:EIP6110]
+  withdrawal_requests: list(MAX_WITHDRAWAL_REQUESTS_PER_PAYLOAD, WithdrawalRequest), // [New in Electra:EIP7002:EIP7251]
+  consolidation_requests: list(MAX_CONSOLIDATION_REQUESTS_PER_PAYLOAD, ConsolidationRequest), // [New in Electra:EIP7251]
+});
+const StableExecutionPayloadHeader = stableContainer(MAX_EXECUTION_PAYLOAD_FIELDS, {
+  parent_hash: Hash32,
+  fee_recipient: ExecutionAddress,
+  state_root: Bytes32,
+  receipts_root: Bytes32,
+  logs_bloom: bytevector(BYTES_PER_LOGS_BLOOM),
+  prev_randao: Bytes32,
+  block_number: uint64,
+  gas_limit: uint64,
+  gas_used: uint64,
+  timestamp: uint64,
+  extra_data: bytelist(MAX_EXTRA_DATA_BYTES),
+  base_fee_per_gas: uint256,
+  block_hash: Hash32,
+  transactions_root: Root,
+  withdrawals_root: Root, // [New in Capella]
+  blob_gas_used: uint64, // [New in Deneb:EIP4844]
+  excess_blob_gas: uint64, // [New in Deneb:EIP4844]
+  deposit_requests_root: Root, // [New in Electra:EIP6110]
+  withdrawal_requests_root: Root, // [New in Electra:EIP7002:EIP7251]
+  consolidation_requests_root: Root, // [New in Electra:EIP7251]
+});
+const StableBeaconBlockBody = stableContainer(MAX_BEACON_BLOCK_BODY_FIELDS, {
+  randao_reveal: BLSSignature,
+  eth1_data: Eth1Data,
+  graffiti: Bytes32,
+  proposer_slashings: list(MAX_PROPOSER_SLASHINGS, ProposerSlashing),
+  attester_slashings: list(MAX_ATTESTER_SLASHINGS_ELECTRA, StableAttesterSlashing), // [Modified in Electra:EIP7549]
+  attestations: list(MAX_ATTESTATIONS_ELECTRA, StableAttestation), // [Modified in Electra:EIP7549]
+  deposits: list(MAX_DEPOSITS, Deposit),
+  voluntary_exits: list(MAX_VOLUNTARY_EXITS, SignedVoluntaryExit),
+  sync_aggregate: SyncAggregate,
+  execution_payload: StableExecutionPayload,
+  bls_to_execution_changes: list(MAX_BLS_TO_EXECUTION_CHANGES, SignedBLSToExecutionChange),
+  blob_kzg_commitments: list(MAX_BLOB_COMMITMENTS_PER_BLOCK, KZGCommitment),
+  execution_requests: StableExecutionRequests,
+});
+const StableBeaconState = stableContainer(MAX_BEACON_STATE_FIELDS, {
+  genesis_time: uint64,
+  genesis_validators_root: Root,
+  slot: Slot,
+  fork: Fork,
+  latest_block_header: BeaconBlockHeader,
+  block_roots: vector(SLOTS_PER_HISTORICAL_ROOT, Root),
+  state_roots: vector(SLOTS_PER_HISTORICAL_ROOT, Root),
+  historical_roots: list(HISTORICAL_ROOTS_LIMIT, Root),
+  eth1_data: Eth1Data,
+  eth1_data_votes: list(EPOCHS_PER_ETH1_VOTING_PERIOD * SLOTS_PER_EPOCH, Eth1Data),
+  eth1_deposit_index: uint64,
+  validators: list(VALIDATOR_REGISTRY_LIMIT, Validator),
+  balances: list(VALIDATOR_REGISTRY_LIMIT, Gwei),
+  randao_mixes: vector(EPOCHS_PER_HISTORICAL_VECTOR, Bytes32),
+  slashings: vector(EPOCHS_PER_SLASHINGS_VECTOR, Gwei),
+  previous_epoch_participation: list(VALIDATOR_REGISTRY_LIMIT, ParticipationFlags),
+  current_epoch_participation: list(VALIDATOR_REGISTRY_LIMIT, ParticipationFlags),
+  justification_bits: bitvector(JUSTIFICATION_BITS_LENGTH),
+  previous_justified_checkpoint: Checkpoint,
+  current_justified_checkpoint: Checkpoint,
+  finalized_checkpoint: Checkpoint,
+  inactivity_scores: list(VALIDATOR_REGISTRY_LIMIT, uint64),
+  current_sync_committee: SyncCommittee,
+  next_sync_committee: SyncCommittee,
+  latest_execution_payload_header: StableExecutionPayloadHeader,
+  next_withdrawal_index: WithdrawalIndex,
+  next_withdrawal_validator_index: ValidatorIndex,
+  historical_summaries: list(HISTORICAL_ROOTS_LIMIT, HistoricalSummary),
+  deposit_requests_start_index: uint64, // [New in Electra:EIP6110]
+  deposit_balance_to_consume: Gwei, // [New in Electra:EIP7251]
+  exit_balance_to_consume: Gwei, // [New in Electra:EIP7251]
+  earliest_exit_epoch: Epoch, // [New in Electra:EIP7251]
+  consolidation_balance_to_consume: Gwei, // [New in Electra:EIP7251]
+  earliest_consolidation_epoch: Epoch, // [New in Electra:EIP7251]
+  pending_balance_deposits: list(PENDING_BALANCE_DEPOSITS_LIMIT, PendingBalanceDeposit), // [New in Electra:EIP7251]
+  pending_partial_withdrawals: list(PENDING_PARTIAL_WITHDRAWALS_LIMIT, PendingPartialWithdrawal), // [New in Electra:EIP7251]
+  pending_consolidations: list(PENDING_CONSOLIDATIONS_LIMIT, PendingConsolidation), // [New in Electra:EIP7251]
+});
+
+export const ETH2_CONSENSUS = {
+  StableAttestation,
+  StableIndexedAttestation,
+  StableAttesterSlashing,
+  StableExecutionPayload,
+  StableExecutionRequests,
+  StableExecutionPayloadHeader,
+  StableBeaconBlockBody,
+  StableBeaconState,
+};
+
+// Tests (electra profiles): https://github.com/ethereum/consensus-specs/pull/3844#issuecomment-2239285376
+// NOTE: these are different from EIP-7688 by some reasons, but since nothing is merged/completed in eth side, we just trying
+// to pass these tests for now.
+const IndexedAttestationElectra = profile(
+  StableIndexedAttestation,
+  [],
+  ['attesting_indices', 'data', 'signature']
+);
+const AttesterSlashingElectra = container({
+  attestation_1: IndexedAttestationElectra,
+  attestation_2: IndexedAttestationElectra,
+});
+const ExecutionPayloadHeaderElectra = profile(
+  StableExecutionPayloadHeader,
+  [],
+  [
+    'parent_hash',
+    'fee_recipient',
+    'state_root',
+    'receipts_root',
+    'logs_bloom',
+    'prev_randao',
+    'block_number',
+    'gas_limit',
+    'gas_used',
+    'timestamp',
+    'extra_data',
+    'base_fee_per_gas',
+    'block_hash',
+    'transactions_root',
+    'withdrawals_root',
+    'blob_gas_used',
+    'excess_blob_gas',
+  ]
+);
+const ExecutionRequests = profile(
+  StableExecutionRequests,
+  [],
+  ['deposits', 'withdrawals', 'consolidations']
+);
+const AttestationElectra = profile(
+  StableAttestation,
+  [],
+  ['aggregation_bits', 'data', 'signature', 'committee_bits']
+);
+const ExecutionPayloadElectra = profile(
+  StableExecutionPayload,
+  [],
+  [
+    'parent_hash',
+    'fee_recipient',
+    'state_root',
+    'receipts_root',
+    'logs_bloom',
+    'prev_randao',
+    'block_number',
+    'gas_limit',
+    'gas_used',
+    'timestamp',
+    'extra_data',
+    'base_fee_per_gas',
+    'block_hash',
+    'transactions',
+    'withdrawals',
+    'blob_gas_used',
+    'excess_blob_gas',
+  ]
+);
+export const ETH2_PROFILES = {
+  electra: {
+    Attestation: AttestationElectra,
+    AttesterSlashing: AttesterSlashingElectra,
+    IndexedAttestation: IndexedAttestationElectra,
+    ExecutionRequests,
+    ExecutionPayloadHeader: ExecutionPayloadHeaderElectra,
+    ExecutionPayload: ExecutionPayloadElectra,
+    BeaconBlockBody: profile(
+      StableBeaconBlockBody,
+      [],
+      [
+        'randao_reveal',
+        'eth1_data',
+        'graffiti',
+        'proposer_slashings',
+        'attester_slashings',
+        'attestations',
+        'deposits',
+        'voluntary_exits',
+        'sync_aggregate',
+        'execution_payload',
+        'bls_to_execution_changes',
+        'blob_kzg_commitments',
+        'execution_requests',
+      ],
+      {
+        attester_slashings: list(MAX_ATTESTER_SLASHINGS_ELECTRA, AttesterSlashingElectra),
+        attestations: list(MAX_ATTESTATIONS_ELECTRA, AttestationElectra),
+        execution_payload: ExecutionPayloadElectra,
+        execution_requests: ExecutionRequests,
+      }
+    ),
+    BeaconState: profile(
+      StableBeaconState,
+      [],
+      [
+        'genesis_time',
+        'genesis_validators_root',
+        'slot',
+        'fork',
+        'latest_block_header',
+        'block_roots',
+        'state_roots',
+        'historical_roots',
+        'eth1_data',
+        'eth1_data_votes',
+        'eth1_deposit_index',
+        'validators',
+        'balances',
+        'randao_mixes',
+        'slashings',
+        'previous_epoch_participation',
+        'current_epoch_participation',
+        'justification_bits',
+        'previous_justified_checkpoint',
+        'current_justified_checkpoint',
+        'finalized_checkpoint',
+        'inactivity_scores',
+        'current_sync_committee',
+        'next_sync_committee',
+        'latest_execution_payload_header',
+        'next_withdrawal_index',
+        'next_withdrawal_validator_index',
+        'historical_summaries',
+        'deposit_requests_start_index',
+        'deposit_balance_to_consume',
+        'exit_balance_to_consume',
+        'earliest_exit_epoch',
+        'consolidation_balance_to_consume',
+        'earliest_consolidation_epoch',
+        'pending_balance_deposits',
+        'pending_partial_withdrawals',
+        'pending_consolidations',
+      ],
+      {
+        latest_execution_payload_header: ExecutionPayloadHeaderElectra,
+      }
+    ),
+  },
 };
