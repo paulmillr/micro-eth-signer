@@ -343,7 +343,9 @@ Check out [`src/net/ens.ts`](./src/net/ens.ts) for type-safe contract execution 
 
 #### RLP parsing
 
-We implement RLP in just 100 lines of code, powered by [packed](https://github.com/paulmillr/micro-packed):
+We implement RLP (Recursive Length Prefix) in 100 lines of code, using [packed](https://github.com/paulmillr/micro-packed).
+
+For detailed examples, check out [rlp.test.js](https://github.com/paulmillr/micro-eth-signer/blob/main/test/rlp.test.js).
 
 ```ts
 import { RLP } from 'micro-eth-signer/rlp';
@@ -352,10 +354,11 @@ RLP.decode(RLP.encode('dog'));
 
 #### SSZ parsing
 
-Simple serialize (SSZ) is the serialization method used on the Beacon Chain.
-We support EIP-7495 stable containers.
+We implement SSZ (simple serialize) in 1500 lines of code, using [packed](https://github.com/paulmillr/micro-packed).
 
-The implementation is very small, around 1500 lines of code, and is powered by [packed](https://github.com/paulmillr/micro-packed):
+[EIP-7495](https://eips.ethereum.org/EIPS/eip-7495) stable containers are supported.
+
+For detailed examples, check out [ssz.test.js](https://github.com/paulmillr/micro-eth-signer/blob/main/test/ssz.test.js).
 
 ```ts
 import * as ssz from 'micro-eth-signer/ssz';
