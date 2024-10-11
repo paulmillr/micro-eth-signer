@@ -344,8 +344,7 @@ Check out [`src/net/ens.ts`](./src/net/ens.ts) for type-safe contract execution 
 #### RLP parsing
 
 We implement RLP (Recursive Length Prefix) in 100 lines of code, using [packed](https://github.com/paulmillr/micro-packed).
-
-For detailed examples, check out [rlp.test.js](https://github.com/paulmillr/micro-eth-signer/blob/main/test/rlp.test.js).
+Check out [rlp.test.js](https://github.com/paulmillr/micro-eth-signer/blob/main/test/rlp.test.js) for examples.
 
 ```ts
 import { RLP } from 'micro-eth-signer/rlp';
@@ -355,10 +354,8 @@ RLP.decode(RLP.encode('dog'));
 #### SSZ parsing
 
 We implement SSZ (simple serialize) in 1500 lines of code, using [packed](https://github.com/paulmillr/micro-packed).
-
 [EIP-7495](https://eips.ethereum.org/EIPS/eip-7495) stable containers are supported.
-
-For detailed examples, check out [ssz.test.js](https://github.com/paulmillr/micro-eth-signer/blob/main/test/ssz.test.js).
+Check out [ssz.test.js](https://github.com/paulmillr/micro-eth-signer/blob/main/test/ssz.test.js) for examples.
 
 ```ts
 import * as ssz from 'micro-eth-signer/ssz';
