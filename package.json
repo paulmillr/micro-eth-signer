@@ -74,6 +74,10 @@
       "import": "./esm/typed-data.js",
       "require": "./typed-data.js"
     },
+    "./verkle": {
+      "import": "./esm/verkle.js",
+      "require": "./verkle.js"
+    },
     "./utils": {
       "import": "./esm/utils.js",
       "require": "./utils.js"
