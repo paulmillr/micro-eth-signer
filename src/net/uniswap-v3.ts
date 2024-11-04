@@ -170,7 +170,7 @@ export function txData(
     | 'exactOutputSingle';
   // TODO: remove unknown
   const calldatas = [(ROUTER_CONTRACT[method].encodeInput as (v: unknown) => Uint8Array)(args)];
-  if (input === 'eth' && amountOut) calldatas.push(ROUTER_CONTRACT['refundETH'].encodeInput({}));
+  if (input === 'eth' && amountOut) calldatas.push(ROUTER_CONTRACT['refundETH'].encodeInput());
   // unwrap
   if (routerMustCustody) {
     calldatas.push(

@@ -4,7 +4,7 @@ import { bytesToHex, hexToBytes, utf8ToBytes } from '@noble/hashes/utils';
 import * as P from 'micro-packed';
 import * as abi from '../esm/abi/decoder.js';
 import { strip0x } from '../esm/utils.js';
-import { CONTRACTS, decodeData, decodeEvent, decodeTx } from '../esm/abi/index.js';
+import { CONTRACTS, decodeData, decodeEvent, decodeTx, deployContract } from '../esm/abi/index.js';
 
 import { default as ERC20 } from '../esm/abi/erc20.js';
 import { default as UNISWAP_V2_ROUTER, UNISWAP_V2_ROUTER_CONTRACT } from '../esm/abi/uniswap-v2.js';
@@ -1987,6 +1987,62 @@ describe('simple decoder API', () => {
       // this is wormhole abi, we have no idea about it.
       { data: undefined, event: undefined },
     ]);
+  });
+  describe('contract create', () => {
+    should('basic', () => {
+      // Empty constructor
+      deepStrictEqual(
+        deployContract(
+          [{ type: 'constructor', inputs: [], stateMutability: 'nonpayable' }],
+          '0x6080604052348015600f57600080fd5b50603f80601d6000396000f3fe6080604052600080fdfea2646970667358221220116554d4ba29ee08da9e97dc54ff9a2a65d67a648140d616fc225a25ff08c86364736f6c63430008070033'
+        ),
+        '0x6080604052348015600f57600080fd5b50603f80601d6000396000f3fe6080604052600080fdfea2646970667358221220116554d4ba29ee08da9e97dc54ff9a2a65d67a648140d616fc225a25ff08c86364736f6c63430008070033'
+      );
+      deepStrictEqual(
+        deployContract(
+          [{ type: 'constructor', stateMutability: 'nonpayable' }],
+          '0x6080604052348015600f57600080fd5b50603f80601d6000396000f3fe6080604052600080fdfea2646970667358221220116554d4ba29ee08da9e97dc54ff9a2a65d67a648140d616fc225a25ff08c86364736f6c63430008070033'
+        ),
+        '0x6080604052348015600f57600080fd5b50603f80601d6000396000f3fe6080604052600080fdfea2646970667358221220116554d4ba29ee08da9e97dc54ff9a2a65d67a648140d616fc225a25ff08c86364736f6c63430008070033'
+      );
+      deepStrictEqual(
+        deployContract(
+          [
+            {
+              type: 'constructor',
+              inputs: [{ name: 'a', type: 'uint256' }],
+              stateMutability: 'nonpayable',
+            },
+          ],
+          '0x6080604052348015600f57600080fd5b50603f80601d6000396000f3fe6080604052600080fdfea2646970667358221220116554d4ba29ee08da9e97dc54ff9a2a65d67a648140d616fc225a25ff08c86364736f6c63430008070033',
+          69420n
+        ),
+        '0x6080604052348015600f57600080fd5b50603f80601d6000396000f3fe6080604052600080fdfea2646970667358221220116554d4ba29ee08da9e97dc54ff9a2a65d67a648140d616fc225a25ff08c86364736f6c634300080700330000000000000000000000000000000000000000000000000000000000010f2c'
+      );
+      // No constructor
+      throws(() =>
+        deployContract(
+          [{}],
+          '0x6080604052348015600f57600080fd5b50603f80601d6000396000f3fe6080604052600080fdfea2646970667358221220116554d4ba29ee08da9e97dc54ff9a2a65d67a648140d616fc225a25ff08c86364736f6c63430008070033',
+          69420n
+        )
+      );
+      // Arguments to constructor without any
+      throws(() =>
+        deployContract(
+          [{ type: 'constructor', stateMutability: 'nonpayable' }],
+          '0x6080604052348015600f57600080fd5b50603f80601d6000396000f3fe6080604052600080fdfea2646970667358221220116554d4ba29ee08da9e97dc54ff9a2a65d67a648140d616fc225a25ff08c86364736f6c63430008070033',
+          69420n
+        )
+      );
+      throws(() =>
+        deployContract(
+          [{ type: 'constructor', inputs: undefined, stateMutability: 'nonpayable' }],
+          '0x6080604052348015600f57600080fd5b50603f80601d6000396000f3fe6080604052600080fdfea2646970667358221220116554d4ba29ee08da9e97dc54ff9a2a65d67a648140d616fc225a25ff08c86364736f6c63430008070033',
+          69420n
+        )
+      );
+    });
   });
 });
 

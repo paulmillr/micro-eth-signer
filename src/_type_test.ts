@@ -18,6 +18,29 @@ type Writable<T> = T extends {}
 type A = Writable<Uint8Array>;
 const _a: A = Uint8Array.from([]);
 _a;
+// IsEmptyArray
+const isEmpty = <T>(a: T): abi.IsEmptyArray<T> => a as any;
+assertType<true>(isEmpty([] as const));
+assertType<false>(isEmpty([1] as const));
+assertType<false>(isEmpty(['a', 2] as const));
+assertType<false>(isEmpty(['a']));
+assertType<true>(isEmpty([] as unknown as []));
+assertType<false>(isEmpty([] as unknown as [number]));
+assertType<false>(isEmpty([] as unknown as [string, number]));
+assertType<false>(isEmpty([] as unknown as Array<string>));
+assertType<false>(isEmpty([] as never[]));
+assertType<false>(isEmpty([] as any[]));
+assertType<true>(isEmpty([] as unknown as undefined));
+assertType<true>(isEmpty(undefined));
+const t = [
+  {
+    type: 'constructor',
+    inputs: [{ name: 'a', type: 'uint256' }],
+    stateMutability: 'nonpayable',
+  },
+];
+assertType<false>(isEmpty(t));
+
 // Tests
 assertType<P.CoderType<string>>(abi.mapComponent({ type: 'string' } as const));
 assertType<P.CoderType<string[]>>(abi.mapComponent({ type: 'string[]' } as const));
@@ -113,6 +136,37 @@ assertType<{
       name: 'lol',
       type: 'function',
       inputs: [{ type: 'uint' }, { type: 'string' }],
+      outputs: [{ type: 'bytes' }, { type: 'address' }],
+    },
+  ] as const)
+);
+
+assertType<{
+  lol: {
+    encodeInput: (v: undefined) => Bytes;
+    decodeOutput: (b: Bytes) => [Bytes, string];
+  };
+}>(
+  abi.createContract([
+    {
+      name: 'lol',
+      type: 'function',
+      outputs: [{ type: 'bytes' }, { type: 'address' }],
+    },
+  ] as const)
+);
+
+assertType<{
+  lol: {
+    encodeInput: (v: undefined) => Bytes;
+    decodeOutput: (b: Bytes) => [Bytes, string];
+  };
+}>(
+  abi.createContract([
+    {
+      name: 'lol',
+      type: 'function',
+      inputs: [] as const,
       outputs: [{ type: 'bytes' }, { type: 'address' }],
     },
   ] as const)
@@ -286,3 +340,42 @@ assertType<{
 // e.encodeData('Person', { name: 'test', wallet: 1n }); // should fail
 // e.sign({ primaryType: 'Person', message: {name: 'test'}, domain: {} }, ''); // should fail
 // e.sign({ primaryType: 'Person', message: {name: 'test', wallet: '', s: 3}, domain: {} }, ''); // should fail
+
+// constructor
+
+abi.deployContract(
+  [{ type: 'constructor', inputs: [], stateMutability: 'nonpayable' }] as const,
+  '0x00'
+);
+abi.deployContract([{ type: 'constructor', stateMutability: 'nonpayable' }] as const, '0x00');
+// abi.deployContract(
+//   [{ type: 'constructor', stateMutability: 'nonpayable' }] as const,
+//   '0x00',
+//   undefined
+// ); // should fail!
+
+abi.deployContract([{ type: 'constructor', stateMutability: 'nonpayable' }], '0x00', undefined); // if we cannot infer type - it will be 'unknown' (and user forced to provide any argument, undefined is ok)
+
+abi.deployContract(
+  [
+    {
+      type: 'constructor',
+      inputs: [{ name: 'a', type: 'uint256' }],
+      stateMutability: 'nonpayable',
+    },
+  ] as const,
+  '0x00',
+  100n
+);
+
+abi.deployContract(
+  [
+    {
+      type: 'constructor',
+      inputs: [{ name: 'a', type: 'uint256' }],
+      stateMutability: 'nonpayable',
+    },
+  ],
+  '0x00',
+  100n
+);

@@ -6,8 +6,12 @@ import { astr, add0x, ethHex, strip0x } from './utils.js';
 
 export const addr = {
   RE: /^(0[xX])?([0-9a-fA-F]{40})?$/,
-  parse(address: string) {
+  parse(address: string, allowEmpty = false) {
     astr(address);
+    // NOTE: empty address allowed for 'to', but would be mistake for other address fields.
+    // '0x' instead of null/undefined because we don't want to send contract creation tx if user
+    // accidentally missed 'to' field.
+    if (allowEmpty && address === '0x') return { hasPrefix: true, data: '' };
     const res = address.match(addr.RE) || [];
     const hasPrefix = res[1] != null;
     const data = res[2];
@@ -22,10 +26,11 @@ export const addr = {
    * Address checksum is calculated by hashing with keccak_256.
    * It hashes *string*, not a bytearray: keccak('beef') not keccak([0xbe, 0xef])
    * @param nonChecksummedAddress
+   * @param allowEmpty - allows '0x'
    * @returns checksummed address
    */
-  addChecksum(nonChecksummedAddress: string): string {
-    const low = addr.parse(nonChecksummedAddress).data.toLowerCase();
+  addChecksum(nonChecksummedAddress: string, allowEmpty = false): string {
+    const low = addr.parse(nonChecksummedAddress, allowEmpty).data.toLowerCase();
     const hash = bytesToHex(keccak_256(low));
     let checksummed = '';
     for (let i = 0; i < low.length; i++) {
@@ -66,11 +71,12 @@ export const addr = {
   /**
    * Verifies checksum if the address is checksummed.
    * Always returns true when the address is not checksummed.
+   * @param allowEmpty - allows '0x'
    */
-  isValid(checksummedAddress: string): boolean {
+  isValid(checksummedAddress: string, allowEmpty = false): boolean {
     let parsed: { hasPrefix: boolean; data: string };
     try {
-      parsed = addr.parse(checksummedAddress);
+      parsed = addr.parse(checksummedAddress, allowEmpty);
     } catch (error) {
       return false;
     }
@@ -79,6 +85,6 @@ export const addr = {
     const low = address.toLowerCase();
     const upp = address.toUpperCase();
     if (address === low || address === upp) return true;
-    return addr.addChecksum(low) === checksummedAddress;
+    return addr.addChecksum(low, allowEmpty) === checksummedAddress;
   },
 };

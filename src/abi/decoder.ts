@@ -1,7 +1,7 @@
 import { keccak_256 } from '@noble/hashes/sha3';
 import { bytesToHex, concatBytes, hexToBytes } from '@noble/hashes/utils';
 import * as P from 'micro-packed';
-import { Web3CallArgs, IWeb3Provider, add0x, strip0x, omit, zip } from '../utils.js';
+import { Web3CallArgs, IWeb3Provider, add0x, strip0x, omit, zip, ethHex } from '../utils.js';
 
 /*
 There is NO network code in the file. However, a user can pass
@@ -69,6 +69,9 @@ type Writable<T> = T extends {}
     }
   : T;
 type ArrLike<T> = Array<T> | ReadonlyArray<T>;
+export type IsEmptyArray<T> =
+  T extends ReadonlyArray<any> ? (T['length'] extends 0 ? true : false) : true;
+
 export type Component<T extends string> = {
   readonly name?: string;
   readonly type: T;
@@ -191,11 +194,15 @@ export function mapComponent<T extends BaseComponent>(c: T): P.CoderType<MapType
 }
 
 // If only one arg -- use as is, otherwise construct tuple by tuple rules
-export type ArgsType<T> = T extends [Component<string>]
-  ? MapType<T[0]>
-  : T extends undefined
-    ? 1
-    : MapTuple<T>;
+export type ArgsType<T extends ReadonlyArray<any> | undefined> =
+  IsEmptyArray<T> extends true
+    ? undefined // empty arr
+    : T extends ReadonlyArray<any>
+      ? T['length'] extends 1 // single elm
+        ? MapType<T[0]>
+        : MapTuple<T>
+      : MapTuple<T>;
+
 // Because args and output are not tuple
 // TODO: try merge with mapComponent
 export function mapArgs<T extends ArrLike<Component<string>>>(
@@ -221,60 +228,47 @@ export type FunctionType = Component<'function'> & {
   readonly outputs?: ReadonlyArray<Component<string>>;
 };
 
-export type FunctionWithInputs = FunctionType & {
-  inputs: ReadonlyArray<Component<string>>;
-};
+type ContractMethodDecode<T extends FunctionType, O = ArgsType<T['outputs']>> =
+  IsEmptyArray<T['outputs']> extends true
+    ? {
+        decodeOutput: (b: Uint8Array) => void;
+      }
+    : { decodeOutput: (b: Uint8Array) => O };
 
-export type FunctionWithOutputs = FunctionType & {
-  outputs: ReadonlyArray<Component<string>>;
-};
+type ContractMethodEncode<T extends FunctionType, I = ArgsType<T['inputs']>> =
+  IsEmptyArray<T['inputs']> extends true
+    ? { encodeInput: () => Uint8Array }
+    : { encodeInput: (v: I) => Uint8Array };
 
-type ContractMethodDecode<
-  T extends FunctionType,
-  O = ArgsType<T['outputs']>,
-> = T extends FunctionWithOutputs
-  ? { decodeOutput: (b: Uint8Array) => O }
-  : {
-      decodeOutput: (b: Uint8Array) => void;
-    };
-
-type ContractMethodEncode<
-  T extends FunctionType,
-  I = ArgsType<T['inputs']>,
-> = T extends FunctionWithInputs
-  ? { encodeInput: (v: I) => Uint8Array }
-  : { encodeInput: () => Uint8Array };
-
-type ContractMethodGas<
-  T extends FunctionType,
-  I = ArgsType<T['inputs']>,
-> = T extends FunctionWithInputs
-  ? { estimateGas: (v: I) => Promise<bigint> }
-  : { estimateGas: () => Promise<bigint> };
+type ContractMethodGas<T extends FunctionType, I = ArgsType<T['inputs']>> =
+  IsEmptyArray<T['inputs']> extends true
+    ? { estimateGas: () => Promise<bigint> }
+    : { estimateGas: (v: I) => Promise<bigint> };
 
 type ContractMethodCall<
   T extends FunctionType,
   I = ArgsType<T['inputs']>,
   O = ArgsType<T['outputs']>,
-> = T extends FunctionWithInputs
-  ? T extends FunctionWithOutputs
-    ? {
-        // inputs, outputs
-        call: (v: I) => Promise<O>;
-      }
-    : {
-        // inputs, no outputs
-        call: (v: I) => Promise<void>;
-      }
-  : T extends FunctionWithOutputs
-    ? {
-        // no inputs, outputs
-        call: () => Promise<O>;
-      }
-    : {
-        // no inputs, no outputs
-        call: () => Promise<void>;
-      };
+> =
+  IsEmptyArray<T['inputs']> extends true
+    ? IsEmptyArray<T['outputs']> extends true
+      ? {
+          // no inputs, no outputs
+          call: () => Promise<void>;
+        }
+      : {
+          // no inputs, outputs
+          call: () => Promise<O>;
+        }
+    : IsEmptyArray<T['outputs']> extends true
+      ? {
+          // inputs, no outputs
+          call: (v: I) => Promise<void>;
+        }
+      : {
+          // inputs, outputs
+          call: (v: I) => Promise<O>;
+        };
 
 export type ContractMethod<T extends FunctionType> = ContractMethodEncode<T> &
   ContractMethodDecode<T>;
@@ -361,7 +355,7 @@ export function createContract<T extends ArrLike<FnArg>>(
     let name = fn.name || 'function';
     if (nameCnt[name] > 1) name = fnSignature(fn);
     const sh = fnSigHash(fn);
-    const inputs = fn.inputs ? mapArgs(fn.inputs) : undefined;
+    const inputs = fn.inputs && fn.inputs.length ? mapArgs(fn.inputs) : undefined;
     const outputs = fn.outputs ? mapArgs(fn.outputs) : undefined;
     const decodeOutput = (b: Uint8Array) => outputs && outputs.decode(b);
     const encodeInput = (v: unknown) =>
@@ -384,6 +378,35 @@ export function createContract<T extends ArrLike<FnArg>>(
     };
   }
   return res as any;
+}
+
+type GetCons<T extends ArrLike<FnArg>> = Extract<T[number], { type: 'constructor' }>;
+type ConstructorType = Component<'constructor'> & {
+  readonly inputs?: ReadonlyArray<Component<string>>;
+};
+type ConsArgs<T extends ConstructorType> =
+  IsEmptyArray<T['inputs']> extends true ? undefined : ArgsType<T['inputs']>;
+
+export function deployContract<T extends ArrLike<FnArg>>(
+  abi: T,
+  bytecodeHex: string,
+  ...args: GetCons<T> extends never
+    ? [args: unknown]
+    : ConsArgs<GetCons<T>> extends undefined
+      ? []
+      : [args: ConsArgs<GetCons<T>>]
+): string {
+  const bytecode = ethHex.decode(bytecodeHex);
+  let consCall;
+  for (let fn of abi) {
+    if (fn.type !== 'constructor') continue;
+    const inputs = fn.inputs && fn.inputs.length ? mapArgs(fn.inputs) : undefined;
+    if (inputs === undefined && args !== undefined && args.length)
+      throw new Error('arguments to constructor without any');
+    consCall = inputs ? inputs.encode(args[0] as any) : new Uint8Array();
+  }
+  if (!consCall) throw new Error('constructor not found');
+  return ethHex.encode(concatBytes(bytecode, consCall));
 }
 
 export type EventType = NamedComponent<'event'> & {

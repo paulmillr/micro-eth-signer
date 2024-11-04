@@ -352,7 +352,7 @@ export const RawTx = P.apply(createTxMap(TxVersions), {
   // NOTE: we apply checksum to addresses here, since chainId is not available inside coders
   // By construction 'to' field is decoded before anything about chainId is known
   encode: (data) => {
-    data.data.to = addr.addChecksum(data.data.to);
+    data.data.to = addr.addChecksum(data.data.to, true);
     if (data.type !== 'legacy' && data.data.accessList) {
       for (const item of data.data.accessList) {
         item.address = addr.addChecksum(item.address);
@@ -434,18 +434,23 @@ const validators: Record<string, (num: any, { strict, type, data }: ValidationOp
     if (strict) minmax(num, amounts.minGasLimit, amounts.maxGasLimit);
     else minmax(num, 0n, amounts.maxUint64);
   },
-  to(address: string) {
-    if (!addr.isValid(address)) throw new Error('address checksum does not match');
+  to(address: string, { strict, data }: ValidationOpts) {
+    if (!addr.isValid(address, true)) throw new Error('address checksum does not match');
+    if (strict && address === '0x' && !data.data)
+      throw new Error('Empty address (0x) without contract deployment code');
   },
   value(num: bigint) {
     abig(num);
     minmax(num, 0n, amounts.maxAmount, '>= 0 and < 100M eth');
   },
-  data(val: string, { strict }: ValidationOpts) {
+  data(val: string, { strict, data }: ValidationOpts) {
     if (typeof val !== 'string') throw new Error('data must be string');
     if (strict) {
       if (val.length > amounts.maxDataSize) throw new Error('data is too big: ' + val.length);
     }
+    // NOTE: data is hex here
+    if (data.to === '0x' && val.length > 2 * amounts.maxInitDataSize)
+      throw new Error(`initcode is too big: ${val.length}`);
   },
   chainId(num: bigint, { strict, type }: ValidationOpts) {
     // chainId is optional for legacy transactions
