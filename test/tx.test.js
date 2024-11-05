@@ -885,6 +885,13 @@ describe('Transactions', () => {
     deepStrictEqual(RawTx.decode(newTx.toRawBytes()), RawTx.decode(ethHex.decode(txHex)));
     deepStrictEqual(newTx.toHex(), txHex);
   });
+  should('parse weird TXs without to or data', () => {
+    const h = '0x02f8540a22830f4240830f453882d221808080c080a0c1bbbdf2a0949ca12d902d41b21cc7ba773ed40b8d1234ee3fbbfb6b8859b3dba064856c2d547c3ef008a0b030d10a5e68afe87f2729dd5677c64b52433be89dd8';
+    const tx = Transaction.fromHex(h);
+    deepStrictEqual(tx.sender, '0x2871E11949aE3F1b71850D2CB3FF25fBE892EDA6');
+    deepStrictEqual(tx.verifySignature(), true);
+    deepStrictEqual(tx.toHex(), h);
+  })
 });
 
 // ESM is broken.
