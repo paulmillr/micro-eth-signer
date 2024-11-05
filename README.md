@@ -41,6 +41,7 @@ If you don't like NPM, a standalone [eth-signer.js](https://github.com/paulmillr
   - [SSZ parsing](#ssz-parsing)
 - Utilities
   - [KZG EIP-4844 proofs](#kzg-eip-4844-proofs)
+  - [Verkle trees](#verkle-trees)
   - [Send whole account balance](#send-whole-account-balance)
   - [Sign and verify messages with EIP-191, EIP-712](#sign-and-verify-messages)
 - [Security](#security)
@@ -478,6 +479,14 @@ const proof = kzg.computeBlobProof(blob, commitment);
 console.log('Blob proof:', proof);
 const isValidB = kzg.verifyBlobProof(blob, commitment, proof);
 ```
+
+#### Verkle trees
+
+```ts
+import * as verkle from 'micro-eth-signer/verkle';
+```
+
+The library has experimental [Verkle tree](https://verkle.info) implementation.
 
 #### Send whole account balance
 
