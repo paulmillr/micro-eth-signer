@@ -21,14 +21,15 @@ export async function main() {
   const SAMPLES = {
     commitToScalars: 10_000,
     createProof: 50,
-    getTreeKey: 10_000,
-    hashCommitment: 1_000_000,
-    serializeCommitment: 2_000_000,
-    updateCommitment: 10_000,
+    getTreeKey: 100_000,
+    hashCommitment: 2_000_000,
+    serializeCommitment: 3_000_000,
+    updateCommitment: 500_000,
     verifyExecutionWitnessPreState: 10_000,
     verifyProof: 100,
   };
   for (const k in VERKLE_MONOREPO) {
+    //if (k !== 'getTreeKey') continue;
     const v = VERKLE_MONOREPO[k][0];
     const args = v.arguments;
     await compare(`${k}`, SAMPLES[k], {
