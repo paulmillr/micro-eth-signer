@@ -24,7 +24,7 @@ export type SwapElm = {
 
 export function addPercent(n: bigint, _perc: number) {
   const perc = BigInt((_perc * 10000) | 0);
-  const p100 = 100n * 10000n;
+  const p100 = BigInt(100) * BigInt(10000);
   return ((p100 + perc) * n) / p100;
 }
 

@@ -46,10 +46,10 @@ export const authorization = {
 const DEFAULTS = {
   accessList: [], // needs to be .slice()-d to create new reference
   authorizationList: [],
-  chainId: 1n, // mainnet
+  chainId: BigInt(1), // mainnet
   data: '',
-  gasLimit: 21000n, // TODO: investigate if limit is smaller in eip4844 txs
-  maxPriorityFeePerGas: 1n * amounts.GWEI, // Reduce fingerprinting by using standard, popular value
+  gasLimit: BigInt(21000), // TODO: investigate if limit is smaller in eip4844 txs
+  maxPriorityFeePerGas: BigInt(1) * amounts.GWEI, // Reduce fingerprinting by using standard, popular value
   type: 'eip1559',
 } as const;
 type DefaultField = keyof typeof DEFAULTS;
@@ -150,11 +150,12 @@ export class Transaction<T extends TxType> {
    * @returns new transaction with adjusted amounts
    */
   setWholeAmount(accountBalance: bigint, burnRemaining = true): Transaction<T> {
-    if (typeof accountBalance !== 'bigint' || accountBalance <= 0n)
+    const _0n = BigInt(0);
+    if (typeof accountBalance !== 'bigint' || accountBalance <= _0n)
       throw new Error('account balance must be bigger than 0');
     const fee = this.fee;
     const amountToSend = accountBalance - fee;
-    if (amountToSend <= 0n) throw new Error('account balance must be bigger than fee of ' + fee);
+    if (amountToSend <= _0n) throw new Error('account balance must be bigger than fee of ' + fee);
     const raw = { ...this.raw, value: amountToSend };
     if (!['legacy', 'eip2930'].includes(this.type) && burnRemaining) {
       const r = raw as SpecifyVersionNeg<['legacy', 'eip2930']>;

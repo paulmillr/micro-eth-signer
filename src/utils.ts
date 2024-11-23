@@ -24,24 +24,24 @@ export type IWeb3Provider = {
 
 const ETH_PRECISION = 18;
 const GWEI_PRECISION = 9;
-const GWEI = 10n ** BigInt(GWEI_PRECISION);
-const ETHER = 10n ** BigInt(ETH_PRECISION);
+const GWEI = BigInt(10) ** BigInt(GWEI_PRECISION);
+const ETHER = BigInt(10) ** BigInt(ETH_PRECISION);
 export const amounts = /* @__PURE__ */ (() => ({
   GWEI_PRECISION,
   ETH_PRECISION,
   GWEI,
   ETHER,
   // Disabled with "strict=false"
-  maxAmount: 1_000_000n * ETHER, // 1M ether for testnets
-  minGasLimit: 21_000n, // 21K wei is used at minimum. Possibly smaller gas limit in 4844 txs?
-  maxGasLimit: 30_000_000n, // 30M wei. A block limit in 2024 is 30M
-  maxGasPrice: 10_000n * GWEI, // 10K gwei. Arbitrage HFT bots can use more
-  maxNonce: 131_072n, // 2**17, but in spec it's actually 2**64-1
+  maxAmount: BigInt(1_000_000) * ETHER, // 1M ether for testnets
+  minGasLimit: BigInt(21_000), // 21K wei is used at minimum. Possibly smaller gas limit in 4844 txs?
+  maxGasLimit: BigInt(30_000_000), // 30M wei. A block limit in 2024 is 30M
+  maxGasPrice: BigInt(10_000) * GWEI, // 10K gwei. Arbitrage HFT bots can use more
+  maxNonce: BigInt(131_072), // 2**17, but in spec it's actually 2**64-1
   maxDataSize: 1_000_000, // Size of .data field. TODO: research
   maxInitDataSize: 49_152, // EIP-3860
   maxChainId: BigInt(2 ** 32 - 1),
-  maxUint64: 2n ** 64n - 1n,
-  maxUint256: 2n ** 256n - 1n,
+  maxUint64: BigInt(2) ** BigInt(64) - BigInt(1),
+  maxUint256: BigInt(2) ** BigInt(256) - BigInt(1),
 }))();
 
 // For usage with other packed utils via apply
@@ -54,7 +54,7 @@ export const amounts = /* @__PURE__ */ (() => ({
 //   even 'data' can be '0x'
 //
 // 0x data = Uint8Array([])
-// 0x num = 0n
+// 0x num = BigInt(0)
 const leadingZerosRe = /^0+/;
 const genEthHex = (keepLeadingZero = true): Coder<Uint8Array, string> => ({
   decode: (data: string): Uint8Array => {
@@ -89,7 +89,7 @@ export function numberTo0xHex(num: number | bigint): string {
 
 export function hexToNumber(hex: string): bigint {
   if (typeof hex !== 'string') throw new TypeError('expected hex string, got ' + typeof hex);
-  return hex ? BigInt(add0x(hex)) : 0n;
+  return hex ? BigInt(add0x(hex)) : BigInt(0);
 }
 
 export function isObject(item: unknown): item is Record<string, any> {
@@ -101,7 +101,7 @@ export function astr(str: unknown) {
 }
 
 export function cloneDeep<T>(obj: T): T {
-  if (obj instanceof Uint8Array) {
+  if (isBytes(obj)) {
     return Uint8Array.from(obj) as T;
   } else if (Array.isArray(obj)) {
     return obj.map(cloneDeep) as unknown as T;
@@ -148,7 +148,7 @@ export const formatters = {
     //x = 0.01/price = 1/100 / price = 1/(100*price)
     // float does not have enough precision
     const totalPrice = fiatPrec.decode('' + price);
-    const centPrice = fiatPrec.decode('0.01') * 10n ** BigInt(precision);
+    const centPrice = fiatPrec.decode('0.01') * BigInt(10) ** BigInt(precision);
     return centPrice / totalPrice;
   },
   // TODO: what difference between decimal and this?!
@@ -179,10 +179,10 @@ export const formatters = {
 
   fromWei(wei: string | number | bigint) {
     const GWEI = 10 ** 9;
-    const ETHER = 10n ** BigInt(ETH_PRECISION);
+    const ETHER = BigInt(10) ** BigInt(ETH_PRECISION);
     wei = BigInt(wei);
-    if (wei < BigInt(GWEI) / 10n) return wei + 'wei';
-    if (wei >= BigInt(GWEI) && wei < ETHER / 1000n)
+    if (wei < BigInt(GWEI) / BigInt(10)) return wei + 'wei';
+    if (wei >= BigInt(GWEI) && wei < ETHER / BigInt(1000))
       return formatters.formatBigint(wei, BigInt(GWEI), 9, false) + 'μeth';
     return formatters.formatBigint(wei, ETHER, ETH_PRECISION, false) + 'eth';
   },

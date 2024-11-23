@@ -92,7 +92,8 @@ export const RLP = P.apply(rlpInner, {
         if (data === 0) return this.decode(empty);
         return this.decode(numberToVarBytesBE(data));
       case 'bigint':
-        if (data < 0n) throw new Error('RLP.encode: invalid integer as argument, must be unsigned');
+        if (data < BigInt(0))
+          throw new Error('RLP.encode: invalid integer as argument, must be unsigned');
         return this.decode(numberToVarBytesBE(data));
       case 'string':
         return this.decode(data.startsWith('0x') ? phex.encode(data) : pstr.encode(data));

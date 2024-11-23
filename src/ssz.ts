@@ -191,12 +191,13 @@ const int = (len: number, small = true) =>
     },
   });
 
+const _0n = BigInt(0);
 export const uint8 = basic('uint8', int(1), 0);
 export const uint16 = basic('uint16', int(2), 0);
 export const uint32 = basic('uint32', int(4), 0);
-export const uint64 = basic('uint64', int(8, false), 0n);
-export const uint128 = basic('uint128', int(16, false), 0n);
-export const uint256 = basic('uint256', int(32, false), 0n);
+export const uint64 = basic('uint64', int(8, false), _0n);
+export const uint128 = basic('uint128', int(16, false), _0n);
+export const uint256 = basic('uint256', int(32, false), _0n);
 export const boolean = basic('boolean', P.bool, false);
 
 const array = <T>(len: P.Length, inner: SSZCoder<T>): P.CoderType<T[]> => {

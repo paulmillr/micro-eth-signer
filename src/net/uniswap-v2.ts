@@ -53,13 +53,15 @@ export function amount(
   if (!reserveIn || !reserveOut || (amountOut && amountOut >= reserveOut))
     throw new Error('Uniswap: Insufficient reserves');
   if (amountIn) {
-    const amountInWithFee = amountIn * 997n;
-    const amountOut = (amountInWithFee * reserveOut) / (reserveIn * 1000n + amountInWithFee);
-    if (amountOut === 0n || amountOut >= reserveOut)
+    const amountInWithFee = amountIn * BigInt(997);
+    const amountOut = (amountInWithFee * reserveOut) / (reserveIn * BigInt(1000) + amountInWithFee);
+    if (amountOut === BigInt(0) || amountOut >= reserveOut)
       throw new Error('Uniswap: Insufficient reserves');
     return amountOut;
   } else if (amountOut)
-    return (reserveIn * amountOut * 1000n) / ((reserveOut - amountOut) * 997n) + 1n;
+    return (
+      (reserveIn * amountOut * BigInt(1000)) / ((reserveOut - amountOut) * BigInt(997)) + BigInt(1)
+    );
   else throw new Error('uniswap.amount: provide only one amount');
 }
 
@@ -172,7 +174,7 @@ export function txData(
     path: path.path,
   });
   const amount = amountIn ? amountIn : amountInMax;
-  const value = input === 'eth' ? amount : 0n;
+  const value = input === 'eth' ? amount : BigInt(0);
   const allowance = input === 'eth' ? undefined : { token: input, amount };
   return { to: UNISWAP_V2_ROUTER_CONTRACT, value, data, allowance };
 }

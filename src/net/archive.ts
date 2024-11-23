@@ -665,23 +665,24 @@ export class Web3Provider implements IWeb3Provider {
 export function calcTransfersDiff(transfers: TxTransfers[]): (TxTransfers & Balances)[] {
   const balances: Record<string, bigint> = {};
   const tokenBalances: Record<string, Record<string, bigint>> = {};
+  let _0 = BigInt(0);
   for (const t of transfers) {
     for (const it of t.transfers) {
       if (it.from) {
-        if (balances[it.from] === undefined) balances[it.from] = 0n;
+        if (balances[it.from] === undefined) balances[it.from] = _0;
         balances[it.from] -= it.value;
       }
       if (it.to) {
-        if (balances[it.to] === undefined) balances[it.to] = 0n;
+        if (balances[it.to] === undefined) balances[it.to] = _0;
         balances[it.to] += it.value;
       }
     }
     for (const tt of t.tokenTransfers) {
       if (!tokenBalances[tt.contract]) tokenBalances[tt.contract] = {};
       const token = tokenBalances[tt.contract];
-      if (token[tt.from] === undefined) token[tt.from] = 0n;
+      if (token[tt.from] === undefined) token[tt.from] = _0;
       token[tt.from] -= tt.value;
-      if (token[tt.to] === undefined) token[tt.to] = 0n;
+      if (token[tt.to] === undefined) token[tt.to] = _0;
       token[tt.to] += tt.value;
     }
     Object.assign(t, {

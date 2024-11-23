@@ -5,6 +5,8 @@ import { isObject, amounts, ethHex, isBytes } from './utils.js';
 
 // Transaction parsers
 
+const _0n = BigInt(0);
+
 export type AnyCoder = Record<string, P.Coder<any, any>>;
 export type AnyCoderStream = Record<string, P.CoderType<any>>;
 
@@ -55,7 +57,7 @@ const createTxMap = <T extends AnyCoderStream>(versions: T): P.CoderType<Version
  * - optional fields change the length of underlying array
  */
 const isOptBig = (a: unknown) => a === undefined || typeof a === 'bigint';
-const isNullOr0 = (a: unknown) => a === undefined || a === 0n;
+const isNullOr0 = (a: unknown) => a === undefined || a === BigInt(0);
 
 function assertYParityValid(elm: number) {
   // TODO: is this correct? elm = 0 default?
@@ -90,12 +92,12 @@ export const legacySig = {
     if (v === undefined) return { chainId: undefined };
     // TODO: handle (invalid?) negative v
     if (typeof v !== 'bigint') throw new Error(`invalid v type=${typeof v}`);
-    if ((r === undefined && s === undefined) || (r === 0n && s === 0n)) return { chainId: v };
-    if (v === 27n) return { yParity: 0, chainId: undefined, r, s };
-    if (v === 28n) return { yParity: 1, chainId: undefined, r, s };
-    if (v < 35n) throw new Error(`wrong v=${v}`);
-    const v2 = v - 35n;
-    return { chainId: v2 >> 1n, yParity: Number(v2 & 1n), r, s };
+    if ((r === undefined && s === undefined) || (r === _0n && s === _0n)) return { chainId: v };
+    if (v === BigInt(27)) return { yParity: 0, chainId: undefined, r, s };
+    if (v === BigInt(28)) return { yParity: 1, chainId: undefined, r, s };
+    if (v < BigInt(35)) throw new Error(`wrong v=${v}`);
+    const v2 = v - BigInt(35);
+    return { chainId: v2 >> BigInt(1), yParity: Number(v2 & BigInt(1)), r, s };
   },
   decode: (data: YRS) => {
     aobj(data);
@@ -107,12 +109,12 @@ export const legacySig = {
       throw new Error(`wrong yParity type=${typeof chainId}`);
     if (yParity === undefined) {
       if (chainId !== undefined) {
-        if ((r !== undefined && r !== 0n) || (s !== undefined && s !== 0n))
+        if ((r !== undefined && r !== _0n) || (s !== undefined && s !== _0n))
           throw new Error(`wrong unsigned legacy r=${r} s=${s}`);
-        return { v: chainId, r: 0n, s: 0n };
+        return { v: chainId, r: _0n, s: _0n };
       }
       // no parity, chainId, but r, s exists
-      if ((r !== undefined && r !== 0n) || (s !== undefined && s !== 0n))
+      if ((r !== undefined && r !== _0n) || (s !== undefined && s !== _0n))
         throw new Error(`wrong unsigned legacy r=${r} s=${s}`);
       return {};
     }
@@ -120,7 +122,9 @@ export const legacySig = {
     if (isNullOr0(r) || isNullOr0(s)) throw new Error(`wrong unsigned legacy r=${r} s=${s}`);
     assertYParityValid(yParity);
     const v =
-      chainId !== undefined ? BigInt(yParity) + (chainId * 2n + 35n) : BigInt(yParity) + 27n;
+      chainId !== undefined
+        ? BigInt(yParity) + (chainId * BigInt(2) + BigInt(35))
+        : BigInt(yParity) + BigInt(27);
     return { v, r, s };
   },
 } as P.Coder<VRS, YRS>;
@@ -413,18 +417,18 @@ type ValidationOpts = { strict: boolean; type: TxType; data: Record<string, any>
 const validators: Record<string, (num: any, { strict, type, data }: ValidationOpts) => void> = {
   nonce(num: bigint, { strict }: ValidationOpts) {
     abig(num);
-    if (strict) minmax(num, 0n, amounts.maxNonce);
-    else minmax(BigInt(num), 0n, BigInt(Number.MAX_SAFE_INTEGER)); // amounts.maxUint64
+    if (strict) minmax(num, _0n, amounts.maxNonce);
+    else minmax(BigInt(num), _0n, BigInt(Number.MAX_SAFE_INTEGER)); // amounts.maxUint64
   },
   maxFeePerGas(num: bigint, { strict }: ValidationOpts) {
     abig(num);
-    if (strict) minmax(num, 1n, amounts.maxGasPrice, '>= 1 wei and < 10000 gwei');
-    else minmax(num, 0n, amounts.maxUint64);
+    if (strict) minmax(num, BigInt(1), amounts.maxGasPrice, '>= 1 wei and < 10000 gwei');
+    else minmax(num, _0n, amounts.maxUint64);
   },
   maxPriorityFeePerGas(num: bigint, { strict, data }: ValidationOpts) {
     abig(num);
-    if (strict) minmax(num, 0n, amounts.maxGasPrice, '>= 1 wei and < 10000 gwei');
-    else minmax(num, 0n, amounts.maxUint64, '>= 1 wei and < 10000 gwei');
+    if (strict) minmax(num, _0n, amounts.maxGasPrice, '>= 1 wei and < 10000 gwei');
+    else minmax(num, _0n, amounts.maxUint64, '>= 1 wei and < 10000 gwei');
     if (strict && data && typeof data.maxFeePerGas === 'bigint' && data.maxFeePerGas < num) {
       throw new Error(`cannot be bigger than maxFeePerGas=${data.maxFeePerGas}`);
     }
@@ -432,7 +436,7 @@ const validators: Record<string, (num: any, { strict, type, data }: ValidationOp
   gasLimit(num: bigint, { strict }: ValidationOpts) {
     abig(num);
     if (strict) minmax(num, amounts.minGasLimit, amounts.maxGasLimit);
-    else minmax(num, 0n, amounts.maxUint64);
+    else minmax(num, _0n, amounts.maxUint64);
   },
   to(address: string, { strict, data }: ValidationOpts) {
     if (!addr.isValid(address, true)) throw new Error('address checksum does not match');
@@ -441,7 +445,7 @@ const validators: Record<string, (num: any, { strict, type, data }: ValidationOp
   },
   value(num: bigint) {
     abig(num);
-    minmax(num, 0n, amounts.maxAmount, '>= 0 and < 100M eth');
+    minmax(num, _0n, amounts.maxAmount, '>= 0 and < 100M eth');
   },
   data(val: string, { strict, data }: ValidationOpts) {
     if (typeof val !== 'string') throw new Error('data must be string');
@@ -456,7 +460,7 @@ const validators: Record<string, (num: any, { strict, type, data }: ValidationOp
     // chainId is optional for legacy transactions
     if (type === 'legacy' && num === undefined) return;
     abig(num);
-    if (strict) minmax(num, 1n, amounts.maxChainId, '>= 1 and <= 2**32-1');
+    if (strict) minmax(num, BigInt(1), amounts.maxChainId, '>= 1 and <= 2**32-1');
   },
   accessList(list: AccessList) {
     // NOTE: we cannot handle this validation in coder, since it requires chainId to calculate correct checksum
@@ -469,7 +473,7 @@ const validators: Record<string, (num: any, { strict, type, data }: ValidationOp
       if (!addr.isValid(address)) throw new Error('address checksum does not match');
       // chainId in authorization list can be zero (==allow any chain)
       abig(chainId);
-      if (opts.strict) minmax(chainId, 0n, amounts.maxChainId, '>= 0 and <= 2**32-1');
+      if (opts.strict) minmax(chainId, _0n, amounts.maxChainId, '>= 0 and <= 2**32-1');
       this.nonce(nonce, opts);
     }
   },

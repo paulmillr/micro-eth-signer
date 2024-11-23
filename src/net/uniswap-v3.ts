@@ -157,7 +157,7 @@ export function txData(
     deadline,
     amountIn: (amountIn || route.amountIn) as bigint,
     amountOut: (amountOut || route.amountOut) as bigint,
-    sqrtPriceLimitX96: opt.sqrtPriceLimitX96 || 0n,
+    sqrtPriceLimitX96: opt.sqrtPriceLimitX96 || BigInt(0),
     amountInMaximum: undefined as bigint | undefined,
     amountOutMinimum: undefined as bigint | undefined,
   };
@@ -187,7 +187,7 @@ export function txData(
   }
   const data =
     calldatas.length === 1 ? calldatas[0] : ROUTER_CONTRACT['multicall'].encodeInput(calldatas);
-  const value = input === 'eth' ? (amountIn ? amountIn : args.amountInMaximum) : 0n;
+  const value = input === 'eth' ? (amountIn ? amountIn : args.amountInMaximum) : BigInt(0);
   const allowance =
     input !== 'eth'
       ? { token: input, amount: amountIn ? amountIn : args.amountInMaximum }
