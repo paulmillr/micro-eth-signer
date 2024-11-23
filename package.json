@@ -16,9 +16,9 @@
   "module": "esm/index.js",
   "types": "esm/index.d.ts",
   "dependencies": {
-    "@noble/curves": "~1.6.0",
-    "@noble/hashes": "~1.5.0",
-    "micro-packed": "~0.6.3"
+    "@noble/curves": "~1.7.0",
+    "@noble/hashes": "~1.6.0",
+    "micro-packed": "~0.7.0"
   },
   "devDependencies": {
     "@paulmillr/jsbt": "0.2.1",
