@@ -1,39 +1,41 @@
-import { numberToBytesLE, numberToBytesBE, bytesToNumberBE } from '@noble/curves/abstract/utils';
+import { numberToBytesBE, bytesToNumberBE, bytesToNumberLE } from '@noble/curves/abstract/utils';
 import { Field, FpLegendre } from '@noble/curves/abstract/modular';
-import { twistedEdwards } from '@noble/curves/abstract/edwards';
+import { ExtPointType, twistedEdwards } from '@noble/curves/abstract/edwards';
 import { bytesToHex, utf8ToBytes, hexToBytes, randomBytes } from '@noble/hashes/utils';
 import { concatBytes } from '@noble/hashes/utils';
 import { sha256 } from '@noble/hashes/sha256';
 import { ethHex } from './utils.js';
 import * as P from 'micro-packed';
+import { precomputeMSMUnsafe } from '@noble/curves/abstract/curve';
 
 const DOMAIN_SIZE = 256;
 const DOMAIN_SIZE_LOG2 = Math.log2(DOMAIN_SIZE);
 // 256 uses a lot of memory
 // 5 - default? 500 ops -> 9k ops for getTreeKey
 // 256 - uses a lot of memory (169mb), but 40 -> 6.8k ops for commitToScalars
-const MSM_PRECOMPUTE_SMALL = 256;
-const MSM_PRECOMPUTE_WINDOW = 4; // wasm uses 12 bit windows here, but it is too slow for us
-const TWO_POW_128 = 2n ** 128n;
+const MSM_PRECOMPUTE_SMALL = 5;
+const MSM_PRECOMPUTE_WINDOW = 8;
+const MSM_PRECOMPUTE_2_SIZE = 8;
+const TWO_POW_128 = BigInt(2) ** BigInt(128);
 
 const Fp = Field(
-  52435875175126190479447740508185965837690552500527637822603658699938581184513n,
+  BigInt('52435875175126190479447740508185965837690552500527637822603658699938581184513'),
   undefined,
   true
 );
 const Fr = Field(
-  13108968793781547619861935127046491459309155893440570251786403306729687672801n,
+  BigInt('13108968793781547619861935127046491459309155893440570251786403306729687672801'),
   undefined,
   true
 );
 const bandersnatch = twistedEdwards({
   Fp: Fp,
   a: BigInt(-5),
-  d: BigInt(45022363124591815672509500913686876175488063829319466900776701791074614335719n),
-  n: BigInt(52435875175126190479447740508185965837690552500527637822603658699938581184513n),
-  h: 4n,
-  Gx: BigInt(18886178867200960497001835917649091219057080094937609519140440539760939937304n),
-  Gy: BigInt(19188667384257783945677642223292697773471335439753913231509108946878080696678n),
+  d: BigInt('45022363124591815672509500913686876175488063829319466900776701791074614335719'),
+  n: BigInt('52435875175126190479447740508185965837690552500527637822603658699938581184513'),
+  h: BigInt(4),
+  Gx: BigInt('18886178867200960497001835917649091219057080094937609519140440539760939937304'),
+  Gy: BigInt('19188667384257783945677642223292697773471335439753913231509108946878080696678'),
   hash: sha256,
   randomBytes,
 });
@@ -116,24 +118,22 @@ function generateCRSPoints(seed: string, points: number) {
 }
 // This is pedersen like hashes
 const CRS_Q = Point.BASE;
-const CRS_G = generateCRSPoints('eth_verkle_oct_2021', DOMAIN_SIZE);
-for (let i = 0; i < MSM_PRECOMPUTE_SMALL; i++) {
-  // TODO: export?
-  (bandersnatch.utils as any).precompute(MSM_PRECOMPUTE_WINDOW, CRS_G[i]);
+let CRS_G: ExtPointType[];
+let precomputed = false;
+let CRS_G_PREC: any;
+let CRS_G0_TREEKEY: any;
+function precomputeOnFirstRun() {
+  if (precomputed) return;
+  CRS_G = generateCRSPoints('eth_verkle_oct_2021', DOMAIN_SIZE);
+  for (let i = 0; i < MSM_PRECOMPUTE_SMALL; i++)
+    bandersnatch.utils.precompute(MSM_PRECOMPUTE_WINDOW, CRS_G[i]);
+  CRS_G_PREC = precomputeMSMUnsafe(Point, Fr, CRS_G, MSM_PRECOMPUTE_2_SIZE);
+  CRS_G0_TREEKEY = CRS_G[0].multiplyUnsafe(BigInt(16386));
+  precomputed = true;
 }
-
 const crsMSM = (scalars: bigint[]) => {
-  if (scalars.length <= MSM_PRECOMPUTE_SMALL) {
-    let res = Point.ZERO;
-    for (let i = 0; i < scalars.length; i++) {
-      const scalar = Fr.create(scalars[i]);
-      if (Fr.is0(scalar)) continue;
-      // multiplyUnsafe uses precompute table only if G
-      res = res.add(CRS_G[i].multiply(scalar));
-    }
-    return res;
-  }
-  return Point.msm(CRS_G.slice(0, scalars.length), scalars);
+  precomputeOnFirstRun();
+  return CRS_G_PREC(scalars);
 };
 
 // Transcript
@@ -167,7 +167,7 @@ class Transcript {
 
 function mapToField(p: Point) {
   const { x, y } = p.toAffine();
-  return Fr.create(Fr.fromBytes(numberToBytesLE(Fp.div(x, y), 32)));
+  return Fr.create(Fp.div(x, y));
 }
 
 function getBarycentricWeights(domainSize: number) {
@@ -194,14 +194,15 @@ const WEIGTHS_BARYCENTRIC_INV = Fr.invertBatch(WEIGTHS_BARYCENTRIC);
 const WEIGHTS_INVERTED = getInvertedWeights(DOMAIN_SIZE);
 const WEIGHTS_INVERTED_NEG = WEIGHTS_INVERTED.map(Fr.neg);
 
-function divideByLinearVanishing(poly: Poly, idx: number) {
-  const q = new Array(poly.length).fill(Fr.ZERO);
+function divideByLinearVanishing(poly: Poly, idx: number): bigint[] {
+  const q: bigint[] = new Array(poly.length).fill(Fr.ZERO);
   const y = poly[idx];
   for (let i = 0; i < poly.length; i++) {
     if (i === idx) continue;
     const den = i - idx;
     const isNegative = den < 0;
-    const denInv = (isNegative ? WEIGHTS_INVERTED_NEG : WEIGHTS_INVERTED)[Math.abs(den) - 1];
+    const weights = isNegative ? WEIGHTS_INVERTED_NEG : WEIGHTS_INVERTED;
+    const denInv = weights[Math.abs(den) - 1];
     const qi = Fr.mul(Fr.sub(poly[i], y), denInv);
     q[i] = qi;
     const weightRatio = Fr.mul(WEIGTHS_BARYCENTRIC[idx], WEIGTHS_BARYCENTRIC_INV[i]);
@@ -210,7 +211,7 @@ function divideByLinearVanishing(poly: Poly, idx: number) {
   return q;
 }
 
-function evaluateLagrangeCoefficients(point: bigint) {
+function evaluateLagrangeCoefficients(point: bigint): bigint[] {
   const res = [];
   for (let i = 0; i < DOMAIN_SIZE; i++)
     res.push(Fr.mul(WEIGTHS_BARYCENTRIC[i], Fr.sub(point, Fr.create(BigInt(i)))));
@@ -219,7 +220,7 @@ function evaluateLagrangeCoefficients(point: bigint) {
   return Fr.invertBatch(res).map((i) => Fr.mul(i, az));
 }
 
-function innerProduct(a: bigint[], b: bigint[]) {
+function innerProduct(a: bigint[], b: bigint[]): bigint {
   let res = Fr.ZERO;
   for (let i = 0; i < a.length; i++) res = Fr.add(res, Fr.mul(a[i], b[i]));
   return res;
@@ -303,8 +304,10 @@ function multiproofCheck(proof: MultiProof, queries: VerifierQuery[], transcript
   return Point.msm(points, scalars).add(tmp).equals(Point.ZERO);
 }
 
-const scalarMulIndex = (bytes: Uint8Array, index: number) =>
-  uncompressed.encode(CRS_G[index].multiplyUnsafe(Fr.fromBytes(bytes)));
+const scalarMulIndex = (bytes: Uint8Array, index: number) => {
+  precomputeOnFirstRun();
+  return uncompressed.encode(CRS_G[index].multiplyUnsafe(Fr.fromBytes(bytes)));
+};
 
 // EXPORT
 export type Scalar = Uint8Array;
@@ -331,14 +334,13 @@ export const hashCommitments = (commitments: Uint8Array[]) => commitments.map(ha
 export const getTreeKeyHash = (address: Uint8Array, treeIndexLE: Uint8Array): Uint8Array => {
   if (address.length !== 32) throw new Error('Address must be 32 bytes');
   if (treeIndexLE.length !== 32) throw new Error('Tree index must be 32 bytes');
-  const chunks: Uint8Array[] = [
-    new Uint8Array([2, 64, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
-    address.subarray(0, 16),
-    address.subarray(16, 32),
-    treeIndexLE.subarray(0, 16),
-    treeIndexLE.subarray(16, 32),
-  ].map(extendScalar);
-  return hashCommitment(commitToScalars(chunks));
+  precomputeOnFirstRun();
+  const P0 = CRS_G[1].multiplyUnsafe(bytesToNumberLE(address.subarray(0, 16)));
+  const P1 = CRS_G[2].multiplyUnsafe(bytesToNumberLE(address.subarray(16, 32)));
+  const P2 = CRS_G[3].multiplyUnsafe(bytesToNumberLE(treeIndexLE.subarray(0, 16)));
+  const P3 = CRS_G[4].multiplyUnsafe(bytesToNumberLE(treeIndexLE.subarray(16, 32)));
+  const acc = CRS_G0_TREEKEY.add(P0).add(P1).add(P2).add(P3);
+  return Fr.toBytes(mapToField(acc));
 };
 
 export const getTreeKey = (
@@ -359,6 +361,7 @@ export const updateCommitment = (
 ): Commitment => {
   const oldCommitment = uncompressed.decode(commitment);
   const delta = Fr.sub(Fr.fromBytes(newScalarValue), Fr.fromBytes(oldScalarValue));
+  precomputeOnFirstRun();
   const deltaCommitment = CRS_G[commitmentIndex].multiplyUnsafe(delta);
   return uncompressed.encode(oldCommitment.add(deltaCommitment));
 };

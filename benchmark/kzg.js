@@ -101,3 +101,27 @@ import { deepStrictEqual } from 'node:assert';
 if (import.meta.url === url.pathToFileURL(process.argv[1]).href) {
   main();
 }
+
+/*
+M2, Nov 2024
+init
+├─wasm x 3 ops/sec @ 294ms/op
+└─noble x 161 ops/sec @ 6ms/op
+blobToKzgCommitment
+├─wasm x 3 ops/sec @ 304ms/op
+└─noble x 1 ops/sec @ 705ms/op
+computeKzgProof
+└─noble x 112 ops/sec @ 8ms/op
+computeBlobKzgProof
+├─wasm x 3 ops/sec @ 311ms/op
+└─noble x 1 ops/sec @ 725ms/op
+verifyKzgProof
+├─wasm x 241 ops/sec @ 4ms/op
+└─noble x 91 ops/sec @ 10ms/op
+verifyBlobKzgProof
+├─wasm x 109 ops/sec @ 9ms/op
+└─noble x 59 ops/sec @ 16ms/op
+verifyBlobKzgProofBatch
+├─wasm x 15 ops/sec @ 64ms/op
+└─noble x 14 ops/sec @ 71ms/op
+*/

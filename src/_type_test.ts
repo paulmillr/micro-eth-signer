@@ -4,7 +4,7 @@ import * as typed from './typed-data.js';
 // Should not be included in npm package, just for test of typescript compilation
 const assertType = <T>(_value: T) => {};
 const BytesVal = new Uint8Array();
-const BigIntVal = 0n;
+const BigIntVal = BigInt(0);
 const StringVal = 'string';
 StringVal;
 export type Bytes = Uint8Array;
@@ -365,7 +365,7 @@ abi.deployContract(
     },
   ] as const,
   '0x00',
-  100n
+  BigInt(100)
 );
 
 abi.deployContract(
@@ -377,5 +377,5 @@ abi.deployContract(
     },
   ],
   '0x00',
-  100n
+  BigInt(100)
 );
