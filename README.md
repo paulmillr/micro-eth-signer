@@ -9,7 +9,7 @@ Minimal library for Ethereum transactions, addresses and smart contracts.
 - 🆎 Execute contracts in JS: includes Chainlink and Uniswap APIs
 - 🦺 Typescript-friendly: ABI parsing, RLP, SSZ, KZG proof generation & verification
 - 🌍 Archive-node-friendly: fetch balances & history
-- 🪶 Lightweight: 1200 lines for core functionality
+- 🪶 25KB gzipped (1200 lines) for core functionality
 
 Check out article [ZSTs, ABIs, stolen keys and broken legs](https://github.com/paulmillr/micro-eth-signer/discussions/20) about caveats of secure ABI parsing found during development of the library.
 
