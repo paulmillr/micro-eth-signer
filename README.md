@@ -483,8 +483,6 @@ const isValidB = kzg.verifyBlobProof(blob, commitment, proof);
 
 ## Security
 
-Check out article [ZSTs, ABIs, stolen keys and broken legs](https://github.com/paulmillr/micro-eth-signer/discussions/20) about caveats of secure ABI parsing found during development of the library.
-
 Main points to consider when auditing the library:
 
 - ABI correctness
@@ -505,6 +503,13 @@ The library is cross-tested against other libraries (last update on 25 Feb 2024)
 - ethereum-tests v13.1
 - ethers 6.11.1
 - viem v2.7.13
+
+Check out article [ZSTs, ABIs, stolen keys and broken legs](https://github.com/paulmillr/micro-eth-signer/discussions/20) about caveats of secure ABI parsing found during development of the library.
+
+### Privacy considerations
+
+Default priority fee is 1 gwei, which matches what other wallets have.
+However, it's recommended to fetch recommended priority fee from a node.
 
 ### Sending whole balance
 
