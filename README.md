@@ -440,8 +440,8 @@ RLP.decode(RLP.encode('dog'));
 ```
 
 ```ts
-// More SSZ examples in test/ssz.test.js
 import * as ssz from 'micro-eth-signer/ssz';
+// More SSZ examples in test/ssz.test.js
 ```
 
 ### KZG & Verkle
@@ -449,7 +449,6 @@ import * as ssz from 'micro-eth-signer/ssz';
 Allows to create & verify KZG EIP-4844 proofs.
 
 ```ts
-// See https://github.com/ethereumjs/ethereumjs-monorepo for actual usage
 import * as verkle from 'micro-eth-signer/verkle';
 
 import { KZG } from 'micro-eth-signer/kzg';
@@ -457,6 +456,9 @@ import { KZG } from 'micro-eth-signer/kzg';
 import { trustedSetup } from '@paulmillr/trusted-setups';
 // 800kb, instant init
 import { trustedSetup as fastSetup } from '@paulmillr/trusted-setups/fast.js';
+
+// More KZG & Verkle examples in
+// https://github.com/ethereumjs/ethereumjs-monorepo
 
 const kzg = new KZG(trustedSetup);
 
