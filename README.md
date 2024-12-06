@@ -5,13 +5,10 @@ Minimal library for Ethereum transactions, addresses and smart contracts.
 - 🔓 Secure: 3 deps, audited [noble](https://paulmillr.com/noble/) cryptography, no network code
 - 🔻 Tree-shakeable: unused code is excluded from your builds
 - 🔍 Reliable: 150MB of test vectors from EIPs, ethers and viem
-- ✍️ Transactions: create, sign, decode with human-friendly hints
-- 🆎 Execute contracts in JS: includes Chainlink and Uniswap APIs
-- 🦺 Typescript-friendly: ABI parsing, RLP, SSZ, KZG proof generation & verification
-- 🌍 Archive-node-friendly: fetch balances & history
-- 🪶 25KB gzipped (1200 lines) for core functionality
-
-Check out article [ZSTs, ABIs, stolen keys and broken legs](https://github.com/paulmillr/micro-eth-signer/discussions/20) about caveats of secure ABI parsing found during development of the library.
+- ✍️ Core: transactions, addresses, messages
+- 🌍 Network-related: execute Uniswap & Chainlink, fetch tx history
+- 🦺 Advanced: type-safe ABI parsing, RLP, SSZ, KZG, Verkle
+- 🪶 25KB gzipped (1200 lines) for core
 
 _Check out all web3 utility libraries:_ [ETH](https://github.com/paulmillr/micro-eth-signer), [BTC](https://github.com/paulmillr/scure-btc-signer), [SOL](https://github.com/paulmillr/micro-sol-signer)
 
@@ -24,26 +21,25 @@ For [Deno](https://deno.land), ensure to use [npm specifier](https://deno.land/m
 For React Native, you may need a [polyfill for getRandomValues](https://github.com/LinusU/react-native-get-random-values).
 If you don't like NPM, a standalone [eth-signer.js](https://github.com/paulmillr/micro-eth-signer/releases) is also available.
 
-- [Create random wallet](#create-random-wallet)
-- [Transactions: create, sign](#create-and-sign-transactions)
-- [Addresses: create, checksum](#create-and-checksum-addresses)
-- [Network and smart contracts](#network-and-smart-contracts)
+- Core
+  - [Create random wallet](#create-random-wallet)
+  - [Transactions: create, sign](#transactions-create-sign)
+  - [Addresses: create, checksum](#addresses-create-checksum)
+  - [Messages: sign, verify](#messages-sign-verify)
+- Network-related
   - [Init network](#init-network)
-  - [Fetch balances and history from an archive node](#fetch-balances-and-history-from-an-archive-node)
+  - [Fetch balances and history](#fetch-balances-and-history-from-an-archive-node)
   - [Fetch Chainlink oracle prices](#fetch-chainlink-oracle-prices)
   - [Resolve ENS address](#resolve-ens-address)
   - [Swap tokens with Uniswap](#swap-tokens-with-uniswap)
-- Parsing
+- Advanced
+  - [Type-safe ABI parsing](#type-safe-abi-parsing)
   - [Human-readable transaction hints](#human-readable-transaction-hints)
   - [Human-readable event hints](#human-readable-event-hints)
-  - [ABI type inference](#abi-type-inference)
-  - [RLP parsing](#rlp-parsing)
-  - [SSZ parsing](#ssz-parsing)
-- Utilities
-  - [KZG EIP-4844 proofs](#kzg-eip-4844-proofs)
-  - [Verkle trees](#verkle-trees)
-  - [Send whole account balance](#send-whole-account-balance)
-  - [Sign and verify messages with EIP-191, EIP-712](#sign-and-verify-messages)
+  - [RLP](#rlp)
+  - [SSZ](#ssz)
+  - [KZG](#kzg)
+  - [Verkle](#verkle)
 - [Security](#security)
 - [Performance](#performance)
 - [License](#license)
@@ -93,7 +89,90 @@ console.log(
 );
 ```
 
-### Network and smart contracts
+### Messages: sign, verify
+
+There are two messaging standards: [EIP-191](https://eips.ethereum.org/EIPS/eip-191) & [EIP-712](https://eips.ethereum.org/EIPS/eip-712).
+
+#### EIP-191
+
+```ts
+import * as typed from 'micro-eth-signer/typed-data';
+
+// Example message
+const message = "Hello, Ethereum!";
+const privateKey = "0x4c0883a69102937d6231471b5dbb6204fe512961708279f1d7b1b8e7e8b1b1e1";
+
+// Sign the message
+const signature = typed.personal.sign(message, privateKey);
+console.log("Signature:", signature);
+
+// Verify the signature
+const address = "0xYourEthereumAddress";
+const isValid = typed.personal.verify(signature, message, address);
+console.log("Is valid:", isValid);
+```
+
+#### EIP-712
+
+```ts
+import * as typed from 'micro-eth-signer/typed-data';
+
+const types = {
+  Person: [
+    { name: 'name', type: 'string' },
+    { name: 'wallet', type: 'address' }
+  ],
+  Mail: [
+    { name: 'from', type: 'Person' },
+    { name: 'to', type: 'Person' },
+    { name: 'contents', type: 'string' }
+  ]
+};
+
+// Define the domain
+const domain: typed.EIP712Domain = {
+  name: 'Ether Mail',
+  version: '1',
+  chainId: 1,
+  verifyingContract: '0xCcCCccccCCCCcCCCCCCcCcCccCcCCCcCcccccccC',
+  salt: '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef'
+};
+
+// Define the message
+const message = {
+  from: {
+    name: 'Alice',
+    wallet: '0xCcCCccccCCCCcCCCCCCcCcCccCcCCCcCcccccccC'
+  },
+  to: {
+    name: 'Bob',
+    wallet: '0xbBbBBBBbbBBBbbbBbbBbbbbBBbBbbbbBbBbbBBbB'
+  },
+  contents: 'Hello, Bob!'
+};
+
+// Create the typed data
+const typedData: typed.TypedData<typeof types, 'Mail'> = {
+  types,
+  primaryType: 'Mail',
+  domain,
+  message
+};
+
+// Sign the typed data
+const privateKey = "0x4c0883a69102937d6231471b5dbb6204fe512961708279f1d7b1b8e7e8b1b1e1";
+const signature = typed.signTyped(typedData, privateKey);
+console.log("Signature:", signature);
+
+// Verify the signature
+const address = "0xYourEthereumAddress";
+const isValid = typed.verifyTyped(signature, typedData, address);
+
+// Recover the public key
+const publicKey = typed.recoverPublicKeyTyped(signature, typedData);
+```
+
+### Network-related
 
 A common problem in web3 libraries is how complex they are to audit with regards to network calls.
 
@@ -128,7 +207,11 @@ const prov2 = new Web3Provider(
 );
 ```
 
-#### Fetch balances and history from an archive node
+#### Fetch balances & history
+
+> [!NOTE]
+> Basic data can be fetched from any node.
+> Uses `trace_filter` & requires [Erigon](https://erigon.tech), others are too slow.
 
 ```ts
 const addr = '0xd8da6bf26964af9d7eed9e03e53415d37aa96045';
@@ -152,10 +235,6 @@ console.log('info for addr', addr, await prov.unspent(addr));
 // allowances(address: string, opts?: LogOpts): Promise<TxAllowances>;
 // tokenBalances(address: string, tokens: string[]): Promise<Record<string, bigint>>;
 ```
-
-Basic data can be fetched from any node.
-
-Historical balances, transactions and others can only be fetched from an archive node, such as Erigon or Reth.
 
 #### Fetch Chainlink oracle prices
 
@@ -197,7 +276,64 @@ const swapData = await swap.tx(fromAddress, toAddress);
 console.log(swapData.amount, swapData.expectedAmount, swapData.allowance);
 ```
 
-### Parsers
+### Advanced
+
+#### Type-safe ABI parsing
+
+The ABI is type-safe when `as const` is specified:
+
+```ts
+import { createContract } from 'micro-eth-signer/abi';
+const PAIR_CONTRACT = [
+  {
+    type: 'function',
+    name: 'getReserves',
+    outputs: [
+      { name: 'reserve0', type: 'uint112' },
+      { name: 'reserve1', type: 'uint112' },
+      { name: 'blockTimestampLast', type: 'uint32' },
+    ],
+  },
+] as const;
+
+const contract = createContract(PAIR_CONTRACT);
+// Would create following typescript type:
+{
+  getReserves: {
+    encodeInput: () => Uint8Array;
+    decodeOutput: (b: Uint8Array) => {
+      reserve0: bigint;
+      reserve1: bigint;
+      blockTimestampLast: bigint;
+    };
+  }
+}
+```
+
+We're parsing values as:
+
+```js
+// no inputs
+{} -> encodeInput();
+// single input
+{inputs: [{type: 'uint'}]} -> encodeInput(bigint);
+// all inputs named
+{inputs: [{type: 'uint', name: 'lol'}, {type: 'address', name: 'wut'}]} -> encodeInput({lol: bigint, wut: string})
+// at least one input is unnamed
+{inputs: [{type: 'uint', name: 'lol'}, {type: 'address'}]} -> encodeInput([bigint, string])
+// Same applies for output!
+```
+
+There are following limitations:
+
+- Fixed size arrays can have 999 elements at max: string[], string[1], ..., string[999]
+- Fixed size 2d arrays can have 39 elements at max: string[][], string[][1], ..., string[39][39]
+- Which is enough for almost all cases
+- ABI must be described as constant value: `[...] as const`
+- We're not able to handle contracts with method overload (same function names with different args) — the code will still work, but not types
+
+Check out [`src/net/ens.ts`](./src/net/ens.ts) for type-safe contract execution example.
+
 
 #### Human-readable transaction hints
 
@@ -286,63 +422,7 @@ const einfo = decodeEvent(to, topics, data);
 console.log(einfo);
 ```
 
-#### ABI type inference
-
-The ABI is type-safe when `as const` is specified:
-
-```ts
-import { createContract } from 'micro-eth-signer/abi';
-const PAIR_CONTRACT = [
-  {
-    type: 'function',
-    name: 'getReserves',
-    outputs: [
-      { name: 'reserve0', type: 'uint112' },
-      { name: 'reserve1', type: 'uint112' },
-      { name: 'blockTimestampLast', type: 'uint32' },
-    ],
-  },
-] as const;
-
-const contract = createContract(PAIR_CONTRACT);
-// Would create following typescript type:
-{
-  getReserves: {
-    encodeInput: () => Uint8Array;
-    decodeOutput: (b: Uint8Array) => {
-      reserve0: bigint;
-      reserve1: bigint;
-      blockTimestampLast: bigint;
-    };
-  }
-}
-```
-
-We're parsing values as:
-
-```js
-// no inputs
-{} -> encodeInput();
-// single input
-{inputs: [{type: 'uint'}]} -> encodeInput(bigint);
-// all inputs named
-{inputs: [{type: 'uint', name: 'lol'}, {type: 'address', name: 'wut'}]} -> encodeInput({lol: bigint, wut: string})
-// at least one input is unnamed
-{inputs: [{type: 'uint', name: 'lol'}, {type: 'address'}]} -> encodeInput([bigint, string])
-// Same applies for output!
-```
-
-There are following limitations:
-
-- Fixed size arrays can have 999 elements at max: string[], string[1], ..., string[999]
-- Fixed size 2d arrays can have 39 elements at max: string[][], string[][1], ..., string[39][39]
-- Which is enough for almost all cases
-- ABI must be described as constant value: `[...] as const`
-- We're not able to handle contracts with method overload (same function names with different args) — the code will still work, but not types
-
-Check out [`src/net/ens.ts`](./src/net/ens.ts) for type-safe contract execution example.
-
-#### RLP parsing
+#### RLP
 
 We implement RLP (Recursive Length Prefix) in 100 lines of code, using [packed](https://github.com/paulmillr/micro-packed).
 
@@ -353,7 +433,7 @@ import { RLP } from 'micro-eth-signer/rlp';
 RLP.decode(RLP.encode('dog'));
 ```
 
-#### SSZ parsing
+#### SSZ
 
 We implement SSZ (simple serialize) in 1500 lines of code, using [packed](https://github.com/paulmillr/micro-packed).
 Stable containers from [EIP-7495](https://eips.ethereum.org/EIPS/eip-7495) are supported.
@@ -364,89 +444,9 @@ Check out [ssz.test.js](https://github.com/paulmillr/micro-eth-signer/blob/main/
 import * as ssz from 'micro-eth-signer/ssz';
 ```
 
-### Sign and verify messages
+#### KZG
 
-#### EIP-191
-
-```ts
-import * as typed from 'micro-eth-signer/typed-data';
-
-// Example message
-const message = "Hello, Ethereum!";
-const privateKey = "0x4c0883a69102937d6231471b5dbb6204fe512961708279f1d7b1b8e7e8b1b1e1";
-
-// Sign the message
-const signature = typed.personal.sign(message, privateKey);
-console.log("Signature:", signature);
-
-// Verify the signature
-const address = "0xYourEthereumAddress";
-const isValid = typed.personal.verify(signature, message, address);
-console.log("Is valid:", isValid);
-```
-
-#### EIP-712
-
-```ts
-import { signTyped, verifyTyped, recoverPublicKeyTyped, EIP712Domain, TypedData } from './typed-data';
-const types = {
-  Person: [
-    { name: 'name', type: 'string' },
-    { name: 'wallet', type: 'address' }
-  ],
-  Mail: [
-    { name: 'from', type: 'Person' },
-    { name: 'to', type: 'Person' },
-    { name: 'contents', type: 'string' }
-  ]
-};
-
-// Define the domain
-const domain: EIP712Domain = {
-  name: 'Ether Mail',
-  version: '1',
-  chainId: 1,
-  verifyingContract: '0xCcCCccccCCCCcCCCCCCcCcCccCcCCCcCcccccccC',
-  salt: '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef'
-};
-
-// Define the message
-const message = {
-  from: {
-    name: 'Alice',
-    wallet: '0xCcCCccccCCCCcCCCCCCcCcCccCcCCCcCcccccccC'
-  },
-  to: {
-    name: 'Bob',
-    wallet: '0xbBbBBBBbbBBBbbbBbbBbbbbBBbBbbbbBbBbbBBbB'
-  },
-  contents: 'Hello, Bob!'
-};
-
-// Create the typed data
-const typedData: TypedData<typeof types, 'Mail'> = {
-  types,
-  primaryType: 'Mail',
-  domain,
-  message
-};
-
-// Sign the typed data
-const privateKey = "0x4c0883a69102937d6231471b5dbb6204fe512961708279f1d7b1b8e7e8b1b1e1";
-const signature = signTyped(typedData, privateKey);
-console.log("Signature:", signature);
-
-// Verify the signature
-const address = "0xYourEthereumAddress";
-const isValid = verifyTyped(signature, typedData, address);
-
-// Recover the public key
-const publicKey = recoverPublicKeyTyped(signature, typedData);
-```
-
-### Utilities
-
-#### KZG EIP-4844 proofs
+Allows to create & verify KZG EIP-4844 proofs.
 
 ```ts
 import { KZG } from 'micro-eth-signer/kzg';
@@ -480,13 +480,13 @@ console.log('Blob proof:', proof);
 const isValidB = kzg.verifyBlobProof(blob, commitment, proof);
 ```
 
-#### Verkle trees
+#### Verkle
+
+Experimental [Verkle tree](https://verkle.info) implementation.
 
 ```ts
 import * as verkle from 'micro-eth-signer/verkle';
 ```
-
-The library has experimental [Verkle tree](https://verkle.info) implementation.
 
 #### Send whole account balance
 
@@ -525,6 +525,8 @@ payments for services have specific amounts, and not _the whole amount_.
 
 ## Security
 
+Check out article [ZSTs, ABIs, stolen keys and broken legs](https://github.com/paulmillr/micro-eth-signer/discussions/20) about caveats of secure ABI parsing found during development of the library.
+
 Main points to consider when auditing the library:
 
 - ABI correctness
@@ -549,7 +551,7 @@ The library is cross-tested against other libraries (last update on 25 Feb 2024)
 ## Performance
 
 Transaction signature matches `noble-curves` `sign()` speed,
-which means over 4000 times per second on macs.
+which means over 4000 times per second on an M2 mac.
 
 The first call of `sign` will take 20ms+ due to noble-curves secp256k1 `utils.precompute`.
 
