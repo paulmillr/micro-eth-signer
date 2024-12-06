@@ -36,10 +36,8 @@ If you don't like NPM, a standalone [eth-signer.js](https://github.com/paulmillr
   - [Type-safe ABI parsing](#type-safe-abi-parsing)
   - [Human-readable transaction hints](#human-readable-transaction-hints)
   - [Human-readable event hints](#human-readable-event-hints)
-  - [RLP](#rlp)
-  - [SSZ](#ssz)
-  - [KZG](#kzg)
-  - [Verkle](#verkle)
+  - [RLP & SSZ](#rlp--ssz)
+  - [KZG & Verkle](#kzg--verkle)
 - [Security](#security)
 - [Performance](#performance)
 - [License](#license)
@@ -68,6 +66,10 @@ const tx = Transaction.prepare({
 const signedTx = tx.signBy(random.privateKey);
 console.log('signed tx', signedTx, signedTx.toHex());
 console.log('fee', signedTx.fee);
+
+// Send whole account balance. See Security section for caveats
+const CURRENT_BALANCE = '1.7182050000017'; // in eth
+const txSendingWholeBalance = unsignedTx.setWholeAmount(weieth.decode(CURRENT_BALANCE));
 ```
 
 We support legacy, EIP2930, EIP1559, EIP4844 and EIP7702 transactions.
@@ -422,33 +424,37 @@ const einfo = decodeEvent(to, topics, data);
 console.log(einfo);
 ```
 
-#### RLP
+#### RLP & SSZ
 
-We implement RLP (Recursive Length Prefix) in 100 lines of code, using [packed](https://github.com/paulmillr/micro-packed).
+[packed](https://github.com/paulmillr/micro-packed) allows us to implement
+RLP in just 100 lines of code, and SSZ in 1500 lines.
 
-Check out [rlp.test.js](https://github.com/paulmillr/micro-eth-signer/blob/main/test/rlp.test.js) for example usage.
+SSZ includes [EIP-7495](https://eips.ethereum.org/EIPS/eip-7495) stable containers.
 
 ```ts
 import { RLP } from 'micro-eth-signer/rlp';
 RLP.decode(RLP.encode('dog'));
 ```
 
-#### SSZ
-
-We implement SSZ (simple serialize) in 1500 lines of code, using [packed](https://github.com/paulmillr/micro-packed).
-Stable containers from [EIP-7495](https://eips.ethereum.org/EIPS/eip-7495) are supported.
-
-Check out [ssz.test.js](https://github.com/paulmillr/micro-eth-signer/blob/main/test/ssz.test.js) for example usage.
-
 ```ts
+// More RLP examples in
+// https://github.com/paulmillr/micro-eth-signer/blob/main/test/rlp.test.js
+import { RLP } from 'micro-eth-signer/rlp';
+RLP.decode(RLP.encode('dog'));
+
+// More SSZ examples in
+// https://github.com/paulmillr/micro-eth-signer/blob/main/test/ssz.test.js
 import * as ssz from 'micro-eth-signer/ssz';
 ```
 
-#### KZG
+#### KZG & Verkle
 
 Allows to create & verify KZG EIP-4844 proofs.
 
 ```ts
+// See https://github.com/ethereumjs/ethereumjs-monorepo for actual usage
+import * as verkle from 'micro-eth-signer/verkle';
+
 import { KZG } from 'micro-eth-signer/kzg';
 // 400kb, 4-sec init
 import { trustedSetup } from '@paulmillr/trusted-setups';
@@ -480,49 +486,6 @@ console.log('Blob proof:', proof);
 const isValidB = kzg.verifyBlobProof(blob, commitment, proof);
 ```
 
-#### Verkle
-
-Experimental [Verkle tree](https://verkle.info) implementation.
-
-```ts
-import * as verkle from 'micro-eth-signer/verkle';
-```
-
-#### Send whole account balance
-
-```ts
-import { addr, Transaction, weigwei, weieth } from 'micro-eth-signer';
-const privKey = '0x6b911fd37cdf5c81d4c0adb1ab7fa822ed253ab0ad9aa18d77257c88b29b718e';
-const senderAddr = addr.fromPrivateKey(privKey);
-const unsignedTx = Transaction.prepare({
-  to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
-  maxFeePerGas: weigwei.decode('100'), // 100 gwei in wei
-  value: weieth.decode('1.1'), // 1.1 eth in wei
-  nonce: 0n,
-});
-
-const CURRENT_BALANCE = '1.7182050000017'; // eth
-const txSendingWholeBalance = unsignedTx.setWholeAmount(weieth.decode(CURRENT_BALANCE));
-```
-
-Creates transaction which sends whole account balance. Does two things:
-
-1. `amount = accountBalance - maxFeePerGas * gasLimit`
-2. `maxPriorityFeePerGas = maxFeePerGas`
-
-Every eth block sets a fee for all its transactions, called base fee.
-maxFeePerGas indicates how much gas user is able to spend in the worst case.
-If the block's base fee is 5 gwei, while user is able to spend 10 gwei in maxFeePerGas,
-the transaction would only consume 5 gwei. That means, base fee is unknown
-before the transaction is included in a block.
-
-By setting priorityFee to maxFee, we make the process deterministic:
-`maxFee = 10, maxPriority = 10, baseFee = 5` would always spend 10 gwei.
-In the end, the balance would become 0.
-
-WARNING: using the method would decrease privacy of a transfer, because
-payments for services have specific amounts, and not _the whole amount_.
-
 ## Security
 
 Check out article [ZSTs, ABIs, stolen keys and broken legs](https://github.com/paulmillr/micro-eth-signer/discussions/20) about caveats of secure ABI parsing found during development of the library.
@@ -547,6 +510,33 @@ The library is cross-tested against other libraries (last update on 25 Feb 2024)
 - ethereum-tests v13.1
 - ethers 6.11.1
 - viem v2.7.13
+
+### Sending whole balance
+
+There is a method `setWholeAmount` which allows to send whole account balance:
+
+```ts
+const CURRENT_BALANCE = '1.7182050000017'; // in eth
+const txSendingWholeBalance = unsignedTx.setWholeAmount(weieth.decode(CURRENT_BALANCE));
+```
+
+It does two things:
+
+1. `amount = accountBalance - maxFeePerGas * gasLimit`
+2. `maxPriorityFeePerGas = maxFeePerGas`
+
+Every eth block sets a fee for all its transactions, called base fee.
+maxFeePerGas indicates how much gas user is able to spend in the worst case.
+If the block's base fee is 5 gwei, while user is able to spend 10 gwei in maxFeePerGas,
+the transaction would only consume 5 gwei. That means, base fee is unknown
+before the transaction is included in a block.
+
+By setting priorityFee to maxFee, we make the process deterministic:
+`maxFee = 10, maxPriority = 10, baseFee = 5` would always spend 10 gwei.
+In the end, the balance would become 0.
+
+WARNING: using the method would decrease privacy of a transfer, because
+payments for services have specific amounts, and not _the whole amount_.
 
 ## Performance
 
