@@ -42,7 +42,9 @@ If you don't like NPM, a standalone [eth-signer.js](https://github.com/paulmillr
 - [Performance](#performance)
 - [License](#license)
 
-### Create random wallet
+### Core
+
+#### Create random wallet
 
 ```ts
 import { addr } from 'micro-eth-signer';
@@ -52,7 +54,7 @@ console.log(random.privateKey, random.address);
 // '0x26d930712fd2f612a107A70fd0Ad79b777cD87f6'
 ```
 
-### Transactions: create, sign
+#### Transactions: create, sign
 
 ```ts
 import { Transaction, weigwei, weieth } from 'micro-eth-signer';
@@ -74,7 +76,7 @@ const txSendingWholeBalance = unsignedTx.setWholeAmount(weieth.decode(CURRENT_BA
 
 We support legacy, EIP2930, EIP1559, EIP4844 and EIP7702 transactions.
 
-### Addresses: create, checksum
+#### Addresses: create, checksum
 
 ```ts
 import { addr } from 'micro-eth-signer';
@@ -91,11 +93,11 @@ console.log(
 );
 ```
 
-### Messages: sign, verify
+#### Messages: sign, verify
 
 There are two messaging standards: [EIP-191](https://eips.ethereum.org/EIPS/eip-191) & [EIP-712](https://eips.ethereum.org/EIPS/eip-712).
 
-#### EIP-191
+##### EIP-191
 
 ```ts
 import * as typed from 'micro-eth-signer/typed-data';
@@ -114,7 +116,7 @@ const isValid = typed.personal.verify(signature, message, address);
 console.log("Is valid:", isValid);
 ```
 
-#### EIP-712
+##### EIP-712
 
 ```ts
 import * as typed from 'micro-eth-signer/typed-data';
