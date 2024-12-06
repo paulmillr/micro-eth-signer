@@ -42,9 +42,9 @@ If you don't like NPM, a standalone [eth-signer.js](https://github.com/paulmillr
 - [Performance](#performance)
 - [License](#license)
 
-### Core
+## Core
 
-#### Create random wallet
+### Create random wallet
 
 ```ts
 import { addr } from 'micro-eth-signer';
@@ -54,7 +54,7 @@ console.log(random.privateKey, random.address);
 // '0x26d930712fd2f612a107A70fd0Ad79b777cD87f6'
 ```
 
-#### Transactions: create, sign
+### Transactions: create, sign
 
 ```ts
 import { Transaction, weigwei, weieth } from 'micro-eth-signer';
@@ -76,7 +76,7 @@ const txSendingWholeBalance = unsignedTx.setWholeAmount(weieth.decode(CURRENT_BA
 
 We support legacy, EIP2930, EIP1559, EIP4844 and EIP7702 transactions.
 
-#### Addresses: create, checksum
+### Addresses: create, checksum
 
 ```ts
 import { addr } from 'micro-eth-signer';
@@ -93,11 +93,11 @@ console.log(
 );
 ```
 
-#### Messages: sign, verify
+### Messages: sign, verify
 
 There are two messaging standards: [EIP-191](https://eips.ethereum.org/EIPS/eip-191) & [EIP-712](https://eips.ethereum.org/EIPS/eip-712).
 
-##### EIP-191
+#### EIP-191
 
 ```ts
 import * as typed from 'micro-eth-signer/typed-data';
@@ -116,7 +116,7 @@ const isValid = typed.personal.verify(signature, message, address);
 console.log("Is valid:", isValid);
 ```
 
-##### EIP-712
+#### EIP-712
 
 ```ts
 import * as typed from 'micro-eth-signer/typed-data';
@@ -176,7 +176,7 @@ const isValid = typed.verifyTyped(signature, typedData, address);
 const publicKey = typed.recoverPublicKeyTyped(signature, typedData);
 ```
 
-### Network-related
+## Network-related
 
 A common problem in web3 libraries is how complex they are to audit with regards to network calls.
 
@@ -188,7 +188,7 @@ In eth-signer, all network calls are done with user-provided function, conformin
 It's recommended to use [micro-ftch](https://github.com/paulmillr/micro-ftch),
 which works on top of fetch and implements killswitch, logging, concurrency limits and other features.
 
-#### Init network
+### Init network
 
 Most APIs (chainlink, uniswap) expect instance of Web3Provider.
 The call stack would look like this:
@@ -211,7 +211,7 @@ const prov2 = new Web3Provider(
 );
 ```
 
-#### Fetch balances & history
+### Fetch balances & history
 
 > [!NOTE]
 > Basic data can be fetched from any node.
@@ -240,7 +240,7 @@ console.log('info for addr', addr, await prov.unspent(addr));
 // tokenBalances(address: string, tokens: string[]): Promise<Record<string, bigint>>;
 ```
 
-#### Fetch Chainlink oracle prices
+### Fetch Chainlink oracle prices
 
 ```ts
 import { Chainlink } from 'micro-eth-signer/net';
@@ -250,7 +250,7 @@ const bat = await link.tokenPrice('BAT');
 console.log({ btc, bat }); // BTC 19188.68870991, BAT 0.39728989 in USD
 ```
 
-#### Resolve ENS address
+### Resolve ENS address
 
 ```ts
 import { ENS } from 'micro-eth-signer/net';
@@ -258,7 +258,7 @@ const ens = new ENS(prov);
 const vitalikAddr = await ens.nameToAddress('vitalik.eth');
 ```
 
-#### Swap tokens with Uniswap
+### Swap tokens with Uniswap
 
 > Btw cool tool, glad you built it!
 
@@ -280,9 +280,9 @@ const swapData = await swap.tx(fromAddress, toAddress);
 console.log(swapData.amount, swapData.expectedAmount, swapData.allowance);
 ```
 
-### Advanced
+## Advanced
 
-#### Type-safe ABI parsing
+### Type-safe ABI parsing
 
 The ABI is type-safe when `as const` is specified:
 
@@ -339,7 +339,7 @@ There are following limitations:
 Check out [`src/net/ens.ts`](./src/net/ens.ts) for type-safe contract execution example.
 
 
-#### Human-readable transaction hints
+### Human-readable transaction hints
 
 The transaction sent ERC-20 USDT token between addresses. The library produces a following hint:
 
@@ -406,7 +406,7 @@ deepStrictEqual(decodeData(to, data, value, { customContracts }), {
 });
 ```
 
-#### Human-readable event hints
+### Human-readable event hints
 
 Decoding the event produces the following hint:
 
@@ -426,7 +426,7 @@ const einfo = decodeEvent(to, topics, data);
 console.log(einfo);
 ```
 
-#### RLP & SSZ
+### RLP & SSZ
 
 [packed](https://github.com/paulmillr/micro-packed) allows us to implement
 RLP in just 100 lines of code, and SSZ in 1500 lines.
@@ -444,7 +444,7 @@ RLP.decode(RLP.encode('dog'));
 import * as ssz from 'micro-eth-signer/ssz';
 ```
 
-#### KZG & Verkle
+### KZG & Verkle
 
 Allows to create & verify KZG EIP-4844 proofs.
 
