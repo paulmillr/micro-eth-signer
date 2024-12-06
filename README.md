@@ -437,11 +437,6 @@ RLP.decode(RLP.encode('dog'));
 ```
 
 ```ts
-// More RLP examples in
-// https://github.com/paulmillr/micro-eth-signer/blob/main/test/rlp.test.js
-import { RLP } from 'micro-eth-signer/rlp';
-RLP.decode(RLP.encode('dog'));
-
 // More SSZ examples in
 // https://github.com/paulmillr/micro-eth-signer/blob/main/test/ssz.test.js
 import * as ssz from 'micro-eth-signer/ssz';
@@ -535,8 +530,9 @@ By setting priorityFee to maxFee, we make the process deterministic:
 `maxFee = 10, maxPriority = 10, baseFee = 5` would always spend 10 gwei.
 In the end, the balance would become 0.
 
-WARNING: using the method would decrease privacy of a transfer, because
-payments for services have specific amounts, and not _the whole amount_.
+> [!WARN]
+> Using the method would decrease privacy of a transfer, because
+> payments for services have specific amounts, and not _the whole amount_.
 
 ## Performance
 
