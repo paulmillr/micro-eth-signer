@@ -43,7 +43,7 @@ export const authorization = {
 // Transaction-related utils.
 
 // 4 fields are required. Others are pre-filled with default values.
-const DEFAULTS = {
+const TX_DEFAULTS = {
   accessList: [], // needs to be .slice()-d to create new reference
   authorizationList: [],
   chainId: BigInt(1), // mainnet
@@ -52,8 +52,8 @@ const DEFAULTS = {
   maxPriorityFeePerGas: BigInt(1) * amounts.GWEI, // Reduce fingerprinting by using standard, popular value
   type: 'eip1559',
 } as const;
-type DefaultField = keyof typeof DEFAULTS;
-type DefaultType = (typeof DEFAULTS)['type'];
+type DefaultField = keyof typeof TX_DEFAULTS;
+type DefaultType = (typeof TX_DEFAULTS)['type'];
 type DefaultsOptional<T> = {
   [P in keyof T as P extends DefaultField ? P : never]?: T[P];
 } & {
@@ -107,21 +107,21 @@ export class Transaction<T extends TxType> {
   static prepare<T extends { type: undefined }>(
     data: T & HumanInputInnerDefault,
     strict?: boolean
-  ): Transaction<(typeof DEFAULTS)['type']>;
+  ): Transaction<(typeof TX_DEFAULTS)['type']>;
   static prepare<TT extends TxType, T extends { type: TT } & HumanInput<TT>>(
     data: HumanInput<TT>,
     strict?: boolean
   ): Transaction<T['type']>;
   static prepare<T extends TxType>(data: HumanInput<T>, strict = true): Transaction<T> {
-    const type = (data.type !== undefined ? data.type : DEFAULTS.type) as T;
+    const type = (data.type !== undefined ? data.type : TX_DEFAULTS.type) as T;
     if (!TxVersions.hasOwnProperty(type)) throw new Error(`wrong transaction type=${type}`);
     const coder = TxVersions[type];
     const fields = new Set(coder.fields as string[]);
     // Copy default fields, but only if the field is present on the tx type.
     const raw: Record<string, any> = { type };
-    for (const f in DEFAULTS) {
+    for (const f in TX_DEFAULTS) {
       if (f !== 'type' && fields.has(f)) {
-        raw[f] = DEFAULTS[f as DefaultField];
+        raw[f] = TX_DEFAULTS[f as DefaultField];
         if (['accessList', 'authorizationList'].includes(f)) raw[f] = cloneDeep(raw[f]);
       }
     }
@@ -177,7 +177,7 @@ export class Transaction<T extends TxType> {
    * Converts transaction to RLP.
    * @param includeSignature whether to include signature
    */
-  toRawBytes(includeSignature = this.isSigned) {
+  toRawBytes(includeSignature = this.isSigned): Uint8Array {
     // cloneDeep is not necessary here
     let data = Object.assign({}, this.raw);
     if (includeSignature) {
@@ -213,11 +213,11 @@ export class Transaction<T extends TxType> {
   get v() {
     return decodeLegacyV(this.raw);
   }
-  private calcHash(includeSignature: boolean) {
+  private calcHash(includeSignature: boolean): string {
     return bytesToHex(keccak_256(this.toRawBytes(includeSignature)));
   }
   // Calculates MAXIMUM fee in wei that could be spent
-  get fee() {
+  get fee(): bigint {
     const { type, raw } = this;
     // Fee calculation is not exact, real fee can be smaller
     let gasFee;
@@ -234,15 +234,15 @@ export class Transaction<T extends TxType> {
     // TODO: how to calculate 4844 fee?
     return raw.gasLimit * gasFee;
   }
-  clone() {
+  clone(): Transaction<T> {
     return new Transaction(this.type, cloneDeep(this.raw));
   }
-  verifySignature() {
+  verifySignature(): boolean {
     this.assertIsSigned();
     const { r, s } = this.raw;
     return secp256k1.verify({ r: r!, s: s! }, this.calcHash(false), this.recoverSender().publicKey);
   }
-  removeSignature() {
+  removeSignature(): Transaction<T> {
     return new Transaction(this.type, removeSig(cloneDeep(this.raw)));
   }
   /**
