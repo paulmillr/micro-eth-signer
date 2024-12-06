@@ -435,12 +435,12 @@ SSZ includes [EIP-7495](https://eips.ethereum.org/EIPS/eip-7495) stable containe
 
 ```ts
 import { RLP } from 'micro-eth-signer/rlp';
+// More RLP examples in test/rlp.test.js
 RLP.decode(RLP.encode('dog'));
 ```
 
 ```ts
-// More SSZ examples in
-// https://github.com/paulmillr/micro-eth-signer/blob/main/test/ssz.test.js
+// More SSZ examples in test/ssz.test.js
 import * as ssz from 'micro-eth-signer/ssz';
 ```
 
