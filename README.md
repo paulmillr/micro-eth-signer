@@ -530,7 +530,7 @@ By setting priorityFee to maxFee, we make the process deterministic:
 `maxFee = 10, maxPriority = 10, baseFee = 5` would always spend 10 gwei.
 In the end, the balance would become 0.
 
-> [!WARN]
+> [!WARNING]
 > Using the method would decrease privacy of a transfer, because
 > payments for services have specific amounts, and not _the whole amount_.
 
