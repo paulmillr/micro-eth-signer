@@ -595,7 +595,7 @@ export class Web3Provider implements IWeb3Provider {
       const rawData: Record<string, any> = {
         nonce: info.nonce,
         gasLimit: info.gas,
-        to: info.to,
+        to: info.to === null ? '0x' : info.to,
         value: info.value,
         data: info.input,
         r: info.r,
