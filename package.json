@@ -1,16 +1,16 @@
 {
   "name": "micro-eth-signer",
-  "version": "0.13.1",
+  "version": "0.13.2",
   "description": "Minimal library for Ethereum transactions, addresses and smart contracts",
   "files": [
-    "abi",
-    "esm",
-    "net",
-    "src",
     "*.js",
     "*.d.ts",
     "*.js.map",
-    "*.d.ts.map"
+    "*.d.ts.map",
+    "abi",
+    "esm",
+    "net",
+    "src"
   ],
   "main": "index.js",
   "module": "esm/index.js",
