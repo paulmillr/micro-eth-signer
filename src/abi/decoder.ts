@@ -506,7 +506,7 @@ export function events<T extends ArrLike<FnArg>>(abi: T): ContractEventType<Writ
 // Same as 'Transaction Action' on Etherscan, provides human readable interpritation of decoded data
 export type ContractABI = ReadonlyArray<FnArg & { readonly hint?: HintFn; readonly hook?: HookFn }>;
 export type ContractInfo = {
-  abi: 'ERC20' | 'ERC721' | ContractABI;
+  abi: 'ERC20' | 'ERC721' | 'ERC1155' | ContractABI;
   symbol?: string;
   decimals?: number;
   // For useful common contracts/exchanges

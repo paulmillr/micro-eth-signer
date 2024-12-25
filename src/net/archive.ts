@@ -1,7 +1,7 @@
-import { IWeb3Provider, Web3CallArgs, hexToNumber, amounts } from '../utils.js';
+import { IWeb3Provider, Web3CallArgs, hexToNumber, amounts, ethHex } from '../utils.js';
 import { Transaction } from '../index.js';
 import { TxVersions, legacySig, AccessList } from '../tx.js';
-import { ContractInfo, createContract, events, ERC20, WETH } from '../abi/index.js';
+import { createContract, events, ERC20, ERC721, ERC1155, WETH } from '../abi/index.js';
 
 /*
 Methods to fetch list of transactions from any ETH node RPC.
@@ -34,6 +34,31 @@ const ethNum = (n: number | bigint | undefined) =>
 const ERC_TRANSFER = events(ERC20).Transfer;
 const WETH_DEPOSIT = events(WETH).Deposit;
 const WETH_WITHDRAW = events(WETH).Withdrawal;
+const ERC721_TRANSFER = events(ERC721).Transfer;
+const ERC1155_SINGLE = events(ERC1155).TransferSingle;
+const ERC1155_BATCH = events(ERC1155).TransferBatch;
+
+const ERC165 = [
+  //     function supportsInterface(bytes4 interfaceID) external view returns (bool);
+  {
+    type: 'function',
+    name: 'supportsInterface',
+    inputs: [{ name: 'interfaceID', type: 'bytes4' }],
+    outputs: [{ type: 'bool' }],
+  },
+] as const;
+
+const CONTRACT_CAPABILITIES: Record<string, string> = {
+  erc165: '0x01ffc9a7',
+  erc165_check: '0xffffffff',
+  erc20: '0x36372b07',
+  erc721: '0x80ac58cd',
+  erc721_metadata: '0x5b5e139f',
+  erc721_enumerable: '0x780e9d63',
+  erc1155: '0xd9b67a26',
+  erc1155_tokenreceiver: '0x4e2312e0',
+  erc1155_metadata: '0x0e89341c',
+};
 
 function group<T>(items: T[], s: string | ((i: T) => string)): Record<string, T[]> {
   let res: Record<string, T[]> = {};
@@ -63,7 +88,7 @@ export type BlockInfo = {
   size: number;
   stateRoot: string;
   timestamp: number;
-  totalDifficulty: bigint;
+  totalDifficulty?: bigint;
   transactions: string[]; // transaction hashes (if false)
   transactionsRoot: string;
   uncles: string[];
@@ -113,6 +138,7 @@ export type TxInfo = {
   s: bigint;
   chainId: bigint;
   v: bigint;
+  yParity?: string;
   gas: bigint;
   maxPriorityFeePerGas?: bigint;
   from: string;
@@ -155,10 +181,39 @@ export type Unspent = {
   active: boolean;
 };
 
+type ERC20Token = {
+  abi: 'ERC20';
+  name?: string;
+  symbol?: string;
+  decimals?: number;
+  totalSupply: bigint;
+};
+type ERC721Token = {
+  abi: 'ERC721';
+  name?: string;
+  symbol?: string;
+  totalSupply?: bigint;
+  enumerable?: boolean;
+  metadata?: boolean;
+};
+type ERC1155Token = { abi: 'ERC1155' };
+export type TokenInfo = { contract: string } & (ERC20Token | ERC721Token | ERC1155Token);
+// Main idea: there is broken contracts that behave strange, instead of crashing we return this error.
+// Separate error allows easily to discriminate between "strange contract" and "input invalid" | "network error"
+// We still want to crash on network errors, but if there is per-contract error it is better to continue batched request
+// like tokenTransfers
+type TokenError = { contract: string; error: string };
+type TokenBalanceSingle = Map<bigint, bigint>;
+
+// This is unified type for ERC-20 | ERC-721 | ERC-1155
+// ERC20: Record<contractAddress, Map<1n, tokenValue>> - ERC-20 has only single tokenId (always!)
+// ERC721: Record<contractAddress, Map<tokenId, 1n>> - ERC-721 every tokenId is 0n or 1n
+// ERC-1155: Record<contractAddress, Map<tokenId, tokenValue> - ERC-1155 each tokenId can have value (merge of ERC-20 and ERC-721)
+export type TokenBalances = Record<string, TokenBalanceSingle | TokenError>;
 export type Topics = (string | null | (string | null)[])[];
-export type TokenInfo = ContractInfo & { contract: string };
 export type Transfer = { from: string; to?: string; value: bigint };
-export type TokenTransfer = Transfer & TokenInfo & { to: string };
+// tokens: Map<tokenId, value> (same as balances!)
+export type TokenTransfer = TokenInfo & { from: string; to: string; tokens: Map<bigint, bigint> };
 
 export type TxTransfers = {
   // This is most interesting info about tx for wallets
@@ -329,6 +384,18 @@ export type JsonrpcInterface = {
   call: (method: string, ...args: any[]) => Promise<any>;
 };
 
+// Promise.all for objects, undefined if error
+async function wait<T extends Record<string, Promise<any>>>(
+  obj: T
+): Promise<{ [K in keyof T]?: T[K] extends Promise<infer R> ? R : never }> {
+  const keys = Object.keys(obj) as (keyof T)[];
+  const p = await Promise.allSettled(Object.values(obj));
+  const res = p.map((r, i) => [keys[i], r.status === 'fulfilled' ? r.value : undefined]);
+  return Object.fromEntries(res) as { [K in keyof T]?: T[K] extends Promise<infer R> ? R : never };
+}
+
+const isReverted = (e: Error) => e instanceof Error && e.message.toLowerCase().includes('revert');
+
 /**
  * Transaction-related code around Web3Provider.
  * High-level methods are `height`, `unspent`, `transfers`, `allowances` and `tokenBalances`.
@@ -427,6 +494,28 @@ export class Web3Provider implements IWeb3Provider {
     return out;
   }
 
+  async contractCapabilities(address: string, capabilities: typeof CONTRACT_CAPABILITIES = {}) {
+    const all = { ...CONTRACT_CAPABILITIES, ...capabilities };
+    let c = createContract(ERC165, this, address);
+    const keys = Object.keys(all);
+    // TODO: what about revert?
+    // if reverted -> all capabilities disabled
+    try {
+      const promises = await Promise.all(
+        Object.values(all).map((i) => c.supportsInterface.call(ethHex.decode(i)))
+      );
+      const res = Object.fromEntries(keys.map((k, i) => [k, promises[i]]));
+      // if somehow there is same method, but it doesn't support erc165, then it is different method!
+      // erc165_check if sailsafe when there is method that always returns true
+      if (!res.erc165 || res.erc165_check) for (const k in res) res[k] = false;
+      return res;
+    } catch (e) {
+      // If execution reverted: contract doesn't support ERC165
+      if (isReverted(e as Error)) return Object.fromEntries(keys.map((k) => [k, false]));
+      throw e;
+    }
+  }
+
   async ethLogsSingle(topics: Topics, opts: LogOpts): Promise<Log[]> {
     const req: Record<string, any> = { topics, fromBlock: ethNum(opts.fromBlock || 0) };
     if (opts.toBlock !== undefined) req.toBlock = ethNum(opts.toBlock);
@@ -445,17 +534,17 @@ export class Web3Provider implements IWeb3Provider {
     for (const i of await Promise.all(promises)) out.push(...i);
     return out;
   }
-
-  // If we want incoming and outgoing token transfers we need to call both
+  // NOTE: this is very low-level methods that return parts used for .transfers method,
+  // you will need to decode data yourself.
   async tokenTransfers(address: string, opts: LogOpts = {}) {
     if (typeof address !== 'string') throw new Error('tokenTransfers: wrong address');
     validateLogOpts(opts);
+    // If we want incoming and outgoing token transfers we need to call both
     return await Promise.all([
       this.ethLogs(ERC_TRANSFER.topics({ from: address, to: null, value: null }), opts), // From
       this.ethLogs(ERC_TRANSFER.topics({ from: null, to: address, value: null }), opts), // To
     ]);
   }
-
   async wethTransfers(address: string, opts: LogOpts = {}) {
     if (typeof address !== 'string') throw new Error('tokenTransfers: wrong address');
     validateLogOpts(opts);
@@ -464,6 +553,30 @@ export class Web3Provider implements IWeb3Provider {
     // OR query
     return await Promise.all([
       this.ethLogs([[depositTopic[0], withdrawTopic[0]], depositTopic[1]], opts),
+    ]);
+  }
+  async erc1155Transfers(address: string, opts: LogOpts = {}) {
+    if (typeof address !== 'string') throw new Error('tokenTransfers: wrong address');
+    validateLogOpts(opts);
+    return await Promise.all([
+      // Single
+      this.ethLogs(
+        ERC1155_SINGLE.topics({ operator: null, from: address, to: null, id: null, value: null }),
+        opts
+      ),
+      this.ethLogs(
+        ERC1155_SINGLE.topics({ operator: null, from: null, to: address, id: null, value: null }),
+        opts
+      ),
+      // Batch
+      this.ethLogs(
+        ERC1155_BATCH.topics({ operator: null, from: address, to: null, ids: null, values: null }),
+        opts
+      ),
+      this.ethLogs(
+        ERC1155_BATCH.topics({ operator: null, from: null, to: address, ids: null, values: null }),
+        opts
+      ),
     ]);
   }
 
@@ -512,21 +625,201 @@ export class Web3Provider implements IWeb3Provider {
     if (opts.blockCallback && info.blockNumber !== null) opts.blockCallback(info.blockNumber);
     return { type, info, receipt, raw };
   }
-
-  async tokenInfo(address: string): Promise<TokenInfo | undefined> {
-    // will throw 'Execution reverted' if not ERC20
-    try {
-      let c = createContract(ERC20, this, address);
-      const [symbol, decimals] = await Promise.all([c.symbol.call(), c.decimals.call()]);
-      return { contract: address, abi: 'ERC20', symbol, decimals: Number(decimals) };
-    } catch (e) {
-      return;
+  async tokenInfo(contract: string): Promise<TokenInfo | TokenError> {
+    const c = createContract(ERC20, this, contract);
+    const t = await wait({
+      code: this.call('eth_getCode', contract, 'latest'),
+      capabilities: this.contractCapabilities(contract),
+      // We call all stuff at same time to reduce latency (should be done in single req if batched)
+      name: c.name.call(), // ERC-20 (optional), ERC-721 (metada)
+      symbol: c.symbol.call(), // ERC-20 (optional), ERC-721 (metadata)
+      decimals: c.decimals.call(), // ERC-20 (optional), ERC-721 (enumarable)
+      totalSupply: c.totalSupply.call(), // ERC-20 (required), ERC-721
+    });
+    // No code, probably self-destructed
+    if (t.code === '0x') return { contract, error: 'not contract or destructed' };
+    if (t.capabilities && t.capabilities.erc1155) {
+      // All metadata is inside URI per tokenId to outside network stuff (maybe ipfs), so nothing to do here.
+      return { contract, abi: 'ERC1155' };
     }
+    if (t.capabilities && t.capabilities.erc721) {
+      const res = { contract, abi: 'ERC721' };
+      if (t.capabilities.erc721_metadata) {
+        if (t.name === undefined) return { contract, error: 'ERC721+Metadata without name' };
+        if (t.symbol === undefined) return { contract, error: 'ERC721+Metadata without symbol' };
+        Object.assign(res, { name: t.name, symbol: t.symbol, metadata: true });
+      }
+      if (t.capabilities.erc721_enumerable) {
+        if (t.totalSupply === undefined)
+          return { contract, error: 'ERC721+Enumerable without totalSupply' };
+        Object.assign(res, { totalSupply: t.totalSupply, enumerable: true });
+      }
+      return res as TokenInfo;
+    }
+    if (t.totalSupply === undefined) return { contract, error: 'not ERC20 token' }; // If there is no totalSupply, it is not ERC20!
+    return {
+      contract,
+      abi: 'ERC20',
+      name: t.name,
+      symbol: t.symbol,
+      totalSupply: t.totalSupply,
+      decimals: t.decimals ? Number(t.decimals) : undefined,
+    };
   }
+
+  private async tokenBalanceSingle(
+    address: string,
+    token: TokenInfo | TokenError,
+    tokenIds?: Set<bigint>
+  ): Promise<TokenBalanceSingle | TokenError> {
+    if ('error' in token) return token;
+    if (token.abi === 'ERC20') {
+      const balance = await createContract(ERC20, this, token.contract).balanceOf.call(address);
+      if (tokenIds && (tokenIds.size > 1 || Array.from(tokenIds)[0] !== 1n)) {
+        return { contract: token.contract, error: 'unexpected tokenIds for ERC20' };
+      }
+      return new Map([[1n, balance]]);
+    } else if (token.abi === 'ERC721') {
+      const c = createContract(ERC721, this, token.contract);
+      const balance = await c.balanceOf.call(address);
+      if (!token.enumerable) {
+        if (!tokenIds) {
+          if (!balance) return new Map(); // no tokens owned by user
+          return {
+            contract: token.contract,
+            error: 'erc721 contract not enumerable, but owner has ' + balance + ' tokens',
+          };
+        }
+        // if we cannot enumerate, but has tokenIds, we can check if tokenIds still owned by account
+        const ids = Array.from(tokenIds);
+        const owners = await Promise.all(ids.map((i) => c.ownerOf.call(i)));
+        return new Map(
+          ids.map((i, j) => [i, owners[j].toLowerCase() === address.toLowerCase() ? 1n : 0n])
+        );
+      }
+      // if we can fetch tokenIds: always do this
+      const p = [];
+      for (let i = 0; i < balance; i++)
+        p.push(c.tokenOfOwnerByIndex.call({ owner: address, index: BigInt(i) }));
+      tokenIds = new Set(await Promise.all(p));
+      const ids = Array.from(tokenIds!);
+      return new Map(ids.map((i) => [i, 1n]));
+    } else if (token.abi === 'ERC1155') {
+      // This is pretty bad standard, because it doesn't allow enumeration of tokenIds for owner
+      if (!tokenIds)
+        return { contract: token.contract, error: 'cannot fetch erc1155 without tokenIds' };
+      const c = createContract(ERC1155, this, token.contract);
+      const ids = Array.from(tokenIds);
+      const balances = await c.balanceOfBatch.call({ accounts: ids.map((_) => address), ids });
+      const res = new Map(ids.map((i, j) => [i, balances[j]]));
+      return res;
+    }
+    throw new Error('unknown token type');
+  }
+
+  async tokenURI(token: TokenInfo | TokenError | string, tokenId: bigint) {
+    if (typeof token === 'string') token = await this.tokenInfo(token);
+    if ('error' in token) return token;
+    if (token.abi === 'ERC721') {
+      const c = createContract(ERC721, this, token.contract);
+      if (!token.metadata) return { contract: token.contract, error: 'erc721 without metadata' };
+      return c.tokenURI.call(tokenId);
+    } else if (token.abi === 'ERC1155') {
+      const c = createContract(ERC1155, this, token.contract);
+      return c.uri.call(tokenId);
+    }
+    return { contract: token.contract, error: 'not supported token type' };
+  }
+
+  async tokenBalances(
+    address: string,
+    tokens: string[],
+    tokenIds?: Record<string, Set<bigint>>
+  ): Promise<TokenBalances> {
+    // New API requires data from tokenInfo (which is slow and should be cached).
+    // But for compat with old API, we do tokenInfo call if contract address (as string) presented
+    const _tokens = await Promise.all(
+      tokens.map((i) => (typeof i === 'string' ? this.tokenInfo(i) : i))
+    );
+    const balances = await Promise.all(
+      _tokens.map((i) => this.tokenBalanceSingle(address, i, tokenIds && tokenIds[i.contract]))
+    );
+    return Object.fromEntries(_tokens.map((i, j) => [i.contract, balances[j]])) as any;
+  }
+  private decodeTokenTransfer(token: TokenInfo, log: Log): TokenTransfer | undefined {
+    if ('error' in token) return;
+    if (token.abi === 'ERC20') {
+      try {
+        const decoded = ERC_TRANSFER.decode(log.topics, log.data);
+        return {
+          ...token,
+          contract: log.address,
+          to: decoded.to,
+          from: decoded.from,
+          tokens: new Map([[1n, decoded.value]]),
+        };
+      } catch (e) {}
+      // Weth doesn't issue Transfer event on Deposit/Withdrawal
+      // NOTE: we don't filter for WETH_CONTRACT here in case of other contracts with similar API or different networks
+      try {
+        const decoded = WETH_DEPOSIT.decode(log.topics, log.data);
+        return {
+          ...token,
+          contract: log.address,
+          from: log.address,
+          to: decoded.dst,
+          tokens: new Map([[1n, decoded.wad]]),
+        };
+      } catch (e) {}
+      try {
+        const decoded = WETH_WITHDRAW.decode(log.topics, log.data);
+        return {
+          ...token,
+          contract: log.address,
+          from: decoded.src,
+          to: log.address,
+          tokens: new Map([[1n, decoded.wad]]),
+        };
+      } catch (e) {}
+    } else if (token.abi === 'ERC721') {
+      try {
+        const decoded = ERC721_TRANSFER.decode(log.topics, log.data);
+        return {
+          ...token,
+          from: decoded.from,
+          to: decoded.to,
+          tokens: new Map([[decoded.tokenId, 1n]]),
+        };
+      } catch (e) {}
+    } else if (token.abi === 'ERC1155') {
+      try {
+        const decoded = ERC1155_SINGLE.decode(log.topics, log.data);
+        return {
+          ...token,
+          from: decoded.from,
+          to: decoded.to,
+          tokens: new Map([[decoded.id, decoded.value]]),
+        };
+      } catch (e) {}
+      try {
+        const decoded = ERC1155_BATCH.decode(log.topics, log.data);
+        return {
+          ...token,
+          from: decoded.from,
+          to: decoded.to,
+          tokens: new Map(decoded.ids.map((i, j) => [i, decoded.values[j]])),
+        };
+      } catch (e) {}
+    }
+    return; // unknown token type
+  }
+
   // We want to get all transactions related to address, that means:
   // - from or to equals address in tx
   // - any internal tx from or to equals address in tx
   // - any erc20 token transfer which hash address in src or dst
+  // - erc721 is exactly same function signature as erc20 (need to detect after getting transactions)
+  // - erc1155: from/to + single/batch
   // trace_filter (web3) returns information only for first two cases, most of explorers returns only first case.
   async transfers(address: string, opts: TraceOpts & LogOpts = {}) {
     const txCache: Record<string, any> = {};
@@ -554,6 +847,7 @@ export class Web3Provider implements IWeb3Provider {
       this.internalTransactions(address, _opts),
       this.tokenTransfers(address, _opts),
       this.wethTransfers(address, _opts),
+      this.erc1155Transfers(address, _opts),
     ]);
     const mapCache = async (cache: Record<any, any>) => {
       const keys = Object.keys(cache);
@@ -590,37 +884,9 @@ export class Web3Provider implements IWeb3Provider {
       const tokenTransfers: TokenTransfer[] = [];
       for (const log of receipt.logs) {
         const tokenInfo = tokens[log.address];
-        if (tokenInfo) {
-          try {
-            tokenTransfers.push({
-              contract: log.address,
-              ...tokenInfo,
-              ...ERC_TRANSFER.decode(log.topics, log.data),
-            });
-          } catch (e) {}
-        }
-        // Weth doesn't issue Transfer event on Deposit/Withdrawal
-        // NOTE: we don't filter for WETH_CONTRACT here in case of other contracts with similar API or different networks
-        try {
-          const decoded = WETH_DEPOSIT.decode(log.topics, log.data);
-          tokenTransfers.push({
-            ...tokenInfo,
-            contract: log.address,
-            value: decoded.wad,
-            from: log.address,
-            to: decoded.dst,
-          });
-        } catch (e) {}
-        try {
-          const decoded = WETH_WITHDRAW.decode(log.topics, log.data);
-          tokenTransfers.push({
-            ...tokenInfo,
-            contract: log.address,
-            value: decoded.wad,
-            from: decoded.src,
-            to: log.address,
-          });
-        } catch (e) {}
+        if (!tokenInfo) continue;
+        const tt = this.decodeTokenTransfer(tokenInfo, log);
+        if (tt) tokenTransfers.push(tt);
       }
       return {
         hash: txHash,
@@ -636,6 +902,8 @@ export class Web3Provider implements IWeb3Provider {
 
   async allowances(address: string, opts: LogOpts = {}): Promise<TxAllowances> {
     const approval = events(ERC20).Approval;
+    // ERC-721/ERC-1155: +ApprovalForAll
+    // ERC-1761 Scoped Approval for partial with 1155/721?
     const topics = approval.topics({ owner: address, spender: null, value: null });
     const logs = await this.ethLogs(topics, opts);
     // res[tokenContract][spender] = value
@@ -648,13 +916,6 @@ export class Web3Provider implements IWeb3Provider {
     }
     return res;
   }
-
-  async tokenBalances(address: string, tokens: string[]): Promise<Record<string, bigint>> {
-    const balances = await Promise.all(
-      tokens.map((i) => createContract(ERC20, this, i).balanceOf.call(address))
-    );
-    return Object.fromEntries(tokens.map((i, j) => [i, balances[j]]));
-  }
 }
 
 /**
@@ -663,8 +924,10 @@ export class Web3Provider implements IWeb3Provider {
  * Info from multiple addresses can be merged (sort everything first).
  */
 export function calcTransfersDiff(transfers: TxTransfers[]): (TxTransfers & Balances)[] {
+  // address -> balance
   const balances: Record<string, bigint> = {};
-  const tokenBalances: Record<string, Record<string, bigint>> = {};
+  // contract -> address -> tokenId -> balance
+  const tokenBalances: Record<string, Record<string, Map<bigint, bigint>>> = {};
   let _0 = BigInt(0);
   for (const t of transfers) {
     for (const it of t.transfers) {
@@ -680,10 +943,14 @@ export function calcTransfersDiff(transfers: TxTransfers[]): (TxTransfers & Bala
     for (const tt of t.tokenTransfers) {
       if (!tokenBalances[tt.contract]) tokenBalances[tt.contract] = {};
       const token = tokenBalances[tt.contract];
-      if (token[tt.from] === undefined) token[tt.from] = _0;
-      token[tt.from] -= tt.value;
-      if (token[tt.to] === undefined) token[tt.to] = _0;
-      token[tt.to] += tt.value;
+      for (const [tokenId, value] of tt.tokens) {
+        if (token[tt.from] === undefined) token[tt.from] = new Map();
+        if (token[tt.to] === undefined) token[tt.to] = new Map();
+        const fromTokens = token[tt.from];
+        const toTokens = token[tt.to];
+        fromTokens.set(tokenId, (fromTokens.get(tokenId) || _0) - value);
+        toTokens.set(tokenId, (toTokens.get(tokenId) || _0) + value);
+      }
     }
     Object.assign(t, {
       balances: { ...balances },
