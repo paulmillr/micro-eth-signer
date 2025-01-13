@@ -1584,7 +1584,7 @@ should('example/libra', async () => {
     d.decode(UNISWAP, tx0, Object.assign(uniOpt, { amount: 100000000000000000n })).hint,
     'Swap 0.1 ETH for at least 12345678901.234567891 LABRA. Expires at Tue, 19 Jun 2029 06:00:10 GMT'
   );
-  console.log(d.decode(UNISWAP, tx0, Object.assign(uniOpt, { amount: 100000000000000000n })));
+  // console.log(d.decode(UNISWAP, tx0, Object.assign(uniOpt, { amount: 100000000000000000n })));
 });
 
 should('ZST', () => {
@@ -1723,7 +1723,7 @@ should('Interleave ptrs', () => {
 
   for (const l of [4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096]) {
     const ptrEnc = getArr(l);
-    console.log('encoding ptr', l, ptrEnc.length);
+    // console.log('encoding ptr', l, ptrEnc.length);
     //console.log('PTR', ptrArr.decode(hex.decode(ptrEnc)));
     //console.log('RAW', raw.decode(hex.decode(ptrEnc)));
     throws(() => arr2.encode(arr2.decode(hex.decode(ptrEnc))));
@@ -1733,12 +1733,12 @@ should('Interleave ptrs', () => {
       const realSz = arr2.encode(
         arr2.decode(hex.decode(ptrEnc), { allowMultipleReads: true })
       ).length;
-      console.log('REAL', realSz);
-      console.log(
-        'DIFF',
-        realSz - ptrEnc.length,
-        `+${Math.floor((realSz - ptrEnc.length) / ptrEnc.length)}x`
-      );
+      // console.log('REAL', realSz);
+      // console.log(
+      //   'DIFF',
+      //   realSz - ptrEnc.length,
+      //   `+${Math.floor((realSz - ptrEnc.length) / ptrEnc.length)}x`
+      // );
       // console.log(
       //   'ARR2',
       //   arr2.decode(hex.decode(ptrEnc)).map((i) => i.length)

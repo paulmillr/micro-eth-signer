@@ -397,7 +397,7 @@ describe('Transactions', () => {
           }
         }
       }
-      console.log(`skipped: ${skipped} ${passed}`);
+      if (skipped > 0) console.log(`skipped: ${skipped} ${passed}`);
     });
     should('EIP-4844', () => {
       // FROM https://github.com/ethereumjs/ethereumjs-monorepo/blob/master/packages/tx/test/eip4844.spec.ts
