@@ -1,6 +1,6 @@
 import { deepStrictEqual, throws } from 'node:assert';
 import { describe, should } from 'micro-should';
-import { KZG } from '../kzg.js';
+import { KZG } from '../esm/kzg.js';
 import { jsonGZ } from './util.js';
 import { default as KZG_VERIFY_PROOF } from './vectors/kzg/go_kzg_4844_verify_kzg_proof.json' with { type: 'json' };
 import { trustedSetup as s_small } from '@paulmillr/trusted-setups';
