@@ -12,4 +12,4 @@ import './ssz.test.js';
 import './kzg.test.js';
 import './typed-data.test.js';
 
-should.run();
+should.runWhen(import.meta.url);
