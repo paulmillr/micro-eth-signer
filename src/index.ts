@@ -23,7 +23,7 @@ export { addr, weigwei, weieth };
  * EIP-7702 Authorizations
  */
 export const authorization = {
-  _getHash(req: AuthorizationRequest) {
+  _getHash(req: AuthorizationRequest): Uint8Array {
     const msg = RLP.encode(authorizationRequest.decode(req));
     return keccak_256(concatBytes(new Uint8Array([0x05]), msg));
   },
@@ -32,7 +32,7 @@ export const authorization = {
     const sig = secp256k1.sign(this._getHash(req), ethHex.decode(privateKey));
     return { ...req, r: sig.r, s: sig.s, yParity: sig.recovery };
   },
-  getAuthority(item: AuthorizationItem) {
+  getAuthority(item: AuthorizationItem): string {
     const { r, s, yParity, ...req } = item;
     const hash = this._getHash(req);
     const sig = new secp256k1.Signature(r, s).addRecoveryBit(yParity);
@@ -46,10 +46,10 @@ export const authorization = {
 const TX_DEFAULTS = {
   accessList: [], // needs to be .slice()-d to create new reference
   authorizationList: [],
-  chainId: BigInt(1), // mainnet
+  chainId: BigInt(1) satisfies bigint as bigint, // mainnet
   data: '',
-  gasLimit: BigInt(21000), // TODO: investigate if limit is smaller in eip4844 txs
-  maxPriorityFeePerGas: BigInt(1) * amounts.GWEI, // Reduce fingerprinting by using standard, popular value
+  gasLimit: BigInt(21000) satisfies bigint as bigint, // TODO: investigate if limit is smaller in eip4844 txs
+  maxPriorityFeePerGas: (BigInt(1) * amounts.GWEI) satisfies bigint as bigint, // Reduce fingerprinting by using standard, popular value
   type: 'eip1559',
 } as const;
 type DefaultField = keyof typeof TX_DEFAULTS;
@@ -163,11 +163,17 @@ export class Transaction<T extends TxType> {
     }
     return new Transaction(this.type, raw);
   }
-  static fromRawBytes(bytes: Uint8Array, strict = false) {
+  static fromRawBytes(
+    bytes: Uint8Array,
+    strict = false
+  ): Transaction<'legacy' | 'eip2930' | 'eip1559' | 'eip4844' | 'eip7702'> {
     const raw = RawTx.decode(bytes);
     return new Transaction(raw.type, raw.data, strict);
   }
-  static fromHex(hex: string, strict = false) {
+  static fromHex(
+    hex: string,
+    strict = false
+  ): Transaction<'eip1559' | 'legacy' | 'eip2930' | 'eip4844' | 'eip7702'> {
     return Transaction.fromRawBytes(ethHexNoLeadingZero.decode(hex), strict);
   }
   private assertIsSigned() {
@@ -177,7 +183,7 @@ export class Transaction<T extends TxType> {
    * Converts transaction to RLP.
    * @param includeSignature whether to include signature
    */
-  toRawBytes(includeSignature = this.isSigned): Uint8Array {
+  toRawBytes(includeSignature: boolean = this.isSigned): Uint8Array {
     // cloneDeep is not necessary here
     let data = Object.assign({}, this.raw);
     if (includeSignature) {
@@ -191,26 +197,26 @@ export class Transaction<T extends TxType> {
    * Converts transaction to hex.
    * @param includeSignature whether to include signature
    */
-  toHex(includeSignature = this.isSigned) {
+  toHex(includeSignature: boolean = this.isSigned): string {
     return ethHex.encode(this.toRawBytes(includeSignature));
   }
   /**
    * Calculates keccak-256 hash of signed transaction. Used in block explorers.
    */
-  get hash() {
+  get hash(): string {
     this.assertIsSigned();
     return this.calcHash(true);
   }
   /**
    * Returns sender's address.
    */
-  get sender() {
+  get sender(): string {
     return this.recoverSender().address;
   }
   /**
    * For legacy transactions, but can be used with libraries when yParity presented as v.
    */
-  get v() {
+  get v(): bigint | undefined {
     return decodeLegacyV(this.raw);
   }
   private calcHash(includeSignature: boolean): string {
@@ -251,7 +257,10 @@ export class Transaction<T extends TxType> {
    * @param opts extraEntropy will increase security of sig by mixing rfc6979 randomness
    * @returns new "same" transaction, but signed
    */
-  signBy(privateKey: string | Uint8Array, opts: { extraEntropy?: true | undefined } = {}) {
+  signBy(
+    privateKey: string | Uint8Array,
+    opts: { extraEntropy?: true | undefined } = {}
+  ): Transaction<T> {
     if (this.isSigned) throw new Error('expected unsigned transaction');
     const priv = typeof privateKey === 'string' ? strip0x(privateKey) : privateKey;
     const hash = this.calcHash(false);
@@ -263,7 +272,7 @@ export class Transaction<T extends TxType> {
   /**
    * Calculates public key and address from signed transaction's signature.
    */
-  recoverSender() {
+  recoverSender(): { publicKey: string; address: string } {
     this.assertIsSigned();
     const { r, s, yParity } = this.raw;
     const sig = new secp256k1.Signature(r!, s!).addRecoveryBit(yParity!);

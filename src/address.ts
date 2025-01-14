@@ -5,8 +5,14 @@ import { bytesToHex } from '@noble/hashes/utils';
 import { astr, add0x, ethHex, strip0x } from './utils.js';
 
 export const addr = {
-  RE: /^(0[xX])?([0-9a-fA-F]{40})?$/,
-  parse(address: string, allowEmpty = false) {
+  RE: /^(0[xX])?([0-9a-fA-F]{40})?$/ satisfies RegExp as RegExp,
+  parse: (
+    address: string,
+    allowEmpty = false
+  ): {
+    hasPrefix: boolean;
+    data: string;
+  } => {
     astr(address);
     // NOTE: empty address allowed for 'to', but would be mistake for other address fields.
     // '0x' instead of null/undefined because we don't want to send contract creation tx if user
@@ -29,7 +35,7 @@ export const addr = {
    * @param allowEmpty - allows '0x'
    * @returns checksummed address
    */
-  addChecksum(nonChecksummedAddress: string, allowEmpty = false): string {
+  addChecksum: (nonChecksummedAddress: string, allowEmpty = false): string => {
     const low = addr.parse(nonChecksummedAddress, allowEmpty).data.toLowerCase();
     const hash = bytesToHex(keccak_256(low));
     let checksummed = '';
@@ -44,7 +50,7 @@ export const addr = {
   /**
    * Creates address from secp256k1 public key.
    */
-  fromPublicKey(key: string | Uint8Array): string {
+  fromPublicKey: (key: string | Uint8Array): string => {
     if (!key) throw new Error('invalid public key: ' + key);
     const pub65b = secp256k1.ProjectivePoint.fromHex(key).toRawBytes(false);
     const hashed = keccak_256(pub65b.subarray(1, 65));
@@ -55,7 +61,7 @@ export const addr = {
   /**
    * Creates address from ETH private key in hex or ui8a format.
    */
-  fromPrivateKey(key: string | Uint8Array): string {
+  fromPrivateKey: (key: string | Uint8Array): string => {
     if (typeof key === 'string') key = strip0x(key);
     return addr.fromPublicKey(secp256k1.getPublicKey(key, false));
   },
@@ -63,7 +69,7 @@ export const addr = {
   /**
    * Generates hex string with new random private key and address. Uses CSPRNG internally.
    */
-  random() {
+  random(): { privateKey: string; address: string } {
     const privateKey = ethHex.encode(secp256k1.utils.randomPrivateKey());
     return { privateKey, address: addr.fromPrivateKey(privateKey) };
   },
@@ -73,7 +79,7 @@ export const addr = {
    * Always returns true when the address is not checksummed.
    * @param allowEmpty - allows '0x'
    */
-  isValid(checksummedAddress: string, allowEmpty = false): boolean {
+  isValid: (checksummedAddress: string, allowEmpty = false): boolean => {
     let parsed: { hasPrefix: boolean; data: string };
     try {
       parsed = addr.parse(checksummedAddress, allowEmpty);

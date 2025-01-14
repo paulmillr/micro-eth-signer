@@ -177,16 +177,39 @@ const yParityCoder = P.coders.reverse(
 );
 type CoderOutput<F> = F extends P.Coder<any, infer T> ? T : never;
 
-const accessListItem = struct({ address: addrCoder, storageKeys: array(Bytes32) });
+const accessListItem: P.Coder<
+  (Uint8Array | Uint8Array[])[],
+  {
+    address: string;
+    storageKeys: string[];
+  }
+> = struct({ address: addrCoder, storageKeys: array(Bytes32) });
 export type AccessList = CoderOutput<typeof accessListItem>[];
 
-export const authorizationRequest = struct({
+export const authorizationRequest: P.Coder<
+  Uint8Array[],
+  {
+    chainId: bigint;
+    address: string;
+    nonce: bigint;
+  }
+> = struct({
   chainId: U256BE,
   address: addrCoder,
   nonce: U64BE,
 });
 // [chain_id, address, nonce, y_parity, r, s]
-const authorizationItem = struct({
+const authorizationItem: P.Coder<
+  Uint8Array[],
+  {
+    chainId: bigint;
+    address: string;
+    nonce: bigint;
+    yParity: number;
+    r: bigint;
+    s: bigint;
+  }
+> = struct({
   chainId: U256BE,
   address: addrCoder,
   nonce: U64BE,
@@ -295,7 +318,18 @@ const txStruct = <T extends readonly CoderName[], ST extends readonly CoderName[
 };
 
 // prettier-ignore
-const legacyInternal = txStruct([
+const legacyInternal: FieldCoder<OptFields<{
+  nonce: bigint;
+  gasPrice: bigint;
+  gasLimit: bigint;
+  to: string;
+  value: bigint;
+  data: string;
+}, {
+  r: bigint;
+  s: bigint;
+  v: bigint;
+}>> = txStruct([
   'nonce', 'gasPrice', 'gasLimit', 'to', 'value', 'data'] as const,
   ['v', 'r', 's'] as const);
 
@@ -377,7 +411,10 @@ export const RawTx = P.apply(createTxMap(TxVersions), {
  * Unchecked TX for debugging. Returns raw Uint8Array-s.
  * Handles versions - plain RLP will crash on it.
  */
-export const RlpTx = createTxMap(Object.fromEntries(Object.keys(TxVersions).map((k) => [k, RLP])));
+export const RlpTx: P.CoderType<{
+  type: string;
+  data: import('./rlp.js').RLPInput;
+}> = createTxMap(Object.fromEntries(Object.keys(TxVersions).map((k) => [k, RLP])));
 
 // Field-related utils
 export type TxType = keyof typeof TxVersions;
@@ -495,7 +532,7 @@ export function validateFields(
   data: Record<string, any>,
   strict = true,
   allowSignatureFields = true
-) {
+): void {
   aobj(data);
   if (!TxVersions.hasOwnProperty(type)) throw new Error(`unknown tx type=${type}`);
   const txType = TxVersions[type];
@@ -556,9 +593,9 @@ export function sortRawData(raw: TxCoder<any>): any {
   return sortedRaw;
 }
 
-export function decodeLegacyV(raw: TxCoder<any>) {
+export function decodeLegacyV(raw: TxCoder<any>): bigint | undefined {
   return legacySig.decode(raw).v;
 }
 
 // NOTE: for tests only, don't use
-export const __tests = { legacySig, TxVersions };
+export const __tests: any = { legacySig, TxVersions };

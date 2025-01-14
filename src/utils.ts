@@ -1,7 +1,7 @@
 import { isBytes as _isBytes, hexToBytes as _hexToBytes, bytesToHex } from '@noble/hashes/utils';
 import { Coder, coders } from 'micro-packed';
 
-export const isBytes = _isBytes;
+export const isBytes: typeof _isBytes = _isBytes;
 
 // There is no network code in the library.
 // The types are used to check external network provider interfaces.
@@ -26,7 +26,22 @@ const ETH_PRECISION = 18;
 const GWEI_PRECISION = 9;
 const GWEI = BigInt(10) ** BigInt(GWEI_PRECISION);
 const ETHER = BigInt(10) ** BigInt(ETH_PRECISION);
-export const amounts = /* @__PURE__ */ (() => ({
+export const amounts: {
+  GWEI_PRECISION: number;
+  ETH_PRECISION: number;
+  GWEI: bigint;
+  ETHER: bigint;
+  maxAmount: bigint;
+  minGasLimit: bigint;
+  maxGasLimit: bigint;
+  maxGasPrice: bigint;
+  maxNonce: bigint;
+  maxDataSize: number;
+  maxInitDataSize: number;
+  maxChainId: bigint;
+  maxUint64: bigint;
+  maxUint256: bigint;
+} = /* @__PURE__ */ (() => ({
   GWEI_PRECISION,
   ETH_PRECISION,
   GWEI,
@@ -69,8 +84,8 @@ const genEthHex = (keepLeadingZero = true): Coder<Uint8Array, string> => ({
     return add0x(hex);
   },
 });
-export const ethHex = /* @__PURE__ */ genEthHex(true);
-export const ethHexNoLeadingZero = /* @__PURE__ */ genEthHex(false);
+export const ethHex: Coder<Uint8Array, string> = /* @__PURE__ */ genEthHex(true);
+export const ethHexNoLeadingZero: Coder<Uint8Array, string> = /* @__PURE__ */ genEthHex(false);
 
 const ethHexStartRe = /^0[xX]/;
 export function add0x(hex: string): string {
@@ -96,7 +111,7 @@ export function isObject(item: unknown): item is Record<string, any> {
   return item != null && typeof item === 'object';
 }
 
-export function astr(str: unknown) {
+export function astr(str: unknown): void {
   if (typeof str !== 'string') throw new Error('string expected');
 }
 
@@ -131,13 +146,14 @@ export function zip<A, B>(a: A[], b: B[]): [A, B][] {
   return res;
 }
 
-export const createDecimal = coders.decimal;
-export const weieth = createDecimal(ETH_PRECISION);
-export const weigwei = createDecimal(GWEI_PRECISION);
+export const createDecimal: (precision: number, round?: boolean) => Coder<bigint, string> =
+  coders.decimal;
+export const weieth: Coder<bigint, string> = createDecimal(ETH_PRECISION);
+export const weigwei: Coder<bigint, string> = createDecimal(GWEI_PRECISION);
 
 // legacy. TODO: remove
-export const ethDecimal = weieth;
-export const gweiDecimal = weigwei;
+export const ethDecimal = weieth satisfies typeof weieth as typeof weieth;
+export const gweiDecimal = weigwei satisfies typeof weigwei as typeof weigwei;
 
 export const formatters = {
   // returns decimal that costs exactly $0.01 in given precision (using price)
@@ -177,7 +193,7 @@ export const formatters = {
     return `${prefix}${whole}.${fractionAfterPrecision}`;
   },
 
-  fromWei(wei: string | number | bigint) {
+  fromWei(wei: string | number | bigint): string {
     const GWEI = 10 ** 9;
     const ETHER = BigInt(10) ** BigInt(ETH_PRECISION);
     wei = BigInt(wei);

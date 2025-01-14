@@ -406,13 +406,13 @@ const isReverted = (e: Error) => e instanceof Error && e.message.toLowerCase().i
 export class Web3Provider implements IWeb3Provider {
   constructor(private rpc: JsonrpcInterface) {}
 
-  call(method: string, ...args: any[]) {
+  call(method: string, ...args: any[]): Promise<any> {
     return this.rpc.call(method, ...args);
   }
-  ethCall(args: Web3CallArgs, tag = 'latest') {
+  ethCall(args: Web3CallArgs, tag = 'latest'): Promise<any> {
     return this.rpc.call('eth_call', args, tag);
   }
-  async estimateGas(args: Web3CallArgs, tag = 'latest') {
+  async estimateGas(args: Web3CallArgs, tag = 'latest'): Promise<bigint> {
     return hexToNumber(await this.rpc.call('eth_estimateGas', args, tag));
   }
 
@@ -443,7 +443,7 @@ export class Web3Provider implements IWeb3Provider {
     return Number.parseInt(await this.call('eth_blockNumber'));
   }
 
-  async traceFilterSingle(address: string, opts: TraceOpts = {}) {
+  async traceFilterSingle(address: string, opts: TraceOpts = {}): Promise<any> {
     const res = await this.call('trace_filter', {
       fromBlock: ethNum(opts.fromBlock),
       toBlock: ethNum(opts.toBlock),
@@ -454,7 +454,7 @@ export class Web3Provider implements IWeb3Provider {
     return res;
   }
 
-  async internalTransactions(address: string, opts: TraceOpts = {}) {
+  async internalTransactions(address: string, opts: TraceOpts = {}): Promise<any[]> {
     if (typeof address !== 'string') throw new Error('internalTransactions: wrong address');
     validateTraceOpts(opts);
     // For reth
@@ -494,7 +494,12 @@ export class Web3Provider implements IWeb3Provider {
     return out;
   }
 
-  async contractCapabilities(address: string, capabilities: typeof CONTRACT_CAPABILITIES = {}) {
+  async contractCapabilities(
+    address: string,
+    capabilities: typeof CONTRACT_CAPABILITIES = {}
+  ): Promise<{
+    [k: string]: boolean;
+  }> {
     const all = { ...CONTRACT_CAPABILITIES, ...capabilities };
     let c = createContract(ERC165, this, address);
     const keys = Object.keys(all);
@@ -536,7 +541,7 @@ export class Web3Provider implements IWeb3Provider {
   }
   // NOTE: this is very low-level methods that return parts used for .transfers method,
   // you will need to decode data yourself.
-  async tokenTransfers(address: string, opts: LogOpts = {}) {
+  async tokenTransfers(address: string, opts: LogOpts = {}): Promise<[Log[], Log[]]> {
     if (typeof address !== 'string') throw new Error('tokenTransfers: wrong address');
     validateLogOpts(opts);
     // If we want incoming and outgoing token transfers we need to call both
@@ -545,7 +550,7 @@ export class Web3Provider implements IWeb3Provider {
       this.ethLogs(ERC_TRANSFER.topics({ from: null, to: address, value: null }), opts), // To
     ]);
   }
-  async wethTransfers(address: string, opts: LogOpts = {}) {
+  async wethTransfers(address: string, opts: LogOpts = {}): Promise<[Log[]]> {
     if (typeof address !== 'string') throw new Error('tokenTransfers: wrong address');
     validateLogOpts(opts);
     const depositTopic = WETH_DEPOSIT.topics({ dst: address, wad: null });
@@ -555,7 +560,10 @@ export class Web3Provider implements IWeb3Provider {
       this.ethLogs([[depositTopic[0], withdrawTopic[0]], depositTopic[1]], opts),
     ]);
   }
-  async erc1155Transfers(address: string, opts: LogOpts = {}) {
+  async erc1155Transfers(
+    address: string,
+    opts: LogOpts = {}
+  ): Promise<[Log[], Log[], Log[], Log[]]> {
     if (typeof address !== 'string') throw new Error('tokenTransfers: wrong address');
     validateLogOpts(opts);
     return await Promise.all([
@@ -580,7 +588,15 @@ export class Web3Provider implements IWeb3Provider {
     ]);
   }
 
-  async txInfo(txHash: string, opts: TxInfoOpts = {}) {
+  async txInfo(
+    txHash: string,
+    opts: TxInfoOpts = {}
+  ): Promise<{
+    type: 'legacy' | 'eip2930' | 'eip1559' | 'eip4844' | 'eip7702';
+    info: any;
+    receipt: any;
+    raw: string | undefined;
+  }> {
     let [info, receipt] = await Promise.all([
       this.call('eth_getTransactionByHash', txHash),
       this.call('eth_getTransactionReceipt', txHash),
@@ -717,7 +733,10 @@ export class Web3Provider implements IWeb3Provider {
     throw new Error('unknown token type');
   }
 
-  async tokenURI(token: TokenInfo | TokenError | string, tokenId: bigint) {
+  async tokenURI(
+    token: TokenInfo | TokenError | string,
+    tokenId: bigint
+  ): Promise<string | TokenError> {
     if (typeof token === 'string') token = await this.tokenInfo(token);
     if ('error' in token) return token;
     if (token.abi === 'ERC721') {
@@ -821,7 +840,7 @@ export class Web3Provider implements IWeb3Provider {
   // - erc721 is exactly same function signature as erc20 (need to detect after getting transactions)
   // - erc1155: from/to + single/batch
   // trace_filter (web3) returns information only for first two cases, most of explorers returns only first case.
-  async transfers(address: string, opts: TraceOpts & LogOpts = {}) {
+  async transfers(address: string, opts: TraceOpts & LogOpts = {}): Promise<TxTransfers[]> {
     const txCache: Record<string, any> = {};
     const blockCache: Record<number, any> = {};
     const tokenCache: Record<string, any> = {};

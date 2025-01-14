@@ -59,7 +59,11 @@ export const CONTRACTS: Record<string, ContractInfo> = /* @__PURE__ */ (() =>
     [WETH_CONTRACT]: { abi: WETH, name: 'WETH Token', decimals: 18, symbol: 'WETH' },
   }))();
 
-export const tokenFromSymbol = (symbol: string) => {
+export const tokenFromSymbol = (
+  symbol: string
+): {
+  contract: string;
+} & ContractInfo => {
   for (let c in TOKENS) {
     if (TOKENS[c].symbol === symbol) return Object.assign({ contract: c }, TOKENS[c]);
   }

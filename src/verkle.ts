@@ -142,20 +142,20 @@ class Transcript {
   constructor(label: string) {
     this.domainSeparator(label);
   }
-  domainSeparator(label: string) {
+  domainSeparator(label: string): void {
     this.state.push(utf8ToBytes(label));
   }
   private appendMessage(message: Uint8Array, label: string) {
     this.domainSeparator(label);
     this.state.push(message);
   }
-  appendScalar(label: string, scalar: bigint) {
+  appendScalar(label: string, scalar: bigint): void {
     this.appendMessage(Fr.toBytes(Fr.create(scalar)), label);
   }
-  appendPoint(label: string, point: Point) {
+  appendPoint(label: string, point: Point): void {
     this.appendMessage(compressed.encode(point), label);
   }
-  challengeScalar(label: string) {
+  challengeScalar(label: string): bigint {
     this.domainSeparator(label);
     const scalar = Fr.create(Fr.fromBytes(sha256(concatBytes(...this.state))));
     this.state = [];
@@ -322,15 +322,16 @@ export type VerifierInput = {
   indexValuePairs: { index: number; value: Uint8Array }[];
 };
 
-export const hashCommitment = (commitment: Uint8Array) =>
+export const hashCommitment = (commitment: Uint8Array): Uint8Array =>
   Fr.toBytes(mapToField(uncompressed.decode(commitment)));
-export const commitToScalars = (vector: Uint8Array[]) => {
+export const commitToScalars = (vector: Uint8Array[]): Uint8Array => {
   if (vector.length > DOMAIN_SIZE) throw new Error('vector length greater than DOMAIN_SIZE');
   const scalars = vector.map(Fr.fromBytes);
   return uncompressed.encode(crsMSM(scalars));
 };
 // TODO: implement optimization (batch inv inside mapToField)
-export const hashCommitments = (commitments: Uint8Array[]) => commitments.map(hashCommitment);
+export const hashCommitments = (commitments: Uint8Array[]): Uint8Array[] =>
+  commitments.map(hashCommitment);
 export const getTreeKeyHash = (address: Uint8Array, treeIndexLE: Uint8Array): Uint8Array => {
   if (address.length !== 32) throw new Error('Address must be 32 bytes');
   if (treeIndexLE.length !== 32) throw new Error('Tree index must be 32 bytes');
@@ -365,13 +366,13 @@ export const updateCommitment = (
   const deltaCommitment = CRS_G[commitmentIndex].multiplyUnsafe(delta);
   return uncompressed.encode(oldCommitment.add(deltaCommitment));
 };
-export const zeroCommitment = hexToBytes(
+export const zeroCommitment: Uint8Array = hexToBytes(
   '00000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000000'
 );
-export const serializeCommitment = (commitment: Uint8Array) =>
+export const serializeCommitment = (commitment: Uint8Array): Uint8Array =>
   compressed.encode(uncompressed.decode(commitment));
 
-export const createProof = (proverInputs: ProverInput[]) => {
+export const createProof = (proverInputs: ProverInput[]): Uint8Array => {
   const proverQueries: ProverQuery[] = [];
   for (const q of proverInputs) {
     const commitment = compressed.decode(q.serializedCommitment);
@@ -453,7 +454,7 @@ export const createProof = (proverInputs: ProverInput[]) => {
   return multipointProof.encode({ D, cl, cr, a: a[0] });
 };
 
-export const verifyProof = (proofBytes: Uint8Array, verifierInputs: VerifierInput[]) => {
+export const verifyProof = (proofBytes: Uint8Array, verifierInputs: VerifierInput[]): boolean => {
   const verifierQueries: VerifierQuery[] = [];
   for (const i of verifierInputs) {
     const commitment = compressed.decode(i.serializedCommitment);
@@ -656,7 +657,7 @@ export function verifyExecutionWitnessPreState(
 }
 
 // NOTE: for tests only, don't use
-export const __tests = {
+export const __tests: any = {
   scalarMulIndex,
   WEIGHTS_INVERTED,
   WEIGTHS_BARYCENTRIC,

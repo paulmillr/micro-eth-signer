@@ -253,7 +253,7 @@ export class KZG {
     const proof = add0x(this.G1msm(this.G1LB, poly).toHex(true));
     return [proof, formatScalar(y)];
   }
-  verifyProof(commitment: string, z: Scalar, y: Scalar, proof: string) {
+  verifyProof(commitment: string, z: Scalar, y: Scalar, proof: string): boolean {
     try {
       z = parseScalar(z);
       y = parseScalar(y);
@@ -297,16 +297,16 @@ export class KZG {
     return pairingVerify(proofPowers, this.G2M[1], rhs, G2.BASE);
   }
   // Blobs
-  blobToKzgCommitment(blob: Blob) {
+  blobToKzgCommitment(blob: Blob): string {
     return add0x(this.G1msm(this.G1LB, this.parseBlob(blob)).toHex(true));
   }
-  computeBlobProof(blob: Blob, commitment: string) {
+  computeBlobProof(blob: Blob, commitment: string): string {
     blob = this.parseBlob(blob);
     const challenge = this.computeChallenge(blob, G1.fromHex(strip0x(commitment)));
     const [proof, _] = this.computeProof(blob, challenge);
     return proof;
   }
-  verifyBlobProof(blob: Blob, commitment: string, proof: string) {
+  verifyBlobProof(blob: Blob, commitment: string, proof: string): boolean {
     try {
       blob = this.parseBlob(blob);
       const c = G1.fromHex(strip0x(commitment));
@@ -317,7 +317,7 @@ export class KZG {
       return false;
     }
   }
-  verifyBlobProofBatch(blobs: string[], commitments: string[], proofs: string[]) {
+  verifyBlobProofBatch(blobs: string[], commitments: string[], proofs: string[]): boolean {
     if (!Array.isArray(blobs) || !Array.isArray(commitments) || !Array.isArray(proofs))
       throw new Error('invalid arguments');
     if (blobs.length !== commitments.length || blobs.length !== proofs.length) return false;

@@ -60,7 +60,7 @@ const empty = Uint8Array.from([]);
  * Real type of rlp is `Item = Uint8Array | Item[]`.
  * Strings/number encoded to Uint8Array, but not decoded back: type information is lost.
  */
-export const RLP = P.apply(rlpInner, {
+export const RLP: P.CoderType<RLPInput> = P.apply(rlpInner, {
   encode(from: InternalRLP): RLPInput {
     if (from.TAG === 'byte') return new Uint8Array([from.data]);
     if (from.TAG !== 'complex') throw new Error('RLP.encode: unexpected type');

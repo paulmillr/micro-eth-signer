@@ -122,7 +122,7 @@ export type GetType<T extends string> =
   T extends 'string' ? string :
   T extends 'bool' ? boolean :
   T extends NumberType ? bigint :
-  T extends ByteType ? Uint8Array : 
+  T extends ByteType ? Uint8Array :
   unknown; // default
 
 // prettier-ignore
@@ -548,7 +548,7 @@ export class Decoder {
   sighashes: Record<string, SignaturePacker[]> = {};
   evContracts: Record<string, Record<string, EventSignatureDecoder>> = {};
   evSighashes: Record<string, EventSignatureDecoder[]> = {};
-  add(contract: string, abi: ContractABI) {
+  add(contract: string, abi: ContractABI): void {
     const ev: any = events(abi);
     contract = strip0x(contract).toLowerCase();
     if (!this.contracts[contract]) this.contracts[contract] = {};
@@ -581,7 +581,7 @@ export class Decoder {
       }
     }
   }
-  method(contract: string, data: Uint8Array) {
+  method(contract: string, data: Uint8Array): string | undefined {
     contract = strip0x(contract).toLowerCase();
     const sh = bytesToHex(data.slice(0, 4));
     if (!this.contracts[contract] || !this.contracts[contract][sh]) return;

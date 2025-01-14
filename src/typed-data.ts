@@ -8,12 +8,18 @@ import { add0x, ethHex, strip0x, isObject, astr } from './utils.js';
 
 // EIP-191 signed data (https://eips.ethereum.org/EIPS/eip-191)
 export type Hex = string | Uint8Array;
+export interface TypedSigner<T> {
+  _getHash: (message: T) => string;
+  sign(message: T, privateKey: Hex, extraEntropy?: undefined): string;
+  recoverPublicKey(signature: string, message: T): string;
+  verify(signature: string, message: T, address: string): boolean;
+}
 // 0x19 <1 byte version> <version specific data> <data to sign>.
 // VERSIONS:
 // - 0x19 <0x00> <intended validator address> <data to sign>
 // - 0x19 <0x01> domainSeparator hashStruct(message)
 // - 0x19 <0x45 (E)> <thereum Signed Message:\n" + len(message)> <data to sign>
-function getSigner<T>(version: number, msgFn: (message: T) => Uint8Array) {
+function getSigner<T>(version: number, msgFn: (message: T) => Uint8Array): TypedSigner<T> {
   if (version < 0 || version >= 256 || !Number.isSafeInteger(version))
     throw new Error('Wrong version byte');
   //     bytes32 hash = keccak256(abi.encodePacked(byte(0x19), byte(0), address(this), msg.value, nonce, payload));
@@ -61,10 +67,13 @@ function getSigner<T>(version: number, msgFn: (message: T) => Uint8Array) {
 // );
 
 // EIP-191: 0x19 <0x45 (E)> <thereum Signed Message:\n" + len(message)> <data to sign>
-export const personal = getSigner(0x45, (msg: string | Uint8Array) => {
-  if (typeof msg === 'string') msg = utf8ToBytes(msg);
-  return concatBytes(utf8ToBytes(`thereum Signed Message:\n${msg.length}`), msg);
-});
+export const personal: TypedSigner<string | Uint8Array> = getSigner(
+  0x45,
+  (msg: string | Uint8Array) => {
+    if (typeof msg === 'string') msg = utf8ToBytes(msg);
+    return concatBytes(utf8ToBytes(`thereum Signed Message:\n${msg.length}`), msg);
+  }
+);
 
 // eip712 typed signed data on top of signed data (https://eips.ethereum.org/EIPS/eip-712)
 // - V1: no domain, {name: string, type: string, value: any}[] - NOT IMPLEMENTED
@@ -97,7 +106,13 @@ export type GetType<Types extends EIP712Types, K extends keyof Types & string> =
 type Key<T extends EIP712Types> = keyof T & string;
 
 // TODO: merge with abi somehow?
-function parseType(s: string) {
+function parseType(s: string): {
+  base: string;
+  item: string;
+  type: string;
+  arrayLen: number | undefined;
+  isArray: boolean;
+} {
   let m = s.match(/^([^\[]+)(?:.*\[(.*?)\])?$/);
   if (!m) throw new Error(`parseType: wrong type: ${s}`);
   const base = m[1];
@@ -124,7 +139,7 @@ function parseType(s: string) {
 }
 
 // traverse dependency graph, find all transitive dependencies. Also, basic sanity check
-function getDependencies(types: EIP712Types) {
+function getDependencies(types: EIP712Types): Record<string, Set<string>> {
   if (typeof types !== 'object' || types === null) throw new Error('wrong types object');
   // Collect non-basic dependencies & sanity
   const res: Record<string, Set<string>> = {};
@@ -246,30 +261,30 @@ export function encoder<T extends EIP712Types>(types: T, domain: GetType<T, 'EIP
     return concatBytes(domainHash, structHash(msg.primaryType, msg.message));
   });
   return {
-    encodeData: <K extends Key<T>>(type: K, message: GetType<T, K>) =>
+    encodeData: <K extends Key<T>>(type: K, message: GetType<T, K>): string =>
       ethHex.encode(encodeData(type, message)),
-    structHash: <K extends Key<T>>(type: K, message: GetType<T, K>) =>
+    structHash: <K extends Key<T>>(type: K, message: GetType<T, K>): string =>
       ethHex.encode(structHash(type, message)),
     // Signer
-    _getHash: <K extends Key<T>>(primaryType: K, message: GetType<T, K>) =>
+    _getHash: <K extends Key<T>>(primaryType: K, message: GetType<T, K>): string =>
       signer._getHash({ primaryType, message }),
     sign: <K extends Key<T>>(
       primaryType: K,
       message: GetType<T, K>,
       privateKey: Hex,
       extraEntropy?: undefined
-    ) => signer.sign({ primaryType, message }, privateKey, extraEntropy),
+    ): string => signer.sign({ primaryType, message }, privateKey, extraEntropy),
     verify: <K extends Key<T>>(
       primaryType: K,
       signature: string,
       message: GetType<T, K>,
       address: string
-    ) => signer.verify(signature, { primaryType, message }, address),
+    ): boolean => signer.verify(signature, { primaryType, message }, address),
     recoverPublicKey: <K extends Key<T>>(
       primaryType: K,
       signature: string,
       message: GetType<T, K>
-    ) => signer.recoverPublicKey(signature, { primaryType, message }),
+    ): string => signer.recoverPublicKey(signature, { primaryType, message }),
   };
 }
 
@@ -280,8 +295,9 @@ export const EIP712Domain = [
   { name: 'verifyingContract', type: 'address' }, // the address of the contract that will verify the signature. The user-agent may do contract specific phishing prevention.
   { name: 'salt', type: 'bytes32' }, // an disambiguating salt for the protocol. This can be used as a domain separator of last resort.
 ] as const;
+export type DomainParams = typeof EIP712Domain;
 
-const domainTypes = { EIP712Domain: EIP712Domain };
+const domainTypes = { EIP712Domain: EIP712Domain as DomainParams };
 export type EIP712Domain = GetType<typeof domainTypes, 'EIP712Domain'>;
 
 // Filter unused domain fields from type
@@ -309,7 +325,9 @@ function validateTyped<T extends EIP712Types, K extends Key<T>>(t: TypedData<T, 
     throw new Error('wrong primaryType');
 }
 
-export function encodeData<T extends EIP712Types, K extends Key<T>>(typed: TypedData<T, K>) {
+export function encodeData<T extends EIP712Types, K extends Key<T>>(
+  typed: TypedData<T, K>
+): string {
   validateTyped(typed);
   return encoder(getTypedTypes(typed) as T, typed.domain).encodeData(
     typed.primaryType,
@@ -317,7 +335,7 @@ export function encodeData<T extends EIP712Types, K extends Key<T>>(typed: Typed
   );
 }
 
-export function sigHash<T extends EIP712Types, K extends Key<T>>(typed: TypedData<T, K>) {
+export function sigHash<T extends EIP712Types, K extends Key<T>>(typed: TypedData<T, K>): string {
   validateTyped(typed);
   return encoder(getTypedTypes(typed) as T, typed.domain)._getHash(
     typed.primaryType,
@@ -328,7 +346,7 @@ export function sigHash<T extends EIP712Types, K extends Key<T>>(typed: TypedDat
 export function signTyped<T extends EIP712Types, K extends Key<T>>(
   typed: TypedData<T, K>,
   privateKey: Hex
-) {
+): string {
   validateTyped(typed);
   return encoder(getTypedTypes(typed) as T, typed.domain).sign(
     typed.primaryType,
@@ -341,7 +359,7 @@ export function verifyTyped<T extends EIP712Types, K extends Key<T>>(
   signature: string,
   typed: TypedData<T, K>,
   address: string
-) {
+): boolean {
   validateTyped(typed);
   return encoder(getTypedTypes(typed) as T, typed.domain).verify(
     typed.primaryType,
@@ -354,7 +372,7 @@ export function verifyTyped<T extends EIP712Types, K extends Key<T>>(
 export function recoverPublicKeyTyped<T extends EIP712Types, K extends Key<T>>(
   signature: string,
   typed: TypedData<T, K>
-) {
+): string {
   return encoder(getTypedTypes(typed) as T, typed.domain).recoverPublicKey(
     typed.primaryType,
     signature,
@@ -363,4 +381,4 @@ export function recoverPublicKeyTyped<T extends EIP712Types, K extends Key<T>>(
 }
 
 // Internal methods for test purposes only
-export const _TEST = /* @__PURE__ */ { parseType, getDependencies, getTypes, encoder };
+export const _TEST: any = /* @__PURE__ */ { parseType, getDependencies, getTypes, encoder };
