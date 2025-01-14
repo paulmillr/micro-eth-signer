@@ -11,9 +11,7 @@ import { getEthersVectors, getViemVectors } from './util.js';
 import { weigwei } from '../esm/utils.js';
 import * as abi from '../esm/abi/decoder.js';
 
-const ETHERS_TX = getEthersVectors('transactions.json.gz');
-const VIEM_TX = getViemVectors('transaction.json.gz');
-
+let VIEM_TX;
 const SKIPPED_ERRORS = {
   viem: 'address must be',
   ethereum_tests_raw_tx: [
@@ -379,9 +377,10 @@ describe('Transactions', () => {
       }
     });
     // const viem_filtered = VIEM_TX.filter(tx => tx.addr)
-    should(`viem (${VIEM_TX.length} tests)`, () => {
+    should(`viem tests`, () => {
       let skipped = 0;
       let passed = 0;
+      if (!VIEM_TX) VIEM_TX = getViemVectors('transaction.json.gz');
       for (let i = 0; i < VIEM_TX.length; i++) {
         const v = VIEM_TX[i];
         for (const tx of [v.serialized, v.serializedSigned]) {
@@ -523,7 +522,7 @@ describe('Transactions', () => {
 
   should('ethers.js/transactions.json', () => {
     // Awesome tests, there is even eip4844
-    for (const tx of ETHERS_TX) {
+    for (const tx of getEthersVectors('transactions.json.gz')) {
       const data = tx.transaction;
       if (!data.to) continue;
       for (const net of ['Legacy', 'Eip155', 'London', 'Cancun']) {
@@ -584,7 +583,8 @@ describe('Transactions', () => {
       }
     }
   });
-  should(`viem transactions (${VIEM_TX.length})`, () => {
+  should(`viem transactions`, () => {
+    if (!VIEM_TX) VIEM_TX = getViemVectors('transaction.json.gz');
     for (let i = 0; i < VIEM_TX.length; i++) {
       const vtx = VIEM_TX[i];
       const data = vtx.transaction;

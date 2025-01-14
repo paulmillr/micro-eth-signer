@@ -51,7 +51,7 @@ for (const category of readdirSync(PATH)) {
   }
 }
 
-function readStructVectors(path) {
+function * readStructVectors(path) {
   const res = [];
   for (const type of readdirSync(path)) {
     for (const name of readdirSync(`${path}/${type}`)) {
@@ -62,14 +62,12 @@ function readStructVectors(path) {
         const hex = bytesToHex(snappy.uncompress(data));
         const meta = yaml.parse(readFileSync(`${curPath}/roots.yaml`, 'utf8'), yamlOpt);
         const value = yaml.parse(readFileSync(`${curPath}/value.yaml`, 'utf8'), yamlOpt);
-        res.push({ type, name: fullName, hex, meta, value });
+        yield { type, name: fullName, hex, meta, value };
       }
     }
   }
-  return res;
+  // return res;
 }
-
-const STATIC_VECTORS = readStructVectors(STATIC_PATH);
 
 // patch u8a && bigints
 const mapTypes = (type, electra, elm) => {
@@ -722,16 +720,15 @@ describe('SSZ', () => {
           deepStrictEqual(`0x${bytesToHex(c.merkleRoot(val))}`, v.meta.root, 'hash');
         }
       });
-      describe('electra', () => {
-        const VECTORS = readStructVectors(`${SSZ_STABLE_PATH_2}/electra`);
+      should('electra', () => {
         const TYPES = {
           ...SSZ.ETH2_TYPES,
           ...SSZ.ETH2_CONSENSUS,
           ...SSZ.ETH2_PROFILES.electra,
           //BeaconBlockBody: undefined,
         };
-        for (const t of VECTORS) {
-          should(`${t.type}/${t.name}`, () => {
+        for (const t of readStructVectors(`${SSZ_STABLE_PATH_2}/electra`)) {
+          // should(`${t.type}/${t.name}`, () => {
             const { hex, meta, value, type } = t;
             const c = TYPES[type];
             if (!c) return;
@@ -740,7 +737,7 @@ describe('SSZ', () => {
             deepStrictEqual(bytesToHex(c.encode(val)), hex);
             deepStrictEqual(c.decode(hexToBytes(hex)), val);
             deepStrictEqual(`0x${bytesToHex(c.merkleRoot(val))}`, meta.root);
-          });
+          // });
         }
       });
     });
@@ -1227,7 +1224,7 @@ describe('SSZ', () => {
     }
   });
   describe('ssz_static', () => {
-    for (const t of STATIC_VECTORS) {
+    for (const t of readStructVectors(STATIC_PATH)) {
       should(`${t.type}/${t.name}`, () => {
         const { hex, meta, value, type } = t;
         const c = SSZ.ETH2_TYPES[type];

@@ -6,8 +6,6 @@ import { addr } from '../esm/address.js';
 import * as typed from '../esm/typed-data.js';
 import { bytesToHex, concatBytes, hexToBytes, utf8ToBytes } from '@noble/hashes/utils';
 
-const ETHERS_TYPED = jsonGZ('./vectors/ethers/testcases/typed-data.json.gz');
-
 const typedData = {
   types: {
     EIP712Domain: [
@@ -419,6 +417,7 @@ describe('typedData (EIP-712)', () => {
 
   // Stolen from other libraries
   should('ethers', () => {
+    const ETHERS_TYPED = jsonGZ('./vectors/ethers/testcases/typed-data.json.gz');
     for (const t of ETHERS_TYPED) {
       const e = typed.encoder(
         { EIP712Domain: typed.getDomainType(t.domain), ...t.types },

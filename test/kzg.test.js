@@ -18,8 +18,10 @@ const VIEM = Object.fromEntries(
     'verify-blob-kzg-proof-batch',
     'verify-blob-kzg-proof',
     'verify-kzg-proof',
-  ].map((i) => [i, jsonGZ(`./vectors/viem/test/kzg/${i}.json.gz`)])
+  ].map((i) => [i, () => jsonGZ(`./vectors/viem/test/kzg/${i}.json.gz`)])
 );
+
+const viem_verify_blog_kzg_proof = VIEM['verify-blob-kzg-proof']();
 
 function run(kzg) {
   should('ROOTS_OF_UNITY', () => {
@@ -30,8 +32,8 @@ function run(kzg) {
 
   describe('VIEM', () => {
     should('parseBlob', () => {
-      for (const b of VIEM['blobs']) kzg.parseBlob(b);
-      for (const b of VIEM['invalid-blobs']) throws(() => kzg.parseBlob(b));
+      for (const b of VIEM['blobs']()) kzg.parseBlob(b);
+      for (const b of VIEM['invalid-blobs']()) throws(() => kzg.parseBlob(b));
     });
     should('verifyProof', () => {
       for (const { input, output } of KZG_VERIFY_PROOF) {
@@ -39,19 +41,19 @@ function run(kzg) {
       }
     });
     should('verifyProof2', () => {
-      for (const { input, output } of VIEM['verify-kzg-proof']) {
+      for (const { input, output } of VIEM['verify-kzg-proof']()) {
         deepStrictEqual(kzg.verifyProof(input.commitment, input.z, input.y, input.proof), !!output);
       }
     });
     should('computeChallenge', () => {
-      const challengeStuff = VIEM['verify-blob-kzg-proof'][25].input;
+      const challengeStuff = viem_verify_blog_kzg_proof[25].input;
       deepStrictEqual(
         kzg.computeChallenge(kzg.parseBlob(challengeStuff.blob), kzg.parseG1(challengeStuff.commitment)),
         0x4f00eef944a21cb9f3ac3390702621e4bbf1198767c43c0fb9c8e9923bfbb31an
       );
     });
     should('evalPoly', () => {
-      const polyStuff = VIEM['verify-blob-kzg-proof'][18].input;
+      const polyStuff = viem_verify_blog_kzg_proof[18].input;
       deepStrictEqual(
         kzg.evalPoly(
           kzg.parseBlob(polyStuff.blob),
@@ -61,12 +63,12 @@ function run(kzg) {
       );
     });
     should('verifyBlobProof', () => {
-      for (const { input, output } of VIEM['verify-blob-kzg-proof']) {
+      for (const { input, output } of viem_verify_blog_kzg_proof) {
         deepStrictEqual(kzg.verifyBlobProof(input.blob, input.commitment, input.proof), !!output);
       }
     });
     should('verifyBlobProofBatch', () => {
-      for (const { input, output } of VIEM['verify-blob-kzg-proof-batch']) {
+      for (const { input, output } of VIEM['verify-blob-kzg-proof-batch']()) {
         deepStrictEqual(
           kzg.verifyBlobProofBatch(input.blobs, input.commitments, input.proofs),
           !!output
@@ -74,19 +76,19 @@ function run(kzg) {
       }
     });
     should('blobToKzgCommitment', () => {
-      for (const { input, output } of VIEM['blob-to-kzg-commitment']) {
+      for (const { input, output } of VIEM['blob-to-kzg-commitment']()) {
         if (!output) throws(() => kzg.blobToKzgCommitment(input.blob));
         else deepStrictEqual(kzg.blobToKzgCommitment(input.blob), output);
       }
     });
     should('computeBlobProof', () => {
-      for (const { input, output } of VIEM['compute-blob-kzg-proof']) {
+      for (const { input, output } of VIEM['compute-blob-kzg-proof']()) {
         if (!output) throws(() => kzg.computeBlobProof(input.blob, input.commitment));
         else deepStrictEqual(kzg.computeBlobProof(input.blob, input.commitment), output);
       }
     });
     should('computeKzgProof', () => {
-      for (const { input, output } of VIEM['compute-kzg-proof']) {
+      for (const { input, output } of VIEM['compute-kzg-proof']()) {
         if (!output) throws(() => kzg.computeProof(input.blob, input.z));
         else deepStrictEqual(kzg.computeProof(input.blob, input.z), output);
       }

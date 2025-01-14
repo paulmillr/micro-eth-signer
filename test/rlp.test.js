@@ -10,9 +10,6 @@ import { default as INVALID_RLP } from './vectors/ethereum-tests/RLPTests/invali
 import { default as RANDOM_RLP } from './vectors/ethereum-tests/RLPTests/RandomRLPTests/example.json' with { type: 'json' };
 import { default as EIP2930 } from './vectors/monorepo/eip2930blockRLP.json' with { type: 'json' };
 
-const VIEM_RLP = getViemVectors('rlp.json.gz');
-const ETHERS_RLP = getEthersVectors('rlp.json.gz');
-
 describe('RLP', () => {
   describe('@ethereumjs/rlp', () => {
     should('encode basic', () => {
@@ -95,18 +92,20 @@ describe('RLP', () => {
     describe('ethers', () => {
       const mapEthers = (t) => (Array.isArray(t) ? t.map(mapEthers) : ethHex.decode(t));
 
-      for (const i of ETHERS_RLP) {
-        should(i.name, () => {
-          const [encoded, decoded] = mapEthers([i.encoded, i.decoded]);
-          deepStrictEqual(RLP.encode(decoded), encoded, 'encode');
-          deepStrictEqual(RLP.decode(encoded), decoded, 'encode');
-        });
-      }
+      should('all vectors', () => {
+        for (const i of getEthersVectors('rlp.json.gz')) {
+          // should(i.name, () => {
+            const [encoded, decoded] = mapEthers([i.encoded, i.decoded]);
+            deepStrictEqual(RLP.encode(decoded), encoded, 'encode');
+            deepStrictEqual(RLP.decode(encoded), decoded, 'encode');
+          // });
+        }
+      })
     });
     // 60 MB of gzipped json
     should('viem rlp tests', () => {
       const mapViem = (t) => (Array.isArray(t) ? t.map(mapViem) : hexToBytes(t.replace('0x', '')));
-      for (const t of VIEM_RLP) {
+      for (const t of getViemVectors('rlp.json.gz')) {
         let { encoded, decoded } = t;
         decoded = mapViem(decoded);
         encoded = hexToBytes(encoded.replace('0x', ''));

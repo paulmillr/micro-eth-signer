@@ -20,18 +20,6 @@ const {
   Transcript,
 } = verkle.__tests;
 
-const VERKLE_MONOREPO = JSON.parse(JSON.stringify(VERKLE_MONOREPO_RAW), (key, value) => {
-  if (
-    value &&
-    typeof value === 'object' &&
-    value.__BYTES__ &&
-    typeof value.__BYTES__ === 'string'
-  ) {
-    return hexToBytes(value.__BYTES__);
-  }
-  return value;
-});
-
 describe('Verkle', () => {
   describe('Transcript', () => {
     should('test0', () => {
@@ -2695,6 +2683,17 @@ describe('Verkle', () => {
     deepStrictEqual(verkle.verifyExecutionWitnessPreState(prestateRoot, executionWitness), false);
   });
   describe('Monorepo dump', () => {
+    const VERKLE_MONOREPO = JSON.parse(JSON.stringify(VERKLE_MONOREPO_RAW), (key, value) => {
+      if (
+        value &&
+        typeof value === 'object' &&
+        value.__BYTES__ &&
+        typeof value.__BYTES__ === 'string'
+      ) {
+        return hexToBytes(value.__BYTES__);
+      }
+      return value;
+    });
     for (const k in VERKLE_MONOREPO) {
       const tests = VERKLE_MONOREPO[k];
       should(k, () => {
