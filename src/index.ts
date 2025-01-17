@@ -2,20 +2,30 @@
 import { secp256k1 } from '@noble/curves/secp256k1';
 import { keccak_256 } from '@noble/hashes/sha3';
 import { bytesToHex, concatBytes } from '@noble/hashes/utils';
-import { UnwrapCoder } from 'micro-packed';
+import type { UnwrapCoder } from 'micro-packed';
 import { addr } from './address.js';
 // prettier-ignore
-import {
-  TxType, TxVersions, TxCoder, RawTx,
-  decodeLegacyV, removeSig, sortRawData, validateFields,
-  AuthorizationItem, AuthorizationRequest, authorizationRequest
-} from './tx.js';
 import { RLP } from './rlp.js';
+import {
+  type AuthorizationItem,
+  type AuthorizationRequest,
+  type TxCoder,
+  type TxType,
+  RawTx,
+  TxVersions,
+  authorizationRequest,
+  decodeLegacyV,
+  removeSig,
+  sortRawData,
+  validateFields,
+} from './tx.js';
 // prettier-ignore
 import {
-  amounts, astr, ethHex, ethHexNoLeadingZero, strip0x, weieth, weigwei, cloneDeep,
+  amounts, astr,
+  cloneDeep,
+  ethHex, ethHexNoLeadingZero, strip0x, weieth, weigwei,
 } from './utils.js';
-export { addr, weigwei, weieth };
+export { addr, weieth, weigwei };
 
 // The file exports Transaction, but actual (RLP) parsing logic is done in `./tx`
 

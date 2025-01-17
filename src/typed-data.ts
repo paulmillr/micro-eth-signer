@@ -1,10 +1,10 @@
 import { secp256k1 } from '@noble/curves/secp256k1';
 import { keccak_256 } from '@noble/hashes/sha3';
 import { concatBytes, utf8ToBytes } from '@noble/hashes/utils';
-import { mapComponent } from './abi/decoder.js';
 import type { GetType as AbiGetType } from './abi/decoder.js';
+import { mapComponent } from './abi/decoder.js';
 import { addr } from './address.js';
-import { add0x, ethHex, strip0x, isObject, astr } from './utils.js';
+import { add0x, astr, ethHex, isObject, strip0x } from './utils.js';
 
 // EIP-191 signed data (https://eips.ethereum.org/EIPS/eip-191)
 export type Hex = string | Uint8Array;

@@ -1,4 +1,4 @@
-import { ContractABI, HintFn, HookFn } from './decoder.js';
+import type { ContractABI, HintFn, HookFn } from './decoder.js';
 
 export function addHint<T extends ContractABI>(abi: ContractABI, name: string, fn: HintFn): T {
   const res = [];

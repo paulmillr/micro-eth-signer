@@ -1,12 +1,11 @@
-import { numberToBytesBE, bytesToNumberBE, bytesToNumberLE } from '@noble/curves/abstract/utils';
-import { Field, FpLegendre } from '@noble/curves/abstract/modular';
-import { ExtPointType, twistedEdwards } from '@noble/curves/abstract/edwards';
-import { bytesToHex, utf8ToBytes, hexToBytes, randomBytes } from '@noble/hashes/utils';
-import { concatBytes } from '@noble/hashes/utils';
-import { sha256 } from '@noble/hashes/sha256';
-import { ethHex } from './utils.js';
-import * as P from 'micro-packed';
 import { precomputeMSMUnsafe } from '@noble/curves/abstract/curve';
+import { type ExtPointType, twistedEdwards } from '@noble/curves/abstract/edwards';
+import { Field, FpLegendre } from '@noble/curves/abstract/modular';
+import { bytesToNumberBE, bytesToNumberLE, numberToBytesBE } from '@noble/curves/abstract/utils';
+import { sha256 } from '@noble/hashes/sha256';
+import { bytesToHex, concatBytes, hexToBytes, randomBytes, utf8ToBytes } from '@noble/hashes/utils';
+import * as P from 'micro-packed';
+import { ethHex } from './utils.js';
 
 const DOMAIN_SIZE = 256;
 const DOMAIN_SIZE_LOG2 = Math.log2(DOMAIN_SIZE);

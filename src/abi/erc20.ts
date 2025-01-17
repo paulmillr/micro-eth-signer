@@ -1,6 +1,6 @@
-import { HintOpt } from './decoder.js';
 import { createDecimal } from '../utils.js';
 import { addHints } from './common.js';
+import { type HintOpt } from './decoder.js';
 
 // prettier-ignore
 export const ABI = [

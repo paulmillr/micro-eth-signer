@@ -1,7 +1,7 @@
 import { bytesToHex } from '@noble/hashes/utils';
-import { HintOpt } from './decoder.js';
 import { add0x, createDecimal } from '../utils.js';
 import { addHints, addHook } from './common.js';
+import { type HintOpt } from './decoder.js';
 
 // prettier-ignore
 const _ABI = [

@@ -1,7 +1,15 @@
 import { keccak_256 } from '@noble/hashes/sha3';
 import { bytesToHex, concatBytes, hexToBytes } from '@noble/hashes/utils';
 import * as P from 'micro-packed';
-import { Web3CallArgs, IWeb3Provider, add0x, strip0x, omit, zip, ethHex } from '../utils.js';
+import {
+  type IWeb3Provider,
+  type Web3CallArgs,
+  add0x,
+  ethHex,
+  omit,
+  strip0x,
+  zip,
+} from '../utils.js';
 
 /*
 There is NO network code in the file. However, a user can pass

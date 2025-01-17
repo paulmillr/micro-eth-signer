@@ -1,5 +1,5 @@
-import { isBytes as _isBytes, hexToBytes as _hexToBytes, bytesToHex } from '@noble/hashes/utils';
-import { Coder, coders } from 'micro-packed';
+import { hexToBytes as _hexToBytes, isBytes as _isBytes, bytesToHex } from '@noble/hashes/utils';
+import { type Coder, coders } from 'micro-packed';
 
 export const isBytes: typeof _isBytes = _isBytes;
 

@@ -1,13 +1,11 @@
 {
-  "extends": "@paulmillr/jsbt/tsconfig.cjs.json",
+  "extends": "@paulmillr/jsbt/tsconfig.esm.json",
   "compilerOptions": {
-    "outDir": "."
+    "outDir": "esm",
+    "declaration": true,
+    "declarationMap": true,
+    "isolatedDeclarations": false
   },
-  "include": [
-    "src"
-  ],
-  "exclude": [
-    "node_modules",
-    "lib"
-  ]
+  "include": ["src"],
+  "exclude": ["node_modules", "lib"]
 }

@@ -1,7 +1,7 @@
 import { concatBytes } from '@noble/hashes/utils';
-import { ContractInfo, createContract } from '../abi/decoder.js';
-import { IWeb3Provider, ethHex } from '../utils.js';
+import { type ContractInfo, createContract } from '../abi/decoder.js';
 import { default as UNISWAP_V3_ROUTER, UNISWAP_V3_ROUTER_CONTRACT } from '../abi/uniswap-v3.js';
+import { type IWeb3Provider, ethHex } from '../utils.js';
 import * as uni from './uniswap-common.js';
 
 const ADDRESS_ZERO = '0x0000000000000000000000000000000000000000';

@@ -1,30 +1,37 @@
+import { addr } from '../address.js';
+import { Transaction } from '../index.js';
+import { ethHex } from '../utils.js';
 import {
-  ContractInfo,
-  ContractABI,
+  type ContractABI,
+  type ContractInfo,
   Decoder,
   createContract,
   deployContract,
   events,
 } from './decoder.js';
+import { default as ERC1155 } from './erc1155.js';
 import { default as ERC20 } from './erc20.js';
 import { default as ERC721 } from './erc721.js';
-import { default as ERC1155 } from './erc1155.js';
+import { default as KYBER_NETWORK_PROXY, KYBER_NETWORK_PROXY_CONTRACT } from './kyber.js';
 import { default as UNISWAP_V2_ROUTER, UNISWAP_V2_ROUTER_CONTRACT } from './uniswap-v2.js';
 import { default as UNISWAP_V3_ROUTER, UNISWAP_V3_ROUTER_CONTRACT } from './uniswap-v3.js';
-import { default as KYBER_NETWORK_PROXY, KYBER_NETWORK_PROXY_CONTRACT } from './kyber.js';
 import { default as WETH, WETH_CONTRACT } from './weth.js';
-import { ethHex } from '../utils.js';
-import { addr } from '../address.js';
-import { Transaction } from '../index.js';
 
 // We need to export raw contracts, because 'CONTRACTS' object requires to know address it is not static type
 // so it cannot be re-used in createContract with nice types.
-export { ERC20, ERC721, ERC1155, WETH };
-export { UNISWAP_V2_ROUTER_CONTRACT, UNISWAP_V3_ROUTER_CONTRACT, KYBER_NETWORK_PROXY_CONTRACT };
+export {
+  ERC1155,
+  ERC20,
+  ERC721,
+  KYBER_NETWORK_PROXY_CONTRACT,
+  UNISWAP_V2_ROUTER_CONTRACT,
+  UNISWAP_V3_ROUTER_CONTRACT,
+  WETH,
+};
 
-export { Decoder, createContract, events, deployContract };
+export { Decoder, createContract, deployContract, events };
 // Export decoder related types
-export type { ContractInfo, ContractABI };
+export type { ContractABI, ContractInfo };
 
 export const TOKENS: Record<string, ContractInfo> = /* @__PURE__ */ (() =>
   Object.freeze(

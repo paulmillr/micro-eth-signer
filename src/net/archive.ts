@@ -1,7 +1,7 @@
-import { IWeb3Provider, Web3CallArgs, hexToNumber, amounts, ethHex } from '../utils.js';
+import { ERC1155, ERC20, ERC721, WETH, createContract, events } from '../abi/index.js';
 import { Transaction } from '../index.js';
-import { TxVersions, legacySig, AccessList } from '../tx.js';
-import { createContract, events, ERC20, ERC721, ERC1155, WETH } from '../abi/index.js';
+import { TxVersions, legacySig, type AccessList } from '../tx.js';
+import { amounts, ethHex, hexToNumber, type IWeb3Provider, type Web3CallArgs } from '../utils.js';
 
 /*
 Methods to fetch list of transactions from any ETH node RPC.
