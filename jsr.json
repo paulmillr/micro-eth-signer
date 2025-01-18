@@ -1,0 +1,22 @@
+{
+  "name": "@paulmillr/micro-eth-signer",
+  "version": "0.13.3-pre",
+  "exports": {
+    ".": "./src/index.ts",
+    "./net.js": "./src/net.ts"
+  },
+  "imports": {
+    "@noble/curves": "jsr:@noble/curves@^1.8.0",
+    "@noble/hashes": "jsr:@noble/hashes@^1.7.0",
+    "micro-packed": "jsr:@paulmillr/micro-packed@~0.7.1"
+  },
+  "publish": {
+    "include": [
+      "src",
+      "jsr.json",
+      "LICENSE",
+      "README.md"
+    ]
+  },
+  "license": "MIT"
+}
