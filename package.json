@@ -21,7 +21,7 @@
     "micro-packed": "~0.7.0"
   },
   "devDependencies": {
-    "@paulmillr/jsbt": "0.2.1",
+    "@paulmillr/jsbt": "0.3.0",
     "@paulmillr/trusted-setups": "0.1.2",
     "micro-bmark": "0.3.1",
     "micro-ftch": "0.4.0",
@@ -100,8 +100,8 @@
     "signer"
   ],
   "scripts": {
-    "build": "tsc && tsc -p tsconfig.esm.json",
-    "build:release": "cd build; npm run build:release",
+    "build": "tsc && tsc -p tsconfig.cjs.json",
+    "build:release": "npx jsbt esbuild test/build",
     "bench": "node benchmark/tx.js",
     "lint": "prettier --check src",
     "format": "prettier --write src",
