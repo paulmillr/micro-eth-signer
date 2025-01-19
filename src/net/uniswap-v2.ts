@@ -21,12 +21,12 @@ const PAIR_CONTRACT = [
   },
 ] as const;
 
-export function create2(from: Uint8Array, salt: Uint8Array, initCodeHash: Uint8Array) {
+export function create2(from: Uint8Array, salt: Uint8Array, initCodeHash: Uint8Array): string {
   const cat = concatBytes(new Uint8Array([255]), from, salt, initCodeHash);
   return ethHex.encode(keccak_256(cat).slice(12));
 }
 
-export function pairAddress(a: string, b: string, factory: string = FACTORY_ADDRESS) {
+export function pairAddress(a: string, b: string, factory: string = FACTORY_ADDRESS): string {
   // This is completely broken: '0x11' '0x11' will return '0x1111'. But this is how it works in sdk.
   const data = concatBytes(...uni.sortTokens(a, b).map((i) => ethHex.decode(i)));
   return create2(ethHex.decode(factory), keccak_256(data), INIT_CODE_HASH);
@@ -140,7 +140,17 @@ export function txData(
     slippagePercent: number;
     feeOnTransfer: boolean;
   } = TX_DEFAULT_OPT
-) {
+): {
+  to: string;
+  value: bigint;
+  data: any;
+  allowance:
+    | {
+        token: string;
+        amount: bigint;
+      }
+    | undefined;
+} {
   opt = { ...TX_DEFAULT_OPT, ...opt };
   if (!uni.isValidUniAddr(input) || !uni.isValidUniAddr(output) || !uni.isValidEthAddr(to))
     throw new Error('Invalid address');
@@ -182,8 +192,8 @@ export function txData(
 // Here goes Exchange API. Everything above is SDK. Supports almost everything from official sdk except liquidity stuff.
 export default class UniswapV2 extends uni.UniswapAbstract {
   name = 'Uniswap V2';
-  contract = UNISWAP_V2_ROUTER_CONTRACT;
-  bestPath(fromCoin: string, toCoin: string, inputAmount: bigint) {
+  contract: string = UNISWAP_V2_ROUTER_CONTRACT;
+  bestPath(fromCoin: string, toCoin: string, inputAmount: bigint): Promise<Path> {
     return bestPath(this.net, fromCoin, toCoin, inputAmount);
   }
   txData(

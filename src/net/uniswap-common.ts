@@ -77,7 +77,19 @@ export async function awaitDeep<T, E extends boolean | undefined>(
   return trBack(out);
 }
 
-export const COMMON_BASES = ['WETH', 'DAI', 'USDC', 'USDT', 'COMP', 'MKR', 'WBTC', 'AMPL']
+export type CommonBase = {
+  contract: string;
+} & import('../abi/decoder.js').ContractInfo;
+export const COMMON_BASES: CommonBase[] = [
+  'WETH',
+  'DAI',
+  'USDC',
+  'USDT',
+  'COMP',
+  'MKR',
+  'WBTC',
+  'AMPL',
+]
   .map((i) => tokenFromSymbol(i))
   .filter((i) => !!i);
 export const WETH: string = tokenFromSymbol('WETH')!.contract;

@@ -125,7 +125,17 @@ export function txData(
   amountIn?: bigint,
   amountOut?: bigint,
   opt: TxOpt = uni.DEFAULT_SWAP_OPT
-) {
+): {
+  to: string;
+  value: bigint;
+  data: Uint8Array;
+  allowance:
+    | {
+        token: string;
+        amount: bigint;
+      }
+    | undefined;
+} {
   opt = { ...uni.DEFAULT_SWAP_OPT, ...opt };
   const err = 'Uniswap v3: ';
   if (!uni.isValidUniAddr(input)) throw new Error(err + 'invalid input address');
@@ -198,8 +208,8 @@ export function txData(
 // Here goes Exchange API. Everything above is SDK.
 export default class UniswapV3 extends uni.UniswapAbstract {
   name = 'Uniswap V3';
-  contract = UNISWAP_V3_ROUTER_CONTRACT;
-  bestPath(fromCoin: string, toCoin: string, inputAmount: bigint) {
+  contract: string = UNISWAP_V3_ROUTER_CONTRACT;
+  bestPath(fromCoin: string, toCoin: string, inputAmount: bigint): Promise<Route> {
     return bestPath(this.net, fromCoin, toCoin, inputAmount);
   }
   txData(

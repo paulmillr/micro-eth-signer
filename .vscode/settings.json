@@ -1,3 +1,10 @@
 {
-	"typescript.tsdk": "node_modules\\typescript\\lib"
+  "files.exclude": {
+    "*.{js,d.ts,js.map}": true,
+    "esm/*.{js,d.ts,js.map}": true,
+    "audit": true,
+    "coverage": true,
+    "esm": true,
+    "{LICENSE,SECURITY.md,.gitignore,.prettierrc.json,package-lock.json}": true
+  }
 }
