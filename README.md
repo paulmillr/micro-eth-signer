@@ -14,10 +14,11 @@ _Check out all web3 utility libraries:_ [ETH](https://github.com/paulmillr/micro
 
 ## Usage
 
-> npm install micro-eth-signer
+> `npm install micro-eth-signer`
+
+> `jsr add jsr:@paulmillr/micro-eth-signer`
 
 We support all major platforms and runtimes.
-For [Deno](https://deno.land), ensure to use [npm specifier](https://deno.land/manual@v1.28.0/node/npm_specifiers).
 For React Native, you may need a [polyfill for getRandomValues](https://github.com/LinusU/react-native-get-random-values).
 If you don't like NPM, a standalone [eth-signer.js](https://github.com/paulmillr/micro-eth-signer/releases) is also available.
 
@@ -103,17 +104,17 @@ There are two messaging standards: [EIP-191](https://eips.ethereum.org/EIPS/eip-
 import * as typed from 'micro-eth-signer/typed-data';
 
 // Example message
-const message = "Hello, Ethereum!";
-const privateKey = "0x4c0883a69102937d6231471b5dbb6204fe512961708279f1d7b1b8e7e8b1b1e1";
+const message = 'Hello, Ethereum!';
+const privateKey = '0x4c0883a69102937d6231471b5dbb6204fe512961708279f1d7b1b8e7e8b1b1e1';
 
 // Sign the message
 const signature = typed.personal.sign(message, privateKey);
-console.log("Signature:", signature);
+console.log('Signature:', signature);
 
 // Verify the signature
-const address = "0xYourEthereumAddress";
+const address = '0xYourEthereumAddress';
 const isValid = typed.personal.verify(signature, message, address);
-console.log("Is valid:", isValid);
+console.log('Is valid:', isValid);
 ```
 
 #### EIP-712
@@ -124,13 +125,13 @@ import * as typed from 'micro-eth-signer/typed-data';
 const types = {
   Person: [
     { name: 'name', type: 'string' },
-    { name: 'wallet', type: 'address' }
+    { name: 'wallet', type: 'address' },
   ],
   Mail: [
     { name: 'from', type: 'Person' },
     { name: 'to', type: 'Person' },
-    { name: 'contents', type: 'string' }
-  ]
+    { name: 'contents', type: 'string' },
+  ],
 };
 
 // Define the domain
@@ -139,20 +140,20 @@ const domain: typed.EIP712Domain = {
   version: '1',
   chainId: 1,
   verifyingContract: '0xCcCCccccCCCCcCCCCCCcCcCccCcCCCcCcccccccC',
-  salt: '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef'
+  salt: '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
 };
 
 // Define the message
 const message = {
   from: {
     name: 'Alice',
-    wallet: '0xCcCCccccCCCCcCCCCCCcCcCccCcCCCcCcccccccC'
+    wallet: '0xCcCCccccCCCCcCCCCCCcCcCccCcCCCcCcccccccC',
   },
   to: {
     name: 'Bob',
-    wallet: '0xbBbBBBBbbBBBbbbBbbBbbbbBBbBbbbbBbBbbBBbB'
+    wallet: '0xbBbBBBBbbBBBbbbBbbBbbbbBBbBbbbbBbBbbBBbB',
   },
-  contents: 'Hello, Bob!'
+  contents: 'Hello, Bob!',
 };
 
 // Create the typed data
@@ -160,16 +161,16 @@ const typedData: typed.TypedData<typeof types, 'Mail'> = {
   types,
   primaryType: 'Mail',
   domain,
-  message
+  message,
 };
 
 // Sign the typed data
-const privateKey = "0x4c0883a69102937d6231471b5dbb6204fe512961708279f1d7b1b8e7e8b1b1e1";
+const privateKey = '0x4c0883a69102937d6231471b5dbb6204fe512961708279f1d7b1b8e7e8b1b1e1';
 const signature = typed.signTyped(typedData, privateKey);
-console.log("Signature:", signature);
+console.log('Signature:', signature);
 
 // Verify the signature
-const address = "0xYourEthereumAddress";
+const address = '0xYourEthereumAddress';
 const isValid = typed.verifyTyped(signature, typedData, address);
 
 // Recover the public key
@@ -337,7 +338,6 @@ There are following limitations:
 - We're not able to handle contracts with method overload (same function names with different args) — the code will still work, but not types
 
 Check out [`src/net/ens.ts`](./src/net/ens.ts) for type-safe contract execution example.
-
 
 ### Human-readable transaction hints
 
