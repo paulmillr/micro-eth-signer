@@ -190,7 +190,6 @@ const publicKey = typed.recoverPublicKeyTyped(signature, typedData);
 
 eth-signer is network-free and makes it easy to audit network-related code:
 all requests are done with user-provided function, conforming to built-in `fetch()`.
-
 We recommend using [micro-ftch](https://github.com/paulmillr/micro-ftch),
 which implements kill-switch, logging, batching / concurrency and other features.
 
