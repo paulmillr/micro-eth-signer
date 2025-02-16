@@ -186,15 +186,12 @@ const publicKey = typed.recoverPublicKeyTyped(signature, typedData);
 
 ## Network-related
 
-A common problem in web3 libraries is how complex they are to audit with regards to network calls.
+eth-signer makes it very easy to audit all network code.
+The library is network-free:
+all requests are done with user-provided function, conforming to built-in `fetch()`.
 
-In eth-signer, all network calls are done with user-provided function, conforming to built-in `fetch()`:
-
-1. This makes library network-free, which simplifies auditability
-2. User fully controls all network requests
-
-It's recommended to use [micro-ftch](https://github.com/paulmillr/micro-ftch),
-which works on top of fetch and implements killswitch, logging, concurrency limits and other features.
+We recommend using [micro-ftch](https://github.com/paulmillr/micro-ftch),
+which implements kill-switch, logging, batching / concurrency and other features.
 
 ### Init network
 
