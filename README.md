@@ -70,12 +70,19 @@ const signedTx = tx.signBy(random.privateKey);
 console.log('signed tx', signedTx, signedTx.toHex());
 console.log('fee', signedTx.fee);
 
+// Hedged signatures, with extra noise / security
+const signedTx2 = tx.signBy(random.privateKey, { extraEntropy: true });
+
 // Send whole account balance. See Security section for caveats
 const CURRENT_BALANCE = '1.7182050000017'; // in eth
 const txSendingWholeBalance = unsignedTx.setWholeAmount(weieth.decode(CURRENT_BALANCE));
 ```
 
 We support legacy, EIP2930, EIP1559, EIP4844 and EIP7702 transactions.
+
+Signing is done with [noble-curves](https://github.com/paulmillr/noble-curves), using RFC 6979.
+Hedged signatures are also supported - check out the blog post
+[Deterministic signatures are not your friends](https://paulmillr.com/posts/deterministic-signatures/).
 
 ### Addresses: create, checksum
 
