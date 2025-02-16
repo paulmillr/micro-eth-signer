@@ -2,13 +2,13 @@
 
 Minimal library for Ethereum transactions, addresses and smart contracts.
 
-- 🔓 Secure: 3 deps, audited [noble](https://paulmillr.com/noble/) cryptography, no network code
+- 🔓 Secure: audited [noble](https://paulmillr.com/noble/) cryptography, no network code, [hedged signatures](#transactions-create-sign)
 - 🔻 Tree-shakeable: unused code is excluded from your builds
 - 🔍 Reliable: 150MB of test vectors from EIPs, ethers and viem
 - ✍️ Core: transactions, addresses, messages
 - 🌍 Network-related: execute Uniswap & Chainlink, fetch tx history
 - 🦺 Advanced: type-safe ABI parsing, RLP, SSZ, KZG, Verkle
-- 🪶 29KB gzipped (1300 lines) for core
+- 🪶 29KB gzipped (1300 lines) for core, just 3 deps
 
 _Check out all web3 utility libraries:_ [ETH](https://github.com/paulmillr/micro-eth-signer), [BTC](https://github.com/paulmillr/scure-btc-signer), [SOL](https://github.com/paulmillr/micro-sol-signer)
 
