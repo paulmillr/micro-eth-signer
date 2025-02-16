@@ -186,14 +186,13 @@ const publicKey = typed.recoverPublicKeyTyped(signature, typedData);
 
 ## Network-related
 
-eth-signer makes it very easy to audit all network code.
-The library is network-free:
+### Init network
+
+eth-signer is network-free and makes it easy to audit network-related code:
 all requests are done with user-provided function, conforming to built-in `fetch()`.
 
 We recommend using [micro-ftch](https://github.com/paulmillr/micro-ftch),
 which implements kill-switch, logging, batching / concurrency and other features.
-
-### Init network
 
 Most APIs (chainlink, uniswap) expect instance of Web3Provider.
 The call stack would look like this:
