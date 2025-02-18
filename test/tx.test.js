@@ -1,15 +1,23 @@
+import { bytesToHex } from '@noble/hashes/utils';
+import { describe, should } from 'micro-should';
 import { deepStrictEqual, throws } from 'node:assert';
 import { inspect } from 'node:util';
-import { describe, should } from 'micro-should';
-import { addr, Transaction, authorization } from '../esm/index.js';
+import * as abi from '../esm/abi/decoder.js';
+import { Transaction, addr, authorization } from '../esm/index.js';
 import { RawTx, RlpTx, __tests } from '../esm/tx.js';
-import { add0x, createDecimal, ethHex, formatters, weieth, amounts } from '../esm/utils.js';
-import { default as TX_VECTORS } from './vectors/transactions.json' with { type: 'json' };
+import {
+  add0x,
+  amounts,
+  createDecimal,
+  ethHex,
+  formatters,
+  weieth,
+  weigwei,
+} from '../esm/utils.js';
+import { getEthersVectors, getViemVectors } from './util.js';
 import { default as EIP155_VECTORS } from './vectors/eips/eip155.json' with { type: 'json' };
 import * as ethTests from './vectors/eth-tests-tx-vectors.js';
-import { getEthersVectors, getViemVectors } from './util.js';
-import { weigwei } from '../esm/utils.js';
-import * as abi from '../esm/abi/decoder.js';
+import { default as TX_VECTORS } from './vectors/transactions.json' with { type: 'json' };
 
 let VIEM_TX;
 const SKIPPED_ERRORS = {
@@ -191,6 +199,7 @@ const convertTx = (raw) => {
   if (raw.maxFeePerBlobGas) res.maxFeePerBlobGas = toBig(raw.maxFeePerBlobGas);
   return res;
 };
+const randPrivs = () => new Array(1024).fill(0).map((a) => addr.random().privateKey);
 
 describe('Transactions', () => {
   describe('EIP7702', () => {
@@ -448,7 +457,7 @@ describe('Transactions', () => {
   should('generate correct Transaction.hash', () => {
     for (const txr of TX_VECTORS) {
       const etx = Transaction.fromHex(txr.hex);
-      deepStrictEqual(etx.calcHash(true), txr.hash.slice(2));
+      deepStrictEqual(bytesToHex(etx.calcHash(true)), txr.hash.slice(2));
     }
   });
   should('parse tx sender correctly', () => {
@@ -471,8 +480,10 @@ describe('Transactions', () => {
         ...convertTx(txr.raw),
         chainId: 3n,
       });
-      const signed = tx.signBy(priv);
+      const signed = tx.signBy(priv, false);
       deepStrictEqual(signed.calcHash(true), etx.calcHash(true));
+      const signedH = tx.signBy(priv);
+      signedH.verifySignature();
     }
   });
 
@@ -494,7 +505,7 @@ describe('Transactions', () => {
   should('handle EIP155 test vectors (hash)', () => {
     for (const vector of eip155) {
       const ours = new Transaction('legacy', convertTx(vector.transaction));
-      deepStrictEqual(ours.calcHash(false), vector.hash);
+      deepStrictEqual(bytesToHex(ours.calcHash(false)), vector.hash);
     }
   });
 
@@ -515,9 +526,13 @@ describe('Transactions', () => {
       chainId: 1n,
     });
     const privateKey = '6b911fd37cdf5c81d4c0adb1ab7fa822ed253ab0ad9aa18d77257c88b29b718e';
-    const signedTx = tx.signBy(privateKey); // Uint8Array is also accepted
+    const signedTx = tx.signBy(privateKey, false); // Uint8Array is also accepted
     const address = addr.fromPrivateKey(privateKey);
     deepStrictEqual(signedTx.sender, address);
+    const signedTxH = tx.signBy(privateKey);
+    deepStrictEqual(signedTxH.sender, address);
+    const signedTxD = tx.signBy(privateKey, false);
+    deepStrictEqual(signedTxD.sender, address);
   });
 
   should('ethers.js/transactions.json', () => {
@@ -536,7 +551,7 @@ describe('Transactions', () => {
           deepStrictEqual(etx.toHex(), unsigned);
           // Try to sign unsigned tx
           if (signed) {
-            const sig = etx.signBy(tx.privateKey);
+            const sig = etx.signBy(tx.privateKey, false);
             deepStrictEqual(sig.toHex(true), signed);
             deepStrictEqual(sig.raw.r, signature.r);
             deepStrictEqual(sig.raw.s, signature.s);
@@ -577,7 +592,7 @@ describe('Transactions', () => {
           }
           const preparedTx = Transaction.prepare(d, false);
           deepStrictEqual(preparedTx.toHex(false), unsigned);
-          const sig = etx.signBy(tx.privateKey);
+          const sig = etx.signBy(tx.privateKey, false);
           deepStrictEqual(sig.toHex(true), signed);
         }
       }
@@ -599,7 +614,7 @@ describe('Transactions', () => {
         deepStrictEqual(etx.toHex(), unsigned);
         // Try to sign unsigned tx
         if (signed) {
-          const sig = etx.signBy(vtx.privateKey);
+          const sig = etx.signBy(vtx.privateKey, false);
           deepStrictEqual(sig.toHex(true), signed);
           deepStrictEqual(sig.raw.r, signature.r);
           deepStrictEqual(sig.raw.s, signature.s);
@@ -631,7 +646,7 @@ describe('Transactions', () => {
           d.blobVersionedHashes = [];
         const preparedTx = Transaction.prepare(d, false);
         deepStrictEqual(preparedTx.toHex(false), unsigned);
-        const sig = etx.signBy(vtx.privateKey);
+        const sig = etx.signBy(vtx.privateKey, false);
         deepStrictEqual(sig.toHex(true), signed);
       }
     }
@@ -662,23 +677,27 @@ describe('Transactions', () => {
   describe('validations', () => {
     should('basic', () => {
       // Minimal fields with different types. Other stuff is default.
-      const tx = Transaction.prepare({
+      const raw = Transaction.prepare({
         to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
         nonce: 0n,
         value: 1n,
         maxFeePerGas: weigwei.decode('2'),
-      }).signBy('6b911fd37cdf5c81d4c0adb1ab7fa822ed253ab0ad9aa18d77257c88b29b718e');
+      });
+      const priv = '6b911fd37cdf5c81d4c0adb1ab7fa822ed253ab0ad9aa18d77257c88b29b718e';
+      const tx = raw.signBy(priv, false);
+      const txH = raw.signBy(priv, true);
       deepStrictEqual(
         tx.toHex(true),
         '0x02f86a0180843b9aca00847735940082520894df90dea0e0bf5ca6d2a7f0cb86874ba6714f463e0180c080a09448b25a696cb0f66945be1844711a5f6979c6cbf060e4f7b5a53e0dceeb3bdca004c61d9b91ecea687f78aa7e65108438e9b12a4fe90b1f70b0956134dfaba18f'
       );
+      deepStrictEqual(txH.verifySignature(), true);
       const tx2 = Transaction.prepare({
         type: 'eip2930',
         to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
         nonce: 0n,
         value: 1n,
         gasPrice: 1n,
-      }).signBy('6b911fd37cdf5c81d4c0adb1ab7fa822ed253ab0ad9aa18d77257c88b29b718e');
+      }).signBy(priv, false);
       deepStrictEqual(
         tx2.toHex(true),
         '0x01f86101800182520894df90dea0e0bf5ca6d2a7f0cb86874ba6714f463e0180c001a0fa53be4a77c94bfc8de4430c2828cb641e010870b1f62912b5cb69630507423fa04a1ab522f1691d55ba558d656d94e063f0cfbf02c70b68ac2a13628c768dd4c2'
@@ -689,11 +708,28 @@ describe('Transactions', () => {
         nonce: 0n,
         value: 1n,
         gasPrice: 1n,
-      }).signBy('6b911fd37cdf5c81d4c0adb1ab7fa822ed253ab0ad9aa18d77257c88b29b718e');
+      }).signBy(priv, false);
       deepStrictEqual(
         tx3.toHex(true),
         '0xf85f800182520894df90dea0e0bf5ca6d2a7f0cb86874ba6714f463e018026a09082d97700034dff9cfaa0a64136437eb7adf16940d0672491b80cfbc642a78ba04d2fd86634189e1e5e049ce958edb0ccb5dafce25559836346c360772be71a5f'
       );
+    });
+    should('1024 private keys', () => {
+      for (const priv of randPrivs()) {
+        const address = addr.fromPrivateKey(priv);
+        const raw = Transaction.prepare({
+          to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
+          nonce: 0n,
+          value: 1n,
+          maxFeePerGas: weigwei.decode('2'),
+        });
+        const txD = raw.signBy(priv, false);
+        const txH = raw.signBy(priv, true);
+        deepStrictEqual(txD.verifySignature(), true);
+        deepStrictEqual(txH.verifySignature(), true);
+        deepStrictEqual(txD.sender, address);
+        deepStrictEqual(txH.sender, address);
+      }
     });
     should('all fields', () => {
       // Default API:
@@ -886,12 +922,13 @@ describe('Transactions', () => {
     deepStrictEqual(newTx.toHex(), txHex);
   });
   should('parse weird TXs without to or data', () => {
-    const h = '0x02f8540a22830f4240830f453882d221808080c080a0c1bbbdf2a0949ca12d902d41b21cc7ba773ed40b8d1234ee3fbbfb6b8859b3dba064856c2d547c3ef008a0b030d10a5e68afe87f2729dd5677c64b52433be89dd8';
+    const h =
+      '0x02f8540a22830f4240830f453882d221808080c080a0c1bbbdf2a0949ca12d902d41b21cc7ba773ed40b8d1234ee3fbbfb6b8859b3dba064856c2d547c3ef008a0b030d10a5e68afe87f2729dd5677c64b52433be89dd8';
     const tx = Transaction.fromHex(h);
     deepStrictEqual(tx.sender, '0x2871E11949aE3F1b71850D2CB3FF25fBE892EDA6');
     deepStrictEqual(tx.verifySignature(), true);
     deepStrictEqual(tx.toHex(), h);
-  })
+  });
 });
 
 should.runWhen(import.meta.url);

@@ -1,10 +1,10 @@
-import { deepStrictEqual, throws } from 'node:assert';
-import { describe, should } from 'micro-should';
-import { jsonGZ } from './util.js';
 import { keccak_256 } from '@noble/hashes/sha3';
+import { hexToBytes, utf8ToBytes } from '@noble/hashes/utils';
+import { describe, should } from 'micro-should';
+import { deepStrictEqual, throws } from 'node:assert';
 import { addr } from '../esm/address.js';
 import * as typed from '../esm/typed-data.js';
-import { bytesToHex, concatBytes, hexToBytes, utf8ToBytes } from '@noble/hashes/utils';
+import { jsonGZ } from './util.js';
 
 const typedData = {
   types: {
@@ -57,11 +57,11 @@ describe('typedData (EIP-712)', () => {
       '0x4355c47d63924e8a72e509b65029052eb6c299d53a04e167c5775fd466751c9d' +
       '07299936d304c153f6443dfa05f40ff007d72911b6f72307f996231605b91562' +
       (28).toString(16);
-    deepStrictEqual(e.sign(typedData.primaryType, typedData.message, privateKey), sig);
+    deepStrictEqual(e.sign(typedData.primaryType, typedData.message, privateKey, false), sig);
     deepStrictEqual(e.verify(typedData.primaryType, sig, typedData.message, address), true);
     deepStrictEqual(e.recoverPublicKey(typedData.primaryType, sig, typedData.message), address);
     // Utils
-    deepStrictEqual(typed.signTyped(typedData, privateKey), sig);
+    deepStrictEqual(typed.signTyped(typedData, privateKey, false), sig);
     deepStrictEqual(typed.verifyTyped(sig, typedData, address), true);
     deepStrictEqual(typed.recoverPublicKeyTyped(sig, typedData), address);
   });
@@ -374,7 +374,7 @@ describe('typedData (EIP-712)', () => {
       );
       const address = addr.fromPrivateKey(privateKey);
       const message = 'Hello, world!';
-      const sig = typed.personal.sign(message, privateKey);
+      const sig = typed.personal.sign(message, privateKey, false);
       deepStrictEqual(
         sig,
         '0x90a938f7457df6e8f741264c32697fc52f9a8f867c52dd70713d9d2d472f2e415d9c94148991bbe1f4a1818d1dff09165782749c877f5cf1eff4ef126e55714d1c'
@@ -407,7 +407,7 @@ describe('typedData (EIP-712)', () => {
         },
       ];
       for (const t of VECTORS) {
-        const sig = typed.personal.sign(t.message, t.key);
+        const sig = typed.personal.sign(t.message, t.key, false);
         deepStrictEqual(sig, t.signature);
         deepStrictEqual(typed.personal.verify(sig, t.message, t.address), true);
         deepStrictEqual(typed.personal.recoverPublicKey(sig, t.message).toLowerCase(), t.address);
@@ -571,7 +571,7 @@ describe('typedData (EIP-712)', () => {
     for (const k in VECTORS) {
       should(k, () => {
         const { t, sig } = VECTORS[k];
-        deepStrictEqual(typed.signTyped(t, privateKey), sig);
+        deepStrictEqual(typed.signTyped(t, privateKey, false), sig);
         deepStrictEqual(typed.recoverPublicKeyTyped(sig, t).toLocaleLowerCase(), address);
       });
     }

@@ -1,3 +1,4 @@
+import { secp256k1 } from '@noble/curves/secp256k1';
 import { hexToBytes as _hexToBytes, isBytes as _isBytes, bytesToHex } from '@noble/hashes/utils';
 import { type Coder, coders } from 'micro-packed';
 
@@ -113,6 +114,33 @@ export function isObject(item: unknown): item is Record<string, any> {
 
 export function astr(str: unknown): void {
   if (typeof str !== 'string') throw new Error('string expected');
+}
+
+export function sign(
+  hash: Uint8Array,
+  privKey: Uint8Array,
+  extraEntropy: boolean | Uint8Array = true
+) {
+  return secp256k1.sign(hash, privKey, { extraEntropy: extraEntropy });
+}
+export type RawSig = { r: bigint; s: bigint };
+export type Sig = RawSig | Uint8Array;
+function validateRaw(obj: Sig) {
+  if (isBytes(obj)) return true;
+  if (typeof obj === 'object' && obj && typeof obj.r === 'bigint' && typeof obj.s === 'bigint')
+    return true;
+  throw new Error('expected valid signature');
+}
+export function verify(sig: Sig, hash: Uint8Array, publicKey: Uint8Array) {
+  validateRaw(sig);
+  return secp256k1.verify(sig, hash, publicKey);
+}
+export function initSig(sig: Sig, bit: number) {
+  validateRaw(sig);
+  const s = isBytes(sig)
+    ? secp256k1.Signature.fromCompact(sig)
+    : new secp256k1.Signature(sig.r, sig.s);
+  return s.addRecoveryBit(bit);
 }
 
 export function cloneDeep<T>(obj: T): T {

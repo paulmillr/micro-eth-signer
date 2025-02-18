@@ -1,16 +1,15 @@
-import { secp256k1 } from '@noble/curves/secp256k1';
 import { keccak_256 } from '@noble/hashes/sha3';
-import { concatBytes, utf8ToBytes } from '@noble/hashes/utils';
+import { concatBytes, hexToBytes, utf8ToBytes } from '@noble/hashes/utils';
 import type { GetType as AbiGetType } from './abi/decoder.js';
 import { mapComponent } from './abi/decoder.js';
 import { addr } from './address.js';
-import { add0x, astr, ethHex, isObject, strip0x } from './utils.js';
+import { add0x, astr, ethHex, initSig, isObject, sign, strip0x, verify } from './utils.js';
 
 // EIP-191 signed data (https://eips.ethereum.org/EIPS/eip-191)
 export type Hex = string | Uint8Array;
 export interface TypedSigner<T> {
   _getHash: (message: T) => string;
-  sign(message: T, privateKey: Hex, extraEntropy?: undefined): string;
+  sign(message: T, privateKey: Hex, extraEntropy?: boolean | Uint8Array): string;
   recoverPublicKey(signature: string, message: T): string;
   verify(signature: string, message: T, address: string): boolean;
 }
@@ -28,31 +27,32 @@ function getSigner<T>(version: number, msgFn: (message: T) => Uint8Array): Typed
   // TODO: 'v' can contain non-undefined chainId, but not sure if it is used. If used, we need to check it with EIP-712 domain
   return {
     _getHash: (message: T) => ethHex.encode(getHash(message)),
-    sign(message: T, privateKey: Hex, extraEntropy = undefined) {
+    sign(message: T, privateKey: Hex, extraEntropy: boolean | Uint8Array = true) {
       const hash = getHash(message);
       if (typeof privateKey === 'string') privateKey = ethHex.decode(privateKey);
-      const sig = secp256k1.sign(hash, privateKey, { extraEntropy });
+      const sig = sign(hash, privateKey, extraEntropy);
       const end = sig.recovery === 0 ? '1b' : '1c';
       return add0x(sig.toCompactHex() + end);
     },
     recoverPublicKey(signature: string, message: T) {
+      astr(signature);
       const hash = getHash(message);
       signature = strip0x(signature);
       if (signature.length !== 65 * 2) throw new Error('invalid signature length');
       const sigh = signature.slice(0, -2);
       const end = signature.slice(-2);
       if (!['1b', '1c'].includes(end)) throw new Error('invalid recovery bit');
-      const sig = secp256k1.Signature.fromCompact(sigh).addRecoveryBit(end === '1b' ? 0 : 1);
-      const pub = sig.recoverPublicKey(hash).toHex(false);
-      if (!secp256k1.verify(sig, hash, pub)) throw new Error('invalid signature');
+      const sig = initSig(hexToBytes(sigh), end === '1b' ? 0 : 1);
+      const pub = sig.recoverPublicKey(hash).toRawBytes(false);
+      if (!verify(sig, hash, pub)) throw new Error('invalid signature');
       return addr.fromPublicKey(pub);
     },
-    verify(signature: string, message: T, address: string) {
-      const recoveredAddr = this.recoverPublicKey(signature, message);
-      const low = recoveredAddr.toLowerCase();
-      const upp = recoveredAddr.toUpperCase();
-      if (address === low || address === upp) return true;
-      return recoveredAddr === address;
+    verify(signature: string, message: T, address: string): boolean {
+      const recAddr = this.recoverPublicKey(signature, message);
+      const low = recAddr.toLowerCase();
+      const upp = recAddr.toUpperCase();
+      if (address === low || address === upp) return true; // non-checksummed
+      return recAddr === address; // checksummed
     },
   };
 }
@@ -272,7 +272,7 @@ export function encoder<T extends EIP712Types>(types: T, domain: GetType<T, 'EIP
       primaryType: K,
       message: GetType<T, K>,
       privateKey: Hex,
-      extraEntropy?: undefined
+      extraEntropy?: boolean | Uint8Array
     ): string => signer.sign({ primaryType, message }, privateKey, extraEntropy),
     verify: <K extends Key<T>>(
       primaryType: K,
@@ -345,13 +345,15 @@ export function sigHash<T extends EIP712Types, K extends Key<T>>(typed: TypedDat
 
 export function signTyped<T extends EIP712Types, K extends Key<T>>(
   typed: TypedData<T, K>,
-  privateKey: Hex
+  privateKey: Hex,
+  extraEntropy?: boolean | Uint8Array
 ): string {
   validateTyped(typed);
   return encoder(getTypedTypes(typed) as T, typed.domain).sign(
     typed.primaryType,
     typed.message,
-    privateKey
+    privateKey,
+    extraEntropy
   );
 }
 

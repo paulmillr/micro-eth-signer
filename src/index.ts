@@ -1,7 +1,6 @@
 /*! micro-eth-signer - MIT License (c) 2021 Paul Miller (paulmillr.com) */
-import { secp256k1 } from '@noble/curves/secp256k1';
 import { keccak_256 } from '@noble/hashes/sha3';
-import { bytesToHex, concatBytes } from '@noble/hashes/utils';
+import { bytesToHex, concatBytes, hexToBytes } from '@noble/hashes/utils';
 import type { UnwrapCoder } from 'micro-packed';
 import { addr } from './address.js';
 // prettier-ignore
@@ -23,7 +22,10 @@ import {
 import {
   amounts, astr,
   cloneDeep,
-  ethHex, ethHexNoLeadingZero, strip0x, weieth, weigwei,
+  ethHex, ethHexNoLeadingZero,
+  initSig,
+  isBytes,
+  sign, strip0x, verify, weieth, weigwei
 } from './utils.js';
 export { addr, weieth, weigwei };
 
@@ -39,13 +41,13 @@ export const authorization = {
   },
   sign(req: AuthorizationRequest, privateKey: string): AuthorizationItem {
     astr(privateKey);
-    const sig = secp256k1.sign(this._getHash(req), ethHex.decode(privateKey));
+    const sig = sign(this._getHash(req), ethHex.decode(privateKey));
     return { ...req, r: sig.r, s: sig.s, yParity: sig.recovery };
   },
   getAuthority(item: AuthorizationItem): string {
     const { r, s, yParity, ...req } = item;
     const hash = this._getHash(req);
-    const sig = new secp256k1.Signature(r, s).addRecoveryBit(yParity);
+    const sig = initSig({ r, s }, yParity);
     const point = sig.recoverPublicKey(hash);
     return addr.fromPublicKey(point.toHex(false));
   },
@@ -210,16 +212,12 @@ export class Transaction<T extends TxType> {
   toHex(includeSignature: boolean = this.isSigned): string {
     return ethHex.encode(this.toRawBytes(includeSignature));
   }
-  /**
-   * Calculates keccak-256 hash of signed transaction. Used in block explorers.
-   */
+  /** Calculates keccak-256 hash of signed transaction. Used in block explorers. */
   get hash(): string {
     this.assertIsSigned();
-    return this.calcHash(true);
+    return bytesToHex(this.calcHash(true));
   }
-  /**
-   * Returns sender's address.
-   */
+  /** Returns sender's address. */
   get sender(): string {
     return this.recoverSender().address;
   }
@@ -229,10 +227,10 @@ export class Transaction<T extends TxType> {
   get v(): bigint | undefined {
     return decodeLegacyV(this.raw);
   }
-  private calcHash(includeSignature: boolean): string {
-    return bytesToHex(keccak_256(this.toRawBytes(includeSignature)));
+  private calcHash(includeSignature: boolean): Uint8Array {
+    return keccak_256(this.toRawBytes(includeSignature));
   }
-  // Calculates MAXIMUM fee in wei that could be spent
+  /** Calculates MAXIMUM fee in wei that could be spent. */
   get fee(): bigint {
     const { type, raw } = this;
     // Fee calculation is not exact, real fee can be smaller
@@ -256,7 +254,11 @@ export class Transaction<T extends TxType> {
   verifySignature(): boolean {
     this.assertIsSigned();
     const { r, s } = this.raw;
-    return secp256k1.verify({ r: r!, s: s! }, this.calcHash(false), this.recoverSender().publicKey);
+    return verify(
+      { r: r!, s: s! },
+      this.calcHash(false),
+      hexToBytes(this.recoverSender().publicKey)
+    );
   }
   removeSignature(): Transaction<T> {
     return new Transaction(this.type, removeSig(cloneDeep(this.raw)));
@@ -269,23 +271,21 @@ export class Transaction<T extends TxType> {
    */
   signBy(
     privateKey: string | Uint8Array,
-    opts: { extraEntropy?: true | undefined } = {}
+    extraEntropy: boolean | Uint8Array = true
   ): Transaction<T> {
     if (this.isSigned) throw new Error('expected unsigned transaction');
-    const priv = typeof privateKey === 'string' ? strip0x(privateKey) : privateKey;
+    const priv = isBytes(privateKey) ? privateKey : hexToBytes(strip0x(privateKey));
     const hash = this.calcHash(false);
-    const { r, s, recovery } = secp256k1.sign(hash, priv, { extraEntropy: opts.extraEntropy });
+    const { r, s, recovery } = sign(hash, priv, extraEntropy);
     const sraw = Object.assign(cloneDeep(this.raw), { r, s, yParity: recovery });
     // The copied result is validated in non-strict way, strict is only for user input.
     return new Transaction(this.type, sraw, false);
   }
-  /**
-   * Calculates public key and address from signed transaction's signature.
-   */
+  /** Calculates public key and address from signed transaction's signature. */
   recoverSender(): { publicKey: string; address: string } {
     this.assertIsSigned();
     const { r, s, yParity } = this.raw;
-    const sig = new secp256k1.Signature(r!, s!).addRecoveryBit(yParity!);
+    const sig = initSig({ r: r!, s: s! }, yParity!);
     // Will crash on 'chainstart' hardfork
     if (sig.hasHighS()) throw new Error('invalid s');
     const point = sig.recoverPublicKey(this.calcHash(false));
