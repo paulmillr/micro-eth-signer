@@ -121,7 +121,11 @@ export function sign(
   privKey: Uint8Array,
   extraEntropy: boolean | Uint8Array = true
 ) {
-  return secp256k1.sign(hash, privKey, { extraEntropy: extraEntropy });
+  const sig = secp256k1.sign(hash, privKey, { extraEntropy: extraEntropy });
+  // yellow paper page 26 bans recovery 2 or 3
+  // https://ethereum.github.io/yellowpaper/paper.pdf
+  if ([2, 3].includes(sig.recovery)) throw new Error('invalid signature rec=2 or 3');
+  return sig;
 }
 export type RawSig = { r: bigint; s: bigint };
 export type Sig = RawSig | Uint8Array;
