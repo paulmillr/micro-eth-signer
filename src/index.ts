@@ -103,15 +103,14 @@ type SpecifyVersionNeg<T extends TxType[]> = UnwrapCoder<
 // TODO: tx is kinda immutable, but user can change .raw values before signing
 // need to think about re-validation?
 export class Transaction<T extends TxType> {
-  isSigned: boolean;
+  readonly type: T;
+  readonly raw: TxCoder<T>;
+  readonly isSigned: boolean;
 
   // Doesn't force any defaults, catches if fields incompatible with type
-  constructor(
-    readonly type: T,
-    readonly raw: TxCoder<T>,
-    strict = true,
-    allowSignatureFields = true
-  ) {
+  constructor(type: T, raw: TxCoder<T>, strict = true, allowSignatureFields = true) {
+    this.type = type;
+    this.raw = raw;
     validateFields(type, raw, strict, allowSignatureFields);
     this.isSigned = typeof raw.r === 'bigint' && typeof raw.s === 'bigint';
   }

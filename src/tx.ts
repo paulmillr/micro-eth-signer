@@ -1,7 +1,7 @@
 import * as P from 'micro-packed';
 import { addr } from './address.js';
 import { RLP } from './rlp.js';
-import { isObject, amounts, ethHex, isBytes } from './utils.js';
+import { amounts, ethHex, isBytes, isObject } from './utils.js';
 
 // Transaction parsers
 
@@ -519,11 +519,12 @@ const validators: Record<string, (num: any, { strict, type, data }: ValidationOp
 // Validation
 type ErrObj = { field: string; error: string };
 export class AggregatedError extends Error {
-  constructor(
-    readonly message: string,
-    readonly errors: ErrObj[]
-  ) {
+  message: string;
+  errors: ErrObj[];
+  constructor(message: string, errors: ErrObj[]) {
     super();
+    this.message = message;
+    this.errors = errors;
   }
 }
 

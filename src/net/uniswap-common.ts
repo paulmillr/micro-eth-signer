@@ -136,7 +136,10 @@ export abstract class UniswapAbstract {
     outputAmount?: bigint,
     opt?: { slippagePercent: number }
   ): any;
-  constructor(public net: IWeb3Provider) {}
+  readonly net: IWeb3Provider;
+  constructor(net: IWeb3Provider) {
+    this.net = net;
+  }
   // private async coinInfo(netName: string) {
   //   if (!validateAddr(netName)) return;
   //   if (netName === 'eth') return { symbol: 'ETH', decimals: 18 };

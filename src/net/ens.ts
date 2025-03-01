@@ -38,8 +38,10 @@ export default class ENS {
     },
   ] as const;
 
-  constructor(readonly net: IWeb3Provider) {}
-
+  readonly net: IWeb3Provider;
+  constructor(net: IWeb3Provider) {
+    this.net = net;
+  }
   async getResolver(name: string): Promise<string | undefined> {
     const contract = createContract(ENS.REGISTRY_CONTRACT, this.net, ENS.REGISTRY);
     const res = await contract.resolver.call(namehash(name));

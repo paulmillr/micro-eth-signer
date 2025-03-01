@@ -467,11 +467,11 @@ export const verifyProof = (proofBytes: Uint8Array, verifierInputs: VerifierInpu
   );
 };
 
-enum ExtPresent {
-  None,
-  DifferentStem,
-  Present,
-}
+const EXTPresent = {
+  None: 0,
+  DifferentStem: 1,
+  Present: 2,
+} as const;
 
 export function verifyExecutionWitnessPreState(
   rootHex: string,
@@ -530,7 +530,7 @@ export function verifyExecutionWitnessPreState(
     const extPres = extensionPresent[i];
     const stemHex = bytesToHex(stem);
     depthsAndExtByStem.set(stemHex, [extPres, depths[i]]);
-    if (extPres === ExtPresent.Present) stemsWithExtension.set(stemHex, stem);
+    if (extPres === EXTPresent.Present) stemsWithExtension.set(stemHex, stem);
   }
   const allPathsSet = new Set<string>();
   const allPathsAndZsSet = new Map<string, [Uint8Array, number]>();
@@ -558,11 +558,11 @@ export function verifyExecutionWitnessPreState(
       throw new Error(`Stem not found in depths and extensions map`);
     for (let j = 0; j < depth; j++) addAllPathsAndZsSet(stem.subarray(0, j), stem[j]);
 
-    if (extPres === ExtPresent.DifferentStem || extPres === ExtPresent.Present) {
+    if (extPres === EXTPresent.DifferentStem || extPres === EXTPresent.Present) {
       const path = stem.subarray(0, depth);
       addAllPathsAndZsSet(path, 0, Fr.ONE);
       addAllPathsAndZsSet(path, 1);
-      if (extPres === ExtPresent.Present) {
+      if (extPres === EXTPresent.Present) {
         const suffix = key[31];
         const openingIndex = suffix < 128 ? 2 : 3;
         addAllPathsAndZsSet(path, openingIndex);
@@ -579,7 +579,7 @@ export function verifyExecutionWitnessPreState(
           lowIdx + 1,
           value ? Fr.fromBytes(extendScalar(value.subarray(16, 32))) : Fr.ZERO
         );
-      } else if (extPres === ExtPresent.DifferentStem) {
+      } else if (extPres === EXTPresent.DifferentStem) {
         if (value !== undefined) return false;
         let otherStem = undefined;
         const found = [];
@@ -604,7 +604,7 @@ export function verifyExecutionWitnessPreState(
           addLeafValuesByPathAndZ(path, 1, Fr.fromBytes(extendScalar(otherStem)));
         }
       }
-    } else if (extPres === ExtPresent.None) {
+    } else if (extPres === EXTPresent.None) {
       if (value !== undefined) return false;
       addLeafValuesByPathAndZ(
         depth === 1 ? new Uint8Array() : stem.slice(0, depth),

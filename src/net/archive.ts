@@ -404,7 +404,10 @@ const isReverted = (e: Error) => e instanceof Error && e.message.toLowerCase().i
  * `tokenInfo` and `txInfo`.
  */
 export class Web3Provider implements IWeb3Provider {
-  constructor(private rpc: JsonrpcInterface) {}
+  private rpc: JsonrpcInterface;
+  constructor(rpc: JsonrpcInterface) {
+    this.rpc = rpc;
+  }
 
   call(method: string, ...args: any[]): Promise<any> {
     return this.rpc.call(method, ...args);
