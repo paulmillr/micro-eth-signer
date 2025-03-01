@@ -489,6 +489,10 @@ const isValidB = kzg.verifyBlobProof(blob, commitment, proof);
 
 ## Security
 
+You can verify standalone built files using github CLI:
+
+    gh attestation verify --owner paulmillr micro-eth-signer.js
+
 Main points to consider when auditing the library:
 
 - ABI correctness
