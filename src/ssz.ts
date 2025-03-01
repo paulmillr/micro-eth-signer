@@ -1,5 +1,5 @@
-import * as P from 'micro-packed';
 import { sha256 } from '@noble/hashes/sha2';
+import * as P from 'micro-packed';
 import { isBytes, isObject } from './utils.js';
 /*
 
@@ -26,6 +26,14 @@ API difference:
 */
 const BYTES_PER_CHUNK = 32; // Should be equal to digest size of hash
 const EMPTY_CHUNK = new Uint8Array(BYTES_PER_CHUNK);
+
+export const ForkSlots = {
+  Phase0: 0,
+  Altair: 2375680,
+  Bellatrix: 4700013,
+  Capella: 6209536,
+  Deneb: 8626176,
+} as const;
 
 export type SSZCoder<T> = P.CoderType<T> & {
   default: T;
@@ -1523,3 +1531,256 @@ export const ETH2_PROFILES = {
     ),
   },
 };
+
+/** Capella Types */
+export const CapellaExecutionPayloadHeader = container({
+  parent_hash: ETH2_TYPES.Hash32,
+  fee_recipient: ETH2_TYPES.ExecutionAddress,
+  state_root: ETH2_TYPES.Bytes32,
+  receipts_root: ETH2_TYPES.Bytes32,
+  logs_bloom: bytevector(BYTES_PER_LOGS_BLOOM),
+  prev_randao: ETH2_TYPES.Bytes32,
+  block_number: uint64,
+  gas_limit: uint64,
+  gas_used: uint64,
+  timestamp: uint64,
+  extra_data: bytelist(MAX_EXTRA_DATA_BYTES),
+  base_fee_per_gas: uint256,
+  block_hash: ETH2_TYPES.Hash32,
+  transactions_root: ETH2_TYPES.Root,
+  withdrawals_root: ETH2_TYPES.Root,
+});
+
+const CapellaBeaconBlockBody = container({
+  randao_reveal: ETH2_TYPES.BLSSignature,
+  eth1_data: ETH2_TYPES.Eth1Data,
+  graffiti: ETH2_TYPES.Bytes32,
+  proposer_slashings: list(MAX_PROPOSER_SLASHINGS, ETH2_TYPES.ProposerSlashing),
+  attester_slashings: list(MAX_ATTESTER_SLASHINGS, ETH2_TYPES.AttesterSlashing),
+  attestations: list(MAX_ATTESTATIONS, ETH2_TYPES.Attestation),
+  deposits: list(MAX_DEPOSITS, ETH2_TYPES.Deposit),
+  voluntary_exits: list(MAX_VOLUNTARY_EXITS, ETH2_TYPES.SignedVoluntaryExit),
+  sync_aggregate: ETH2_TYPES.SyncAggregate,
+  execution_payload: CapellaExecutionPayloadHeader,
+  bls_to_execution_changes: list(
+    MAX_BLS_TO_EXECUTION_CHANGES,
+    ETH2_TYPES.SignedBLSToExecutionChange
+  ),
+});
+export const CapellaBeaconBlock = container({
+  slot: ETH2_TYPES.Slot,
+  proposer_index: ETH2_TYPES.ValidatorIndex,
+  parent_root: ETH2_TYPES.Root,
+  state_root: ETH2_TYPES.Root,
+  body: CapellaBeaconBlockBody,
+});
+
+export const CapellaSignedBeaconBlock = container({
+  message: CapellaBeaconBlock,
+  signature: ETH2_TYPES.BLSSignature,
+});
+
+export const CapellaBeaconState = container({
+  genesis_time: uint64,
+  genesis_validators_root: ETH2_TYPES.Root,
+  slot: ETH2_TYPES.Slot,
+  fork: ETH2_TYPES.Fork,
+  latest_block_header: ETH2_TYPES.BeaconBlockHeader,
+  block_roots: vector(SLOTS_PER_HISTORICAL_ROOT, ETH2_TYPES.Root),
+  state_roots: vector(SLOTS_PER_HISTORICAL_ROOT, ETH2_TYPES.Root),
+  historical_roots: list(HISTORICAL_ROOTS_LIMIT, ETH2_TYPES.Root),
+  eth1_data: ETH2_TYPES.Eth1Data,
+  eth1_data_votes: list(EPOCHS_PER_ETH1_VOTING_PERIOD * SLOTS_PER_EPOCH, ETH2_TYPES.Eth1Data),
+  eth1_deposit_index: uint64,
+  validators: list(VALIDATOR_REGISTRY_LIMIT, ETH2_TYPES.Validator),
+  balances: list(VALIDATOR_REGISTRY_LIMIT, ETH2_TYPES.Gwei),
+  randao_mixes: vector(EPOCHS_PER_HISTORICAL_VECTOR, ETH2_TYPES.Bytes32),
+  slashings: vector(EPOCHS_PER_SLASHINGS_VECTOR, ETH2_TYPES.Gwei),
+  previous_epoch_participation: list(VALIDATOR_REGISTRY_LIMIT, ETH2_TYPES.ParticipationFlags),
+  current_epoch_participation: list(VALIDATOR_REGISTRY_LIMIT, ETH2_TYPES.ParticipationFlags),
+  justification_bits: bitvector(JUSTIFICATION_BITS_LENGTH),
+  previous_justified_checkpoint: ETH2_TYPES.Checkpoint,
+  current_justified_checkpoint: ETH2_TYPES.Checkpoint,
+  finalized_checkpoint: ETH2_TYPES.Checkpoint,
+  inactivity_scores: list(VALIDATOR_REGISTRY_LIMIT, uint64),
+  current_sync_committee: ETH2_TYPES.SyncCommittee,
+  next_sync_committee: ETH2_TYPES.SyncCommittee,
+  latest_execution_payload_header: CapellaExecutionPayloadHeader,
+  next_withdrawal_index: uint64,
+  next_withdrawal_validator_index: uint64,
+  historical_summaries: list(HISTORICAL_ROOTS_LIMIT, ETH2_TYPES.HistoricalSummary),
+});
+
+/** Bellatrix Types */
+export const BellatrixExecutionPayloadHeader = container({
+  parent_hash: ETH2_TYPES.Hash32,
+  fee_recipient: ETH2_TYPES.ExecutionAddress,
+  state_root: ETH2_TYPES.Bytes32,
+  receipts_root: ETH2_TYPES.Bytes32,
+  logs_bloom: bytevector(BYTES_PER_LOGS_BLOOM),
+  prev_randao: ETH2_TYPES.Bytes32,
+  block_number: uint64,
+  gas_limit: uint64,
+  gas_used: uint64,
+  timestamp: uint64,
+  extra_data: bytelist(MAX_EXTRA_DATA_BYTES),
+  base_fee_per_gas: uint256,
+  block_hash: ETH2_TYPES.Hash32,
+  transactions_root: ETH2_TYPES.Root,
+});
+
+const BellatrixBeaconBlockBody = container({
+  randao_reveal: ETH2_TYPES.BLSSignature,
+  eth1_data: ETH2_TYPES.Eth1Data,
+  graffiti: ETH2_TYPES.Bytes32,
+  proposer_slashings: list(MAX_PROPOSER_SLASHINGS, ETH2_TYPES.ProposerSlashing),
+  attester_slashings: list(MAX_ATTESTER_SLASHINGS, ETH2_TYPES.AttesterSlashing),
+  attestations: list(MAX_ATTESTATIONS, ETH2_TYPES.Attestation),
+  deposits: list(MAX_DEPOSITS, ETH2_TYPES.Deposit),
+  voluntary_exits: list(MAX_VOLUNTARY_EXITS, ETH2_TYPES.SignedVoluntaryExit),
+  sync_aggregate: ETH2_TYPES.SyncAggregate,
+  execution_payload: BellatrixExecutionPayloadHeader,
+  bls_to_execution_changes: list(
+    MAX_BLS_TO_EXECUTION_CHANGES,
+    ETH2_TYPES.SignedBLSToExecutionChange
+  ),
+});
+export const BellatrixBeaconBlock = container({
+  slot: ETH2_TYPES.Slot,
+  proposer_index: ETH2_TYPES.ValidatorIndex,
+  parent_root: ETH2_TYPES.Root,
+  state_root: ETH2_TYPES.Root,
+  body: BellatrixBeaconBlockBody,
+});
+
+export const BellatrixSignedBeaconBlock = container({
+  message: BellatrixBeaconBlock,
+  signature: ETH2_TYPES.BLSSignature,
+});
+
+export const BellatrixBeaconState = container({
+  genesis_time: uint64,
+  genesis_validators_root: ETH2_TYPES.Root,
+  slot: ETH2_TYPES.Slot,
+  fork: ETH2_TYPES.Fork,
+  latest_block_header: ETH2_TYPES.BeaconBlockHeader,
+  block_roots: vector(SLOTS_PER_HISTORICAL_ROOT, ETH2_TYPES.Root),
+  state_roots: vector(SLOTS_PER_HISTORICAL_ROOT, ETH2_TYPES.Root),
+  historical_roots: list(HISTORICAL_ROOTS_LIMIT, ETH2_TYPES.Root),
+  eth1_data: ETH2_TYPES.Eth1Data,
+  eth1_data_votes: list(EPOCHS_PER_ETH1_VOTING_PERIOD * SLOTS_PER_EPOCH, ETH2_TYPES.Eth1Data),
+  eth1_deposit_index: uint64,
+  validators: list(VALIDATOR_REGISTRY_LIMIT, ETH2_TYPES.Validator),
+  balances: list(VALIDATOR_REGISTRY_LIMIT, ETH2_TYPES.Gwei),
+  randao_mixes: vector(EPOCHS_PER_HISTORICAL_VECTOR, ETH2_TYPES.Bytes32),
+  slashings: vector(EPOCHS_PER_SLASHINGS_VECTOR, ETH2_TYPES.Gwei),
+  previous_epoch_participation: list(VALIDATOR_REGISTRY_LIMIT, ETH2_TYPES.ParticipationFlags),
+  current_epoch_participation: list(VALIDATOR_REGISTRY_LIMIT, ETH2_TYPES.ParticipationFlags),
+  justification_bits: bitvector(JUSTIFICATION_BITS_LENGTH),
+  previous_justified_checkpoint: ETH2_TYPES.Checkpoint,
+  current_justified_checkpoint: ETH2_TYPES.Checkpoint,
+  finalized_checkpoint: ETH2_TYPES.Checkpoint,
+  inactivity_scores: list(VALIDATOR_REGISTRY_LIMIT, uint64),
+  current_sync_committee: ETH2_TYPES.SyncCommittee,
+  next_sync_committee: ETH2_TYPES.SyncCommittee,
+  latest_execution_payload_header: BellatrixExecutionPayloadHeader,
+});
+
+/** Altair Types */
+const AltairBeaconBlockBody = container({
+  randao_reveal: ETH2_TYPES.BLSSignature,
+  eth1_data: ETH2_TYPES.Eth1Data,
+  graffiti: ETH2_TYPES.Bytes32,
+  proposer_slashings: list(MAX_PROPOSER_SLASHINGS, ETH2_TYPES.ProposerSlashing),
+  attester_slashings: list(MAX_ATTESTER_SLASHINGS, ETH2_TYPES.AttesterSlashing),
+  attestations: list(MAX_ATTESTATIONS, ETH2_TYPES.Attestation),
+  deposits: list(MAX_DEPOSITS, ETH2_TYPES.Deposit),
+  voluntary_exits: list(MAX_VOLUNTARY_EXITS, ETH2_TYPES.SignedVoluntaryExit),
+  sync_aggregate: ETH2_TYPES.SyncAggregate,
+});
+export const AltairBeaconBlock = container({
+  slot: ETH2_TYPES.Slot,
+  proposer_index: ETH2_TYPES.ValidatorIndex,
+  parent_root: ETH2_TYPES.Root,
+  state_root: ETH2_TYPES.Root,
+  body: AltairBeaconBlockBody,
+});
+
+export const AltairSignedBeaconBlock = container({
+  message: AltairBeaconBlock,
+  signature: ETH2_TYPES.BLSSignature,
+});
+
+export const AltairBeaconState = container({
+  genesis_time: uint64,
+  genesis_validators_root: ETH2_TYPES.Root,
+  slot: ETH2_TYPES.Slot,
+  fork: ETH2_TYPES.Fork,
+  latest_block_header: ETH2_TYPES.BeaconBlockHeader,
+  block_roots: vector(SLOTS_PER_HISTORICAL_ROOT, ETH2_TYPES.Root),
+  state_roots: vector(SLOTS_PER_HISTORICAL_ROOT, ETH2_TYPES.Root),
+  historical_roots: list(HISTORICAL_ROOTS_LIMIT, ETH2_TYPES.Root),
+  eth1_data: ETH2_TYPES.Eth1Data,
+  eth1_data_votes: list(EPOCHS_PER_ETH1_VOTING_PERIOD * SLOTS_PER_EPOCH, ETH2_TYPES.Eth1Data),
+  eth1_deposit_index: uint64,
+  validators: list(VALIDATOR_REGISTRY_LIMIT, ETH2_TYPES.Validator),
+  balances: list(VALIDATOR_REGISTRY_LIMIT, ETH2_TYPES.Gwei),
+  randao_mixes: vector(EPOCHS_PER_HISTORICAL_VECTOR, ETH2_TYPES.Bytes32),
+  slashings: vector(EPOCHS_PER_SLASHINGS_VECTOR, ETH2_TYPES.Gwei),
+  previous_epoch_participation: list(VALIDATOR_REGISTRY_LIMIT, ETH2_TYPES.ParticipationFlags),
+  current_epoch_participation: list(VALIDATOR_REGISTRY_LIMIT, ETH2_TYPES.ParticipationFlags),
+  justification_bits: bitvector(JUSTIFICATION_BITS_LENGTH),
+  previous_justified_checkpoint: ETH2_TYPES.Checkpoint,
+  current_justified_checkpoint: ETH2_TYPES.Checkpoint,
+  finalized_checkpoint: ETH2_TYPES.Checkpoint,
+  inactivity_scores: list(VALIDATOR_REGISTRY_LIMIT, uint64),
+  current_sync_committee: ETH2_TYPES.SyncCommittee,
+  next_sync_committee: ETH2_TYPES.SyncCommittee,
+});
+
+/** Phase0 Types */
+const Phase0BeaconBlockBody = container({
+  randao_reveal: ETH2_TYPES.BLSSignature,
+  eth1_data: ETH2_TYPES.Eth1Data,
+  graffiti: ETH2_TYPES.Bytes32,
+  proposer_slashings: list(MAX_PROPOSER_SLASHINGS, ETH2_TYPES.ProposerSlashing),
+  attester_slashings: list(MAX_ATTESTER_SLASHINGS, ETH2_TYPES.AttesterSlashing),
+  attestations: list(MAX_ATTESTATIONS, ETH2_TYPES.Attestation),
+  deposits: list(MAX_DEPOSITS, ETH2_TYPES.Deposit),
+  voluntary_exits: list(MAX_VOLUNTARY_EXITS, ETH2_TYPES.SignedVoluntaryExit),
+});
+export const Phase0BeaconBlock = container({
+  slot: ETH2_TYPES.Slot,
+  proposer_index: ETH2_TYPES.ValidatorIndex,
+  parent_root: ETH2_TYPES.Root,
+  state_root: ETH2_TYPES.Root,
+  body: Phase0BeaconBlockBody,
+});
+
+export const Phase0SignedBeaconBlock = container({
+  message: Phase0BeaconBlock,
+  signature: ETH2_TYPES.BLSSignature,
+});
+export const Phase0BeaconState = container({
+  genesis_time: uint64,
+  genesis_validators_root: ETH2_TYPES.Root,
+  slot: ETH2_TYPES.Slot,
+  fork: ETH2_TYPES.Fork,
+  latest_block_header: ETH2_TYPES.BeaconBlockHeader,
+  block_roots: vector(SLOTS_PER_HISTORICAL_ROOT, ETH2_TYPES.Root),
+  state_roots: vector(SLOTS_PER_HISTORICAL_ROOT, ETH2_TYPES.Root),
+  historical_roots: list(HISTORICAL_ROOTS_LIMIT, ETH2_TYPES.Root),
+  eth1_data: ETH2_TYPES.Eth1Data,
+  eth1_data_votes: list(EPOCHS_PER_ETH1_VOTING_PERIOD * SLOTS_PER_EPOCH, ETH2_TYPES.Eth1Data),
+  eth1_deposit_index: uint64,
+  validators: list(VALIDATOR_REGISTRY_LIMIT, ETH2_TYPES.Validator),
+  balances: list(VALIDATOR_REGISTRY_LIMIT, ETH2_TYPES.Gwei),
+  randao_mixes: vector(EPOCHS_PER_HISTORICAL_VECTOR, ETH2_TYPES.Bytes32),
+  slashings: vector(EPOCHS_PER_SLASHINGS_VECTOR, ETH2_TYPES.Gwei),
+  previous_epoch_participation: list(VALIDATOR_REGISTRY_LIMIT, ETH2_TYPES.ParticipationFlags),
+  current_epoch_participation: list(VALIDATOR_REGISTRY_LIMIT, ETH2_TYPES.ParticipationFlags),
+  justification_bits: bitvector(JUSTIFICATION_BITS_LENGTH),
+  previous_justified_checkpoint: ETH2_TYPES.Checkpoint,
+  current_justified_checkpoint: ETH2_TYPES.Checkpoint,
+  finalized_checkpoint: ETH2_TYPES.Checkpoint,
+});
