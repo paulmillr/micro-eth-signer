@@ -1,6 +1,6 @@
 {
   "name": "@paulmillr/micro-eth-signer",
-  "version": "0.13.3",
+  "version": "0.14.0",
   "exports": {
     ".": "./src/index.ts",
     "./abi": "./src/abi/index.ts",
