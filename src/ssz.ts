@@ -1,6 +1,6 @@
 import { sha256 } from '@noble/hashes/sha2';
 import * as P from 'micro-packed';
-import { isBytes, isObject } from './utils.js';
+import { isBytes, isObject } from './utils.ts';
 /*
 
 Simple serialize (SSZ) is the serialization method used on the Beacon Chain.

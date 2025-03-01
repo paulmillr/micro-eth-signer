@@ -1,9 +1,9 @@
 import { keccak_256 } from '@noble/hashes/sha3';
 import { concatBytes, hexToBytes } from '@noble/hashes/utils';
-import { type ContractInfo, createContract } from '../abi/decoder.js';
-import { default as UNISWAP_V2_ROUTER, UNISWAP_V2_ROUTER_CONTRACT } from '../abi/uniswap-v2.js';
-import { type IWeb3Provider, ethHex } from '../utils.js';
-import * as uni from './uniswap-common.js';
+import { type ContractInfo, createContract } from '../abi/decoder.ts';
+import { default as UNISWAP_V2_ROUTER, UNISWAP_V2_ROUTER_CONTRACT } from '../abi/uniswap-v2.ts';
+import { type IWeb3Provider, ethHex } from '../utils.ts';
+import * as uni from './uniswap-common.ts';
 
 const FACTORY_ADDRESS = '0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f';
 const INIT_CODE_HASH = hexToBytes(

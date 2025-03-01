@@ -5,7 +5,7 @@ import { bytesToNumberBE, bytesToNumberLE, numberToBytesBE } from '@noble/curves
 import { sha256 } from '@noble/hashes/sha256';
 import { bytesToHex, concatBytes, hexToBytes, randomBytes, utf8ToBytes } from '@noble/hashes/utils';
 import * as P from 'micro-packed';
-import { ethHex } from './utils.js';
+import { ethHex } from './utils.ts';
 
 const DOMAIN_SIZE = 256;
 const DOMAIN_SIZE_LOG2 = Math.log2(DOMAIN_SIZE);

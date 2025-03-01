@@ -9,7 +9,7 @@ import {
   omit,
   strip0x,
   zip,
-} from '../utils.js';
+} from '../utils.ts';
 
 /*
 There is NO network code in the file. However, a user can pass

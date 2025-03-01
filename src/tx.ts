@@ -1,7 +1,7 @@
 import * as P from 'micro-packed';
-import { addr } from './address.js';
-import { RLP } from './rlp.js';
-import { amounts, ethHex, isBytes, isObject } from './utils.js';
+import { addr } from './address.ts';
+import { RLP } from './rlp.ts';
+import { amounts, ethHex, isBytes, isObject } from './utils.ts';
 
 // Transaction parsers
 

@@ -1,6 +1,6 @@
-import { createDecimal, weieth } from '../utils.js';
-import { addHints } from './common.js';
-import { type HintOpt } from './decoder.js';
+import { createDecimal, weieth } from '../utils.ts';
+import { addHints } from './common.ts';
+import { type HintOpt } from './decoder.ts';
 
 // prettier-ignore
 const _ABI = [

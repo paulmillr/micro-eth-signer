@@ -1,5 +1,5 @@
-import { createContract, tokenFromSymbol } from '../abi/index.js';
-import { type IWeb3Provider, createDecimal } from '../utils.js';
+import { createContract, tokenFromSymbol } from '../abi/index.ts';
+import { type IWeb3Provider, createDecimal } from '../utils.ts';
 
 const ABI = [
   {

@@ -1,9 +1,9 @@
 import { keccak_256 } from '@noble/hashes/sha3';
 import { concatBytes, hexToBytes, utf8ToBytes } from '@noble/hashes/utils';
-import type { GetType as AbiGetType } from './abi/decoder.js';
-import { mapComponent } from './abi/decoder.js';
-import { addr } from './address.js';
-import { add0x, astr, ethHex, initSig, isObject, sign, strip0x, verify } from './utils.js';
+import type { GetType as AbiGetType } from './abi/decoder.ts';
+import { mapComponent } from './abi/decoder.ts';
+import { addr } from './address.ts';
+import { add0x, astr, ethHex, initSig, isObject, sign, strip0x, verify } from './utils.ts';
 
 // EIP-191 signed data (https://eips.ethereum.org/EIPS/eip-191)
 export type Hex = string | Uint8Array;

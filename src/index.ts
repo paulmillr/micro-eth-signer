@@ -2,9 +2,9 @@
 import { keccak_256 } from '@noble/hashes/sha3';
 import { bytesToHex, concatBytes, hexToBytes } from '@noble/hashes/utils';
 import type { UnwrapCoder } from 'micro-packed';
-import { addr } from './address.js';
+import { addr } from './address.ts';
 // prettier-ignore
-import { RLP } from './rlp.js';
+import { RLP } from './rlp.ts';
 import {
   type AuthorizationItem,
   type AuthorizationRequest,
@@ -17,7 +17,7 @@ import {
   removeSig,
   sortRawData,
   validateFields,
-} from './tx.js';
+} from './tx.ts';
 // prettier-ignore
 import {
   amounts, astr,
@@ -26,7 +26,7 @@ import {
   initSig,
   isBytes,
   sign, strip0x, verify, weieth, weigwei
-} from './utils.js';
+} from './utils.ts';
 export { addr, weieth, weigwei };
 
 // The file exports Transaction, but actual (RLP) parsing logic is done in `./tx`

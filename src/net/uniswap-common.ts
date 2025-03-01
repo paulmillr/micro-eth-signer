@@ -1,6 +1,6 @@
-import { tokenFromSymbol } from '../abi/index.js';
-import { addr } from '../index.js';
-import { type IWeb3Provider, createDecimal, ethHex, isBytes, weieth } from '../utils.js';
+import { tokenFromSymbol } from '../abi/index.ts';
+import { addr } from '../index.ts';
+import { type IWeb3Provider, createDecimal, ethHex, isBytes, weieth } from '../utils.ts';
 
 export type SwapOpt = { slippagePercent: number; ttl: number };
 export const DEFAULT_SWAP_OPT: SwapOpt = { slippagePercent: 0.5, ttl: 30 * 60 };
