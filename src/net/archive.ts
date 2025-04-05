@@ -174,7 +174,7 @@ export type Unspent = {
   symbol: 'ETH';
   decimals: number;
   balance: bigint;
-  nonce: number;
+  nonce: bigint;
   // useful for wallets to know if there was transactions related to wallet
   // NOTE: even if nonce is zero, there can be transfers to wallet
   // can be used to check before fetching all transactions
