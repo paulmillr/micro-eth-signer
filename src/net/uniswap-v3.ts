@@ -1,8 +1,8 @@
 import { concatBytes } from '@noble/hashes/utils';
-import { ContractInfo, createContract } from '../abi/decoder.js';
-import { Web3Provider, ethHex } from '../utils.js';
-import { default as UNISWAP_V3_ROUTER, UNISWAP_V3_ROUTER_CONTRACT } from '../abi/uniswap-v3.js';
-import * as uni from './uniswap-common.js';
+import { type ContractInfo, createContract } from '../abi/decoder.ts';
+import { default as UNISWAP_V3_ROUTER, UNISWAP_V3_ROUTER_CONTRACT } from '../abi/uniswap-v3.ts';
+import { type IWeb3Provider, ethHex } from '../utils.ts';
+import * as uni from './uniswap-common.ts';
 
 const ADDRESS_ZERO = '0x0000000000000000000000000000000000000000';
 const QUOTER_ADDRESS = '0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6';
@@ -81,7 +81,7 @@ function basePaths(a: string, b: string, exactOutput: boolean = false) {
 }
 
 async function bestPath(
-  net: Web3Provider,
+  net: IWeb3Provider,
   a: string,
   b: string,
   amountIn?: bigint,
@@ -125,7 +125,17 @@ export function txData(
   amountIn?: bigint,
   amountOut?: bigint,
   opt: TxOpt = uni.DEFAULT_SWAP_OPT
-) {
+): {
+  to: string;
+  value: bigint;
+  data: Uint8Array;
+  allowance:
+    | {
+        token: string;
+        amount: bigint;
+      }
+    | undefined;
+} {
   opt = { ...uni.DEFAULT_SWAP_OPT, ...opt };
   const err = 'Uniswap v3: ';
   if (!uni.isValidUniAddr(input)) throw new Error(err + 'invalid input address');
@@ -157,7 +167,7 @@ export function txData(
     deadline,
     amountIn: (amountIn || route.amountIn) as bigint,
     amountOut: (amountOut || route.amountOut) as bigint,
-    sqrtPriceLimitX96: opt.sqrtPriceLimitX96 || 0n,
+    sqrtPriceLimitX96: opt.sqrtPriceLimitX96 || BigInt(0),
     amountInMaximum: undefined as bigint | undefined,
     amountOutMinimum: undefined as bigint | undefined,
   };
@@ -170,7 +180,7 @@ export function txData(
     | 'exactOutputSingle';
   // TODO: remove unknown
   const calldatas = [(ROUTER_CONTRACT[method].encodeInput as (v: unknown) => Uint8Array)(args)];
-  if (input === 'eth' && amountOut) calldatas.push(ROUTER_CONTRACT['refundETH'].encodeInput({}));
+  if (input === 'eth' && amountOut) calldatas.push(ROUTER_CONTRACT['refundETH'].encodeInput());
   // unwrap
   if (routerMustCustody) {
     calldatas.push(
@@ -187,7 +197,7 @@ export function txData(
   }
   const data =
     calldatas.length === 1 ? calldatas[0] : ROUTER_CONTRACT['multicall'].encodeInput(calldatas);
-  const value = input === 'eth' ? (amountIn ? amountIn : args.amountInMaximum) : 0n;
+  const value = input === 'eth' ? (amountIn ? amountIn : args.amountInMaximum) : BigInt(0);
   const allowance =
     input !== 'eth'
       ? { token: input, amount: amountIn ? amountIn : args.amountInMaximum }
@@ -198,8 +208,8 @@ export function txData(
 // Here goes Exchange API. Everything above is SDK.
 export default class UniswapV3 extends uni.UniswapAbstract {
   name = 'Uniswap V3';
-  contract = UNISWAP_V3_ROUTER_CONTRACT;
-  bestPath(fromCoin: string, toCoin: string, inputAmount: bigint) {
+  contract: string = UNISWAP_V3_ROUTER_CONTRACT;
+  bestPath(fromCoin: string, toCoin: string, inputAmount: bigint): Promise<Route> {
     return bestPath(this.net, fromCoin, toCoin, inputAmount);
   }
   txData(

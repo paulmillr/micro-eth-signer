@@ -1,9 +1,10 @@
 import * as P from 'micro-packed';
-import * as abi from './abi/decoder.js';
+import * as abi from './abi/decoder.ts';
+import * as typed from './typed-data.ts';
 // Should not be included in npm package, just for test of typescript compilation
 const assertType = <T>(_value: T) => {};
 const BytesVal = new Uint8Array();
-const BigIntVal = 0n;
+const BigIntVal = BigInt(0);
 const StringVal = 'string';
 StringVal;
 export type Bytes = Uint8Array;
@@ -17,6 +18,29 @@ type Writable<T> = T extends {}
 type A = Writable<Uint8Array>;
 const _a: A = Uint8Array.from([]);
 _a;
+// IsEmptyArray
+const isEmpty = <T>(a: T): abi.IsEmptyArray<T> => a as any;
+assertType<true>(isEmpty([] as const));
+assertType<false>(isEmpty([1] as const));
+assertType<false>(isEmpty(['a', 2] as const));
+assertType<false>(isEmpty(['a']));
+assertType<true>(isEmpty([] as unknown as []));
+assertType<false>(isEmpty([] as unknown as [number]));
+assertType<false>(isEmpty([] as unknown as [string, number]));
+assertType<false>(isEmpty([] as unknown as Array<string>));
+assertType<false>(isEmpty([] as never[]));
+assertType<false>(isEmpty([] as any[]));
+assertType<true>(isEmpty([] as unknown as undefined));
+assertType<true>(isEmpty(undefined));
+const t = [
+  {
+    type: 'constructor',
+    inputs: [{ name: 'a', type: 'uint256' }],
+    stateMutability: 'nonpayable',
+  },
+];
+assertType<false>(isEmpty(t));
+
 // Tests
 assertType<P.CoderType<string>>(abi.mapComponent({ type: 'string' } as const));
 assertType<P.CoderType<string[]>>(abi.mapComponent({ type: 'string[]' } as const));
@@ -119,6 +143,37 @@ assertType<{
 
 assertType<{
   lol: {
+    encodeInput: (v: undefined) => Bytes;
+    decodeOutput: (b: Bytes) => [Bytes, string];
+  };
+}>(
+  abi.createContract([
+    {
+      name: 'lol',
+      type: 'function',
+      outputs: [{ type: 'bytes' }, { type: 'address' }],
+    },
+  ] as const)
+);
+
+assertType<{
+  lol: {
+    encodeInput: (v: undefined) => Bytes;
+    decodeOutput: (b: Bytes) => [Bytes, string];
+  };
+}>(
+  abi.createContract([
+    {
+      name: 'lol',
+      type: 'function',
+      inputs: [] as const,
+      outputs: [{ type: 'bytes' }, { type: 'address' }],
+    },
+  ] as const)
+);
+
+assertType<{
+  lol: {
     encodeInput: (v: [bigint, string]) => Bytes;
     decodeOutput: (b: Bytes) => [Bytes, string];
     call: (v: [bigint, string]) => Promise<[Bytes, string]>;
@@ -191,3 +246,136 @@ assertType<{
     }) => (string | null)[];
   };
 }>(abi.events(TRANSFER_EVENT));
+
+// Typed data
+const types = {
+  Person: [
+    { name: 'name', type: 'string' },
+    { name: 'wallet', type: 'address' },
+  ] as const,
+  Mail: [
+    { name: 'from', type: 'Person' },
+    { name: 'to', type: 'Person' },
+    { name: 'contents', type: 'string' },
+  ] as const,
+  Group: [
+    { name: 'members', type: 'Person[]' },
+    { name: 'owner', type: 'Person' },
+  ] as const,
+  Complex0: [
+    { name: 'data', type: 'string[][]' }, // Complex array type
+    { name: 'info', type: 'Mail' },
+  ] as const,
+  Complex1: [
+    { name: 'data', type: 'string[][][]' }, // Complex array type
+    { name: 'info', type: 'Mail' },
+  ] as const,
+  Complex: [
+    { name: 'data', type: 'string[][3][]' }, // Complex array type
+    { name: 'info', type: 'Mail' },
+  ] as const,
+} as const;
+
+assertType<{
+  from?: { name: string; wallet: string };
+  to?: { name: string; wallet: string };
+  contents: string;
+}>(1 as any as typed.GetType<typeof types, 'Mail'>);
+
+assertType<{
+  name: string;
+  wallet: string;
+}>(1 as any as typed.GetType<typeof types, 'Person'>);
+
+assertType<{
+  members: ({ name: string; wallet: string } | undefined)[];
+  owner?: { name: string; wallet: string };
+}>(1 as any as typed.GetType<typeof types, 'Group'>);
+
+assertType<{
+  data: string[][];
+  info?: {
+    from?: { name: string; wallet: string };
+    to?: { name: string; wallet: string };
+    contents: string;
+  };
+}>(1 as any as typed.GetType<typeof types, 'Complex0'>);
+
+assertType<{
+  data: string[][][];
+  info?: {
+    from?: { name: string; wallet: string };
+    to?: { name: string; wallet: string };
+    contents: string;
+  };
+}>(1 as any as typed.GetType<typeof types, 'Complex1'>);
+
+assertType<{
+  data: string[][][];
+  info?: {
+    from?: { name: string; wallet: string };
+    to?: { name: string; wallet: string };
+    contents: string;
+  };
+}>(1 as any as typed.GetType<typeof types, 'Complex'>);
+
+const recursiveTypes = {
+  Node: [
+    { name: 'value', type: 'string' },
+    { name: 'children', type: 'Node[]' },
+  ] as const,
+} as const;
+
+type NodeType = typed.GetType<typeof recursiveTypes, 'Node'>;
+
+assertType<{
+  value: string;
+  children: (NodeType | undefined)[];
+}>(1 as any as typed.GetType<typeof recursiveTypes, 'Node'>);
+
+// const e = typed.encoder(types);
+// e.encodeData('Person', { name: 'test', wallet: 'x' });
+// e.sign({ primaryType: 'Person', message: { name: 'test', wallet: 'x' }, domain: {} }, '');
+
+// e.encodeData('Person', { name: 'test', wallet: 1n }); // should fail
+// e.sign({ primaryType: 'Person', message: {name: 'test'}, domain: {} }, ''); // should fail
+// e.sign({ primaryType: 'Person', message: {name: 'test', wallet: '', s: 3}, domain: {} }, ''); // should fail
+
+// constructor
+
+abi.deployContract(
+  [{ type: 'constructor', inputs: [], stateMutability: 'nonpayable' }] as const,
+  '0x00'
+);
+abi.deployContract([{ type: 'constructor', stateMutability: 'nonpayable' }] as const, '0x00');
+// abi.deployContract(
+//   [{ type: 'constructor', stateMutability: 'nonpayable' }] as const,
+//   '0x00',
+//   undefined
+// ); // should fail!
+
+abi.deployContract([{ type: 'constructor', stateMutability: 'nonpayable' }], '0x00', undefined); // if we cannot infer type - it will be 'unknown' (and user forced to provide any argument, undefined is ok)
+
+abi.deployContract(
+  [
+    {
+      type: 'constructor',
+      inputs: [{ name: 'a', type: 'uint256' }],
+      stateMutability: 'nonpayable',
+    },
+  ] as const,
+  '0x00',
+  BigInt(100)
+);
+
+abi.deployContract(
+  [
+    {
+      type: 'constructor',
+      inputs: [{ name: 'a', type: 'uint256' }],
+      stateMutability: 'nonpayable',
+    },
+  ],
+  '0x00',
+  BigInt(100)
+);

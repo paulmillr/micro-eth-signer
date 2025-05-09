@@ -1,6 +1,6 @@
-import { Web3Provider, ethHex, weieth, isBytes, createDecimal } from '../utils.js';
-import { addr } from '../index.js';
-import { tokenFromSymbol } from '../abi/index.js';
+import { tokenFromSymbol } from '../abi/index.ts';
+import { addr } from '../index.ts';
+import { type IWeb3Provider, createDecimal, ethHex, isBytes, weieth } from '../utils.ts';
 
 export type SwapOpt = { slippagePercent: number; ttl: number };
 export const DEFAULT_SWAP_OPT: SwapOpt = { slippagePercent: 0.5, ttl: 30 * 60 };
@@ -22,9 +22,9 @@ export type SwapElm = {
   tx: (fromAddress: string, toAddress: string) => Promise<ExchangeTx>;
 };
 
-export function addPercent(n: bigint, _perc: number) {
+export function addPercent(n: bigint, _perc: number): bigint {
   const perc = BigInt((_perc * 10000) | 0);
-  const p100 = 100n * 10000n;
+  const p100 = BigInt(100) * BigInt(10000);
   return ((p100 + perc) * n) / p100;
 }
 
@@ -77,7 +77,19 @@ export async function awaitDeep<T, E extends boolean | undefined>(
   return trBack(out);
 }
 
-export const COMMON_BASES = ['WETH', 'DAI', 'USDC', 'USDT', 'COMP', 'MKR', 'WBTC', 'AMPL']
+export type CommonBase = {
+  contract: string;
+} & import('../abi/decoder.js').ContractInfo;
+export const COMMON_BASES: CommonBase[] = [
+  'WETH',
+  'DAI',
+  'USDC',
+  'USDT',
+  'COMP',
+  'MKR',
+  'WBTC',
+  'AMPL',
+]
   .map((i) => tokenFromSymbol(i))
   .filter((i) => !!i);
 export const WETH: string = tokenFromSymbol('WETH')!.contract;
@@ -95,11 +107,11 @@ export function sortTokens(a: string, b: string): [string, string] {
   return a < b ? [a, b] : [b, a];
 }
 
-export function isValidEthAddr(address: string) {
+export function isValidEthAddr(address: string): boolean {
   return addr.isValid(address);
 }
 
-export function isValidUniAddr(address: string) {
+export function isValidUniAddr(address: string): boolean {
   return address === 'eth' || isValidEthAddr(address);
 }
 
@@ -124,7 +136,10 @@ export abstract class UniswapAbstract {
     outputAmount?: bigint,
     opt?: { slippagePercent: number }
   ): any;
-  constructor(public net: Web3Provider) {}
+  readonly net: IWeb3Provider;
+  constructor(net: IWeb3Provider) {
+    this.net = net;
+  }
   // private async coinInfo(netName: string) {
   //   if (!validateAddr(netName)) return;
   //   if (netName === 'eth') return { symbol: 'ETH', decimals: 18 };
@@ -135,7 +150,23 @@ export abstract class UniswapAbstract {
     toCoin: 'eth' | Token,
     amount: string,
     opt: SwapOpt = DEFAULT_SWAP_OPT
-  ) {
+  ): Promise<
+    | {
+        name: string;
+        expectedAmount: string;
+        tx: (
+          _fromAddress: string,
+          toAddress: string
+        ) => Promise<{
+          amount: string;
+          address: any;
+          expectedAmount: string;
+          data: string;
+          allowance: any;
+        }>;
+      }
+    | undefined
+  > {
     const fromInfo = getToken(fromCoin);
     const toInfo = getToken(toCoin);
     if (!fromInfo || !toInfo) return;

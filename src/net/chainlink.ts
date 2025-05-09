@@ -1,5 +1,5 @@
-import { createContract, tokenFromSymbol } from '../abi/index.js';
-import { Web3Provider, createDecimal } from '../utils.js';
+import { createContract, tokenFromSymbol } from '../abi/index.ts';
+import { type IWeb3Provider, createDecimal } from '../utils.ts';
 
 const ABI = [
   {
@@ -281,7 +281,10 @@ export const TOKENS: Record<string, { decimals: number; contract: string; tokenC
   };
 
 export default class Chainlink {
-  constructor(readonly net: Web3Provider) {}
+  readonly net: IWeb3Provider;
+  constructor(net: IWeb3Provider) {
+    this.net = net;
+  }
   async price(contract: string, decimals: number): Promise<number> {
     const prices = createContract(ABI, this.net, contract);
     let res = await prices.latestRoundData.call();

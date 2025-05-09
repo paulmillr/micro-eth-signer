@@ -1,6 +1,6 @@
 import { numberToVarBytesBE } from '@noble/curves/abstract/utils';
 import * as P from 'micro-packed';
-import { isBytes } from './utils.js';
+import { isBytes } from './utils.ts';
 
 // Spec-compliant RLP in 100 lines of code.
 export type RLPInput = string | number | Uint8Array | bigint | RLPInput[] | null;
@@ -60,7 +60,7 @@ const empty = Uint8Array.from([]);
  * Real type of rlp is `Item = Uint8Array | Item[]`.
  * Strings/number encoded to Uint8Array, but not decoded back: type information is lost.
  */
-export const RLP = P.apply(rlpInner, {
+export const RLP: P.CoderType<RLPInput> = P.apply(rlpInner, {
   encode(from: InternalRLP): RLPInput {
     if (from.TAG === 'byte') return new Uint8Array([from.data]);
     if (from.TAG !== 'complex') throw new Error('RLP.encode: unexpected type');
@@ -92,7 +92,8 @@ export const RLP = P.apply(rlpInner, {
         if (data === 0) return this.decode(empty);
         return this.decode(numberToVarBytesBE(data));
       case 'bigint':
-        if (data < 0n) throw new Error('RLP.encode: invalid integer as argument, must be unsigned');
+        if (data < BigInt(0))
+          throw new Error('RLP.encode: invalid integer as argument, must be unsigned');
         return this.decode(numberToVarBytesBE(data));
       case 'string':
         return this.decode(data.startsWith('0x') ? phex.encode(data) : pstr.encode(data));

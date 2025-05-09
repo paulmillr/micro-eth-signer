@@ -4,7 +4,7 @@ import { bytesToHex, hexToBytes, utf8ToBytes } from '@noble/hashes/utils';
 import * as P from 'micro-packed';
 import * as abi from '../esm/abi/decoder.js';
 import { strip0x } from '../esm/utils.js';
-import { CONTRACTS, decodeData, decodeEvent, decodeTx } from '../esm/abi/index.js';
+import { CONTRACTS, decodeData, decodeEvent, decodeTx, deployContract } from '../esm/abi/index.js';
 
 import { default as ERC20 } from '../esm/abi/erc20.js';
 import { default as UNISWAP_V2_ROUTER, UNISWAP_V2_ROUTER_CONTRACT } from '../esm/abi/uniswap-v2.js';
@@ -1584,7 +1584,7 @@ should('example/libra', async () => {
     d.decode(UNISWAP, tx0, Object.assign(uniOpt, { amount: 100000000000000000n })).hint,
     'Swap 0.1 ETH for at least 12345678901.234567891 LABRA. Expires at Tue, 19 Jun 2029 06:00:10 GMT'
   );
-  console.log(d.decode(UNISWAP, tx0, Object.assign(uniOpt, { amount: 100000000000000000n })));
+  // console.log(d.decode(UNISWAP, tx0, Object.assign(uniOpt, { amount: 100000000000000000n })));
 });
 
 should('ZST', () => {
@@ -1723,7 +1723,7 @@ should('Interleave ptrs', () => {
 
   for (const l of [4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096]) {
     const ptrEnc = getArr(l);
-    console.log('encoding ptr', l, ptrEnc.length);
+    // console.log('encoding ptr', l, ptrEnc.length);
     //console.log('PTR', ptrArr.decode(hex.decode(ptrEnc)));
     //console.log('RAW', raw.decode(hex.decode(ptrEnc)));
     throws(() => arr2.encode(arr2.decode(hex.decode(ptrEnc))));
@@ -1733,12 +1733,12 @@ should('Interleave ptrs', () => {
       const realSz = arr2.encode(
         arr2.decode(hex.decode(ptrEnc), { allowMultipleReads: true })
       ).length;
-      console.log('REAL', realSz);
-      console.log(
-        'DIFF',
-        realSz - ptrEnc.length,
-        `+${Math.floor((realSz - ptrEnc.length) / ptrEnc.length)}x`
-      );
+      // console.log('REAL', realSz);
+      // console.log(
+      //   'DIFF',
+      //   realSz - ptrEnc.length,
+      //   `+${Math.floor((realSz - ptrEnc.length) / ptrEnc.length)}x`
+      // );
       // console.log(
       //   'ARR2',
       //   arr2.decode(hex.decode(ptrEnc)).map((i) => i.length)
@@ -1988,10 +1988,62 @@ describe('simple decoder API', () => {
       { data: undefined, event: undefined },
     ]);
   });
+  describe('contract create', () => {
+    should('basic', () => {
+      // Empty constructor
+      deepStrictEqual(
+        deployContract(
+          [{ type: 'constructor', inputs: [], stateMutability: 'nonpayable' }],
+          '0x6080604052348015600f57600080fd5b50603f80601d6000396000f3fe6080604052600080fdfea2646970667358221220116554d4ba29ee08da9e97dc54ff9a2a65d67a648140d616fc225a25ff08c86364736f6c63430008070033'
+        ),
+        '0x6080604052348015600f57600080fd5b50603f80601d6000396000f3fe6080604052600080fdfea2646970667358221220116554d4ba29ee08da9e97dc54ff9a2a65d67a648140d616fc225a25ff08c86364736f6c63430008070033'
+      );
+      deepStrictEqual(
+        deployContract(
+          [{ type: 'constructor', stateMutability: 'nonpayable' }],
+          '0x6080604052348015600f57600080fd5b50603f80601d6000396000f3fe6080604052600080fdfea2646970667358221220116554d4ba29ee08da9e97dc54ff9a2a65d67a648140d616fc225a25ff08c86364736f6c63430008070033'
+        ),
+        '0x6080604052348015600f57600080fd5b50603f80601d6000396000f3fe6080604052600080fdfea2646970667358221220116554d4ba29ee08da9e97dc54ff9a2a65d67a648140d616fc225a25ff08c86364736f6c63430008070033'
+      );
+      deepStrictEqual(
+        deployContract(
+          [
+            {
+              type: 'constructor',
+              inputs: [{ name: 'a', type: 'uint256' }],
+              stateMutability: 'nonpayable',
+            },
+          ],
+          '0x6080604052348015600f57600080fd5b50603f80601d6000396000f3fe6080604052600080fdfea2646970667358221220116554d4ba29ee08da9e97dc54ff9a2a65d67a648140d616fc225a25ff08c86364736f6c63430008070033',
+          69420n
+        ),
+        '0x6080604052348015600f57600080fd5b50603f80601d6000396000f3fe6080604052600080fdfea2646970667358221220116554d4ba29ee08da9e97dc54ff9a2a65d67a648140d616fc225a25ff08c86364736f6c634300080700330000000000000000000000000000000000000000000000000000000000010f2c'
+      );
+      // No constructor
+      throws(() =>
+        deployContract(
+          [{}],
+          '0x6080604052348015600f57600080fd5b50603f80601d6000396000f3fe6080604052600080fdfea2646970667358221220116554d4ba29ee08da9e97dc54ff9a2a65d67a648140d616fc225a25ff08c86364736f6c63430008070033',
+          69420n
+        )
+      );
+      // Arguments to constructor without any
+      throws(() =>
+        deployContract(
+          [{ type: 'constructor', stateMutability: 'nonpayable' }],
+          '0x6080604052348015600f57600080fd5b50603f80601d6000396000f3fe6080604052600080fdfea2646970667358221220116554d4ba29ee08da9e97dc54ff9a2a65d67a648140d616fc225a25ff08c86364736f6c63430008070033',
+          69420n
+        )
+      );
+      throws(() =>
+        deployContract(
+          [{ type: 'constructor', inputs: undefined, stateMutability: 'nonpayable' }],
+          '0x6080604052348015600f57600080fd5b50603f80601d6000396000f3fe6080604052600080fdfea2646970667358221220116554d4ba29ee08da9e97dc54ff9a2a65d67a648140d616fc225a25ff08c86364736f6c63430008070033',
+          69420n
+        )
+      );
+    });
+  });
 });
 
-// ESM is broken.
-import url from 'node:url';
-if (import.meta.url === url.pathToFileURL(process.argv[1]).href) {
-  should.run();
-}
+should.runWhen(import.meta.url);

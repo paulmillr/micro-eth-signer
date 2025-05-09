@@ -1,33 +1,34 @@
 {
   "name": "micro-eth-signer",
-  "version": "0.10.0",
+  "version": "0.14.0",
   "description": "Minimal library for Ethereum transactions, addresses and smart contracts",
   "files": [
-    "abi",
-    "esm",
-    "net",
-    "src",
     "*.js",
     "*.d.ts",
     "*.js.map",
-    "*.d.ts.map"
+    "*.d.ts.map",
+    "abi",
+    "esm",
+    "net",
+    "src"
   ],
   "main": "index.js",
   "module": "esm/index.js",
   "types": "esm/index.d.ts",
   "dependencies": {
-    "@noble/curves": "~1.4.0",
-    "@noble/hashes": "~1.4.0",
-    "micro-packed": "~0.6.3"
+    "@noble/curves": "~1.8.1",
+    "@noble/hashes": "~1.7.1",
+    "micro-packed": "~0.7.2"
   },
   "devDependencies": {
-    "@paulmillr/jsbt": "0.1.0",
-    "micro-bmark": "0.3.1",
+    "@paulmillr/jsbt": "0.3.3",
+    "@paulmillr/trusted-setups": "0.1.2",
+    "micro-bmark": "0.4.0",
     "micro-ftch": "0.4.0",
-    "micro-should": "0.4.0",
-    "prettier": "3.3.2",
+    "micro-should": "0.5.1",
+    "prettier": "3.5.2",
     "snappyjs": "0.7.0",
-    "typescript": "5.5.2",
+    "typescript": "5.8.2",
     "yaml": "2.4.1"
   },
   "author": "Paul Miller (https://paulmillr.com)",
@@ -45,6 +46,14 @@
       "import": "./esm/abi/index.js",
       "require": "./abi/index.js"
     },
+    "./address": {
+      "import": "./esm/address.js",
+      "require": "./address.js"
+    },
+    "./kzg": {
+      "import": "./esm/kzg.js",
+      "require": "./kzg.js"
+    },
     "./net": {
       "import": "./esm/net/index.js",
       "require": "./net/index.js"
@@ -61,11 +70,20 @@
       "import": "./esm/tx.js",
       "require": "./tx.js"
     },
+    "./typed-data": {
+      "import": "./esm/typed-data.js",
+      "require": "./typed-data.js"
+    },
+    "./verkle": {
+      "import": "./esm/verkle.js",
+      "require": "./verkle.js"
+    },
     "./utils": {
       "import": "./esm/utils.js",
       "require": "./utils.js"
     }
   },
+  "sideEffects": false,
   "keywords": [
     "ethereum",
     "eth",
@@ -82,11 +100,13 @@
     "signer"
   ],
   "scripts": {
-    "build": "tsc && tsc -p tsconfig.esm.json",
-    "build:release": "cd build; npm run build:release",
+    "build": "tsc && tsc -p tsconfig.cjs.json",
+    "build:release": "npx jsbt esbuild test/build",
     "bench": "node benchmark/tx.js",
-    "lint": "prettier --print-width 100 --single-quote --check src",
-    "format": "prettier --print-width 100 --single-quote --write src",
-    "test": "node test/index.js"
+    "lint": "prettier --check src",
+    "format": "prettier --write src",
+    "test": "node test/index.js",
+    "test:bun": "bun test/index.js",
+    "test:deno": "deno --allow-env --allow-read test/index.js"
   }
 }

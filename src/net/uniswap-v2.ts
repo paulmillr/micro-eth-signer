@@ -1,9 +1,9 @@
 import { keccak_256 } from '@noble/hashes/sha3';
 import { concatBytes, hexToBytes } from '@noble/hashes/utils';
-import { Web3Provider, ethHex } from '../utils.js';
-import { ContractInfo, createContract } from '../abi/decoder.js';
-import { default as UNISWAP_V2_ROUTER, UNISWAP_V2_ROUTER_CONTRACT } from '../abi/uniswap-v2.js';
-import * as uni from './uniswap-common.js';
+import { type ContractInfo, createContract } from '../abi/decoder.ts';
+import { default as UNISWAP_V2_ROUTER, UNISWAP_V2_ROUTER_CONTRACT } from '../abi/uniswap-v2.ts';
+import { type IWeb3Provider, ethHex } from '../utils.ts';
+import * as uni from './uniswap-common.ts';
 
 const FACTORY_ADDRESS = '0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f';
 const INIT_CODE_HASH = hexToBytes(
@@ -21,18 +21,18 @@ const PAIR_CONTRACT = [
   },
 ] as const;
 
-export function create2(from: Uint8Array, salt: Uint8Array, initCodeHash: Uint8Array) {
+export function create2(from: Uint8Array, salt: Uint8Array, initCodeHash: Uint8Array): string {
   const cat = concatBytes(new Uint8Array([255]), from, salt, initCodeHash);
   return ethHex.encode(keccak_256(cat).slice(12));
 }
 
-export function pairAddress(a: string, b: string, factory: string = FACTORY_ADDRESS) {
+export function pairAddress(a: string, b: string, factory: string = FACTORY_ADDRESS): string {
   // This is completely broken: '0x11' '0x11' will return '0x1111'. But this is how it works in sdk.
   const data = concatBytes(...uni.sortTokens(a, b).map((i) => ethHex.decode(i)));
   return create2(ethHex.decode(factory), keccak_256(data), INIT_CODE_HASH);
 }
 
-async function reserves(net: Web3Provider, a: string, b: string): Promise<[bigint, bigint]> {
+async function reserves(net: IWeb3Provider, a: string, b: string): Promise<[bigint, bigint]> {
   a = uni.wrapContract(a);
   b = uni.wrapContract(b);
   const contract = createContract(PAIR_CONTRACT, net, pairAddress(a, b));
@@ -53,20 +53,22 @@ export function amount(
   if (!reserveIn || !reserveOut || (amountOut && amountOut >= reserveOut))
     throw new Error('Uniswap: Insufficient reserves');
   if (amountIn) {
-    const amountInWithFee = amountIn * 997n;
-    const amountOut = (amountInWithFee * reserveOut) / (reserveIn * 1000n + amountInWithFee);
-    if (amountOut === 0n || amountOut >= reserveOut)
+    const amountInWithFee = amountIn * BigInt(997);
+    const amountOut = (amountInWithFee * reserveOut) / (reserveIn * BigInt(1000) + amountInWithFee);
+    if (amountOut === BigInt(0) || amountOut >= reserveOut)
       throw new Error('Uniswap: Insufficient reserves');
     return amountOut;
   } else if (amountOut)
-    return (reserveIn * amountOut * 1000n) / ((reserveOut - amountOut) * 997n) + 1n;
+    return (
+      (reserveIn * amountOut * BigInt(1000)) / ((reserveOut - amountOut) * BigInt(997)) + BigInt(1)
+    );
   else throw new Error('uniswap.amount: provide only one amount');
 }
 
 export type Path = { path: string[]; amountIn: bigint; amountOut: bigint };
 
 async function bestPath(
-  net: Web3Provider,
+  net: IWeb3Provider,
   tokenA: string,
   tokenB: string,
   amountIn?: bigint,
@@ -138,7 +140,17 @@ export function txData(
     slippagePercent: number;
     feeOnTransfer: boolean;
   } = TX_DEFAULT_OPT
-) {
+): {
+  to: string;
+  value: bigint;
+  data: any;
+  allowance:
+    | {
+        token: string;
+        amount: bigint;
+      }
+    | undefined;
+} {
   opt = { ...TX_DEFAULT_OPT, ...opt };
   if (!uni.isValidUniAddr(input) || !uni.isValidUniAddr(output) || !uni.isValidEthAddr(to))
     throw new Error('Invalid address');
@@ -172,7 +184,7 @@ export function txData(
     path: path.path,
   });
   const amount = amountIn ? amountIn : amountInMax;
-  const value = input === 'eth' ? amount : 0n;
+  const value = input === 'eth' ? amount : BigInt(0);
   const allowance = input === 'eth' ? undefined : { token: input, amount };
   return { to: UNISWAP_V2_ROUTER_CONTRACT, value, data, allowance };
 }
@@ -180,8 +192,8 @@ export function txData(
 // Here goes Exchange API. Everything above is SDK. Supports almost everything from official sdk except liquidity stuff.
 export default class UniswapV2 extends uni.UniswapAbstract {
   name = 'Uniswap V2';
-  contract = UNISWAP_V2_ROUTER_CONTRACT;
-  bestPath(fromCoin: string, toCoin: string, inputAmount: bigint) {
+  contract: string = UNISWAP_V2_ROUTER_CONTRACT;
+  bestPath(fromCoin: string, toCoin: string, inputAmount: bigint): Promise<Path> {
     return bestPath(this.net, fromCoin, toCoin, inputAmount);
   }
   txData(

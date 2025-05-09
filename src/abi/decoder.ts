@@ -1,7 +1,15 @@
 import { keccak_256 } from '@noble/hashes/sha3';
 import { bytesToHex, concatBytes, hexToBytes } from '@noble/hashes/utils';
 import * as P from 'micro-packed';
-import { Web3CallArgs, Web3Provider, add0x, strip0x, omit, zip } from '../utils.js';
+import {
+  type IWeb3Provider,
+  type Web3CallArgs,
+  add0x,
+  ethHex,
+  omit,
+  strip0x,
+  zip,
+} from '../utils.ts';
 
 /*
 There is NO network code in the file. However, a user can pass
@@ -69,6 +77,9 @@ type Writable<T> = T extends {}
     }
   : T;
 type ArrLike<T> = Array<T> | ReadonlyArray<T>;
+export type IsEmptyArray<T> =
+  T extends ReadonlyArray<any> ? (T['length'] extends 0 ? true : false) : true;
+
 export type Component<T extends string> = {
   readonly name?: string;
   readonly type: T;
@@ -97,21 +108,6 @@ type ByteIdxType = '' | '1' | '2'  | '3'  | '4'  | '5'  | '6'  | '7'  | '8'  | '
   '10' | '11' | '12' | '13' | '14' | '15' | '16' | '17' | '18' | '19' | '20' | '21' |
   '22' | '23' | '24' | '25' | '26' | '27' | '28' | '29' | '30' | '31' | '32';
 type ByteType = `bytes${ByteIdxType}`;
-// Arrays
-// We support fixed size arrays up to bytes[999], 2d up to bytees[39][39]
-// 1-9
-type DigitsType = '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9';
-// 1-39
-type ThrityDigits = DigitsType | `${'1' | '2' | '3'}${'0' | DigitsType}`;
-// 1-99
-type TwoDigits = DigitsType | `${DigitsType}${'0' | DigitsType}`;
-// 1-999
-type ThreeDigits = TwoDigits | `${TwoDigits}${'0' | DigitsType}`;
-// For static 1d arrays: 1-999: string[], string[1], ..., string[999]
-type ArrType<T extends string> = `${T}[${'' | ThreeDigits}]`;
-// For 2d arrays 1-39 per dimension (99 is too slow, 9k types):
-// string[][], string[][1], ..., string[39][39]
-type Arr2dType<T extends string> = `${T}[${'' | ThrityDigits}][${'' | ThrityDigits}]`;
 
 // [{name: 'a', type: 'string'}, {name: 'b', type: 'uint'}] -> {a: string, b: bigint};
 export type MapTuple<T> =
@@ -127,25 +123,21 @@ export type MapTuple<T> =
       : unknown;
 
 // prettier-ignore
+export type GetType<T extends string> =
+  T extends `${infer Base}[]${infer Rest}` ? GetType<`${Base}${Rest}`>[] : // 'string[]' -> 'string'[]
+  T extends `${infer Base}[${number}]${infer Rest}` ? GetType<`${Base}${Rest}`>[] : // 'string[3]' -> 'string'[]
+  T extends 'address' ? string :
+  T extends 'string' ? string :
+  T extends 'bool' ? boolean :
+  T extends NumberType ? bigint :
+  T extends ByteType ? Uint8Array :
+  unknown; // default
+
+// prettier-ignore
 export type MapType<T extends BaseComponent> =
-  T extends Component<'string'> ? string :
-  T extends Component<ArrType<'string'>> ? string[] :
-  T extends Component<Arr2dType<'string'>> ? string[][] :
-  T extends Component<'address'> ? string :
-  T extends Component<ArrType<'address'>> ? string[] :
-  T extends Component<Arr2dType<'address'>> ? string[][] :
-  T extends Component<'bool'> ? boolean :
-  T extends Component<ArrType<'bool'>> ? boolean[] :
-  T extends Component<Arr2dType<'bool'>> ? boolean[][] :
-  T extends Component<NumberType> ? bigint :
-  T extends Component<ArrType<NumberType>> ? bigint[] :
-  T extends Component<Arr2dType<NumberType>> ? bigint[][] :
-  T extends Component<ByteType> ? Uint8Array :
-  T extends Component<ArrType<ByteType>> ? Uint8Array[] :
-  T extends Component<Arr2dType<ByteType>> ? Uint8Array[][] :
   T extends Tuple<Array<Component<string>>> ? MapTuple<T['components']> :
-  // Default
-  unknown;
+  T extends Component<infer Type> ? GetType<Type> :
+  unknown; // default
 
 // Re-use ptr for len. u32 should be enough.
 const U256BE_LEN = PTR;
@@ -210,11 +202,15 @@ export function mapComponent<T extends BaseComponent>(c: T): P.CoderType<MapType
 }
 
 // If only one arg -- use as is, otherwise construct tuple by tuple rules
-export type ArgsType<T> = T extends [Component<string>]
-  ? MapType<T[0]>
-  : T extends undefined
-    ? 1
-    : MapTuple<T>;
+export type ArgsType<T extends ReadonlyArray<any> | undefined> =
+  IsEmptyArray<T> extends true
+    ? undefined // empty arr
+    : T extends ReadonlyArray<any>
+      ? T['length'] extends 1 // single elm
+        ? MapType<T[0]>
+        : MapTuple<T>
+      : MapTuple<T>;
+
 // Because args and output are not tuple
 // TODO: try merge with mapComponent
 export function mapArgs<T extends ArrLike<Component<string>>>(
@@ -240,60 +236,47 @@ export type FunctionType = Component<'function'> & {
   readonly outputs?: ReadonlyArray<Component<string>>;
 };
 
-export type FunctionWithInputs = FunctionType & {
-  inputs: ReadonlyArray<Component<string>>;
-};
+type ContractMethodDecode<T extends FunctionType, O = ArgsType<T['outputs']>> =
+  IsEmptyArray<T['outputs']> extends true
+    ? {
+        decodeOutput: (b: Uint8Array) => void;
+      }
+    : { decodeOutput: (b: Uint8Array) => O };
 
-export type FunctionWithOutputs = FunctionType & {
-  outputs: ReadonlyArray<Component<string>>;
-};
+type ContractMethodEncode<T extends FunctionType, I = ArgsType<T['inputs']>> =
+  IsEmptyArray<T['inputs']> extends true
+    ? { encodeInput: () => Uint8Array }
+    : { encodeInput: (v: I) => Uint8Array };
 
-type ContractMethodDecode<
-  T extends FunctionType,
-  O = ArgsType<T['outputs']>,
-> = T extends FunctionWithOutputs
-  ? { decodeOutput: (b: Uint8Array) => O }
-  : {
-      decodeOutput: (b: Uint8Array) => void;
-    };
-
-type ContractMethodEncode<
-  T extends FunctionType,
-  I = ArgsType<T['inputs']>,
-> = T extends FunctionWithInputs
-  ? { encodeInput: (v: I) => Uint8Array }
-  : { encodeInput: () => Uint8Array };
-
-type ContractMethodGas<
-  T extends FunctionType,
-  I = ArgsType<T['inputs']>,
-> = T extends FunctionWithInputs
-  ? { estimateGas: (v: I) => Promise<bigint> }
-  : { estimateGas: () => Promise<bigint> };
+type ContractMethodGas<T extends FunctionType, I = ArgsType<T['inputs']>> =
+  IsEmptyArray<T['inputs']> extends true
+    ? { estimateGas: () => Promise<bigint> }
+    : { estimateGas: (v: I) => Promise<bigint> };
 
 type ContractMethodCall<
   T extends FunctionType,
   I = ArgsType<T['inputs']>,
   O = ArgsType<T['outputs']>,
-> = T extends FunctionWithInputs
-  ? T extends FunctionWithOutputs
-    ? {
-        // inputs, outputs
-        call: (v: I) => Promise<O>;
-      }
-    : {
-        // inputs, no outputs
-        call: (v: I) => Promise<void>;
-      }
-  : T extends FunctionWithOutputs
-    ? {
-        // no inputs, outputs
-        call: () => Promise<O>;
-      }
-    : {
-        // no inputs, no outputs
-        call: () => Promise<void>;
-      };
+> =
+  IsEmptyArray<T['inputs']> extends true
+    ? IsEmptyArray<T['outputs']> extends true
+      ? {
+          // no inputs, no outputs
+          call: () => Promise<void>;
+        }
+      : {
+          // no inputs, outputs
+          call: () => Promise<O>;
+        }
+    : IsEmptyArray<T['outputs']> extends true
+      ? {
+          // inputs, no outputs
+          call: (v: I) => Promise<void>;
+        }
+      : {
+          // inputs, outputs
+          call: (v: I) => Promise<O>;
+        };
 
 export type ContractMethod<T extends FunctionType> = ContractMethodEncode<T> &
   ContractMethodDecode<T>;
@@ -319,7 +302,7 @@ export type ContractTypeFilter<T> = {
 export type ContractType<T extends Array<FnArg>, N, F = ContractTypeFilter<T>> =
   F extends ArrLike<FunctionType & { name: string }>
     ? {
-        [K in F[number] as K['name']]: N extends Web3Provider
+        [K in F[number] as K['name']]: N extends IWeb3Provider
           ? ContractMethodNet<K>
           : ContractMethod<K>;
       }
@@ -353,9 +336,9 @@ is refered by index position. Unfortunately it is impossible to do args/kwargs, 
 */
 export function createContract<T extends ArrLike<FnArg>>(
   abi: T,
-  net: Web3Provider,
+  net: IWeb3Provider,
   contract?: string
-): ContractType<Writable<T>, Web3Provider>;
+): ContractType<Writable<T>, IWeb3Provider>;
 export function createContract<T extends ArrLike<FnArg>>(
   abi: T,
   net?: undefined,
@@ -363,7 +346,7 @@ export function createContract<T extends ArrLike<FnArg>>(
 ): ContractType<Writable<T>, undefined>;
 export function createContract<T extends ArrLike<FnArg>>(
   abi: T,
-  net?: Web3Provider,
+  net?: IWeb3Provider,
   contract?: string
 ): ContractType<Writable<T>, undefined> {
   // Find non-uniq function names so we can handle overloads
@@ -380,7 +363,7 @@ export function createContract<T extends ArrLike<FnArg>>(
     let name = fn.name || 'function';
     if (nameCnt[name] > 1) name = fnSignature(fn);
     const sh = fnSigHash(fn);
-    const inputs = fn.inputs ? mapArgs(fn.inputs) : undefined;
+    const inputs = fn.inputs && fn.inputs.length ? mapArgs(fn.inputs) : undefined;
     const outputs = fn.outputs ? mapArgs(fn.outputs) : undefined;
     const decodeOutput = (b: Uint8Array) => outputs && outputs.decode(b);
     const encodeInput = (v: unknown) =>
@@ -403,6 +386,35 @@ export function createContract<T extends ArrLike<FnArg>>(
     };
   }
   return res as any;
+}
+
+type GetCons<T extends ArrLike<FnArg>> = Extract<T[number], { type: 'constructor' }>;
+type ConstructorType = Component<'constructor'> & {
+  readonly inputs?: ReadonlyArray<Component<string>>;
+};
+type ConsArgs<T extends ConstructorType> =
+  IsEmptyArray<T['inputs']> extends true ? undefined : ArgsType<T['inputs']>;
+
+export function deployContract<T extends ArrLike<FnArg>>(
+  abi: T,
+  bytecodeHex: string,
+  ...args: GetCons<T> extends never
+    ? [args: unknown]
+    : ConsArgs<GetCons<T>> extends undefined
+      ? []
+      : [args: ConsArgs<GetCons<T>>]
+): string {
+  const bytecode = ethHex.decode(bytecodeHex);
+  let consCall;
+  for (let fn of abi) {
+    if (fn.type !== 'constructor') continue;
+    const inputs = fn.inputs && fn.inputs.length ? mapArgs(fn.inputs) : undefined;
+    if (inputs === undefined && args !== undefined && args.length)
+      throw new Error('arguments to constructor without any');
+    consCall = inputs ? inputs.encode(args[0] as any) : new Uint8Array();
+  }
+  if (!consCall) throw new Error('constructor not found');
+  return ethHex.encode(concatBytes(bytecode, consCall));
 }
 
 export type EventType = NamedComponent<'event'> & {
@@ -502,7 +514,7 @@ export function events<T extends ArrLike<FnArg>>(abi: T): ContractEventType<Writ
 // Same as 'Transaction Action' on Etherscan, provides human readable interpritation of decoded data
 export type ContractABI = ReadonlyArray<FnArg & { readonly hint?: HintFn; readonly hook?: HookFn }>;
 export type ContractInfo = {
-  abi: 'ERC20' | 'ERC721' | ContractABI;
+  abi: 'ERC20' | 'ERC721' | 'ERC1155' | ContractABI;
   symbol?: string;
   decimals?: number;
   // For useful common contracts/exchanges
@@ -544,7 +556,7 @@ export class Decoder {
   sighashes: Record<string, SignaturePacker[]> = {};
   evContracts: Record<string, Record<string, EventSignatureDecoder>> = {};
   evSighashes: Record<string, EventSignatureDecoder[]> = {};
-  add(contract: string, abi: ContractABI) {
+  add(contract: string, abi: ContractABI): void {
     const ev: any = events(abi);
     contract = strip0x(contract).toLowerCase();
     if (!this.contracts[contract]) this.contracts[contract] = {};
@@ -577,7 +589,7 @@ export class Decoder {
       }
     }
   }
-  method(contract: string, data: Uint8Array) {
+  method(contract: string, data: Uint8Array): string | undefined {
     contract = strip0x(contract).toLowerCase();
     const sh = bytesToHex(data.slice(0, 4));
     if (!this.contracts[contract] || !this.contracts[contract][sh]) return;

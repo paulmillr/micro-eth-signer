@@ -2,12 +2,22 @@
 import { secp256k1 } from '@noble/curves/secp256k1';
 import { keccak_256 } from '@noble/hashes/sha3';
 import { bytesToHex } from '@noble/hashes/utils';
-import { astr, add0x, ethHex, strip0x } from './utils.js';
+import { add0x, astr, ethHex, strip0x } from './utils.ts';
 
 export const addr = {
-  RE: /^(0[xX])?([0-9a-fA-F]{40})?$/,
-  parse(address: string) {
+  RE: /^(0[xX])?([0-9a-fA-F]{40})?$/ satisfies RegExp as RegExp,
+  parse: (
+    address: string,
+    allowEmpty = false
+  ): {
+    hasPrefix: boolean;
+    data: string;
+  } => {
     astr(address);
+    // NOTE: empty address allowed for 'to', but would be mistake for other address fields.
+    // '0x' instead of null/undefined because we don't want to send contract creation tx if user
+    // accidentally missed 'to' field.
+    if (allowEmpty && address === '0x') return { hasPrefix: true, data: '' };
     const res = address.match(addr.RE) || [];
     const hasPrefix = res[1] != null;
     const data = res[2];
@@ -22,10 +32,11 @@ export const addr = {
    * Address checksum is calculated by hashing with keccak_256.
    * It hashes *string*, not a bytearray: keccak('beef') not keccak([0xbe, 0xef])
    * @param nonChecksummedAddress
+   * @param allowEmpty - allows '0x'
    * @returns checksummed address
    */
-  addChecksum(nonChecksummedAddress: string): string {
-    const low = addr.parse(nonChecksummedAddress).data.toLowerCase();
+  addChecksum: (nonChecksummedAddress: string, allowEmpty = false): string => {
+    const low = addr.parse(nonChecksummedAddress, allowEmpty).data.toLowerCase();
     const hash = bytesToHex(keccak_256(low));
     let checksummed = '';
     for (let i = 0; i < low.length; i++) {
@@ -39,7 +50,7 @@ export const addr = {
   /**
    * Creates address from secp256k1 public key.
    */
-  fromPublicKey(key: string | Uint8Array): string {
+  fromPublicKey: (key: string | Uint8Array): string => {
     if (!key) throw new Error('invalid public key: ' + key);
     const pub65b = secp256k1.ProjectivePoint.fromHex(key).toRawBytes(false);
     const hashed = keccak_256(pub65b.subarray(1, 65));
@@ -50,7 +61,7 @@ export const addr = {
   /**
    * Creates address from ETH private key in hex or ui8a format.
    */
-  fromPrivateKey(key: string | Uint8Array): string {
+  fromPrivateKey: (key: string | Uint8Array): string => {
     if (typeof key === 'string') key = strip0x(key);
     return addr.fromPublicKey(secp256k1.getPublicKey(key, false));
   },
@@ -58,7 +69,7 @@ export const addr = {
   /**
    * Generates hex string with new random private key and address. Uses CSPRNG internally.
    */
-  random() {
+  random(): { privateKey: string; address: string } {
     const privateKey = ethHex.encode(secp256k1.utils.randomPrivateKey());
     return { privateKey, address: addr.fromPrivateKey(privateKey) };
   },
@@ -66,11 +77,12 @@ export const addr = {
   /**
    * Verifies checksum if the address is checksummed.
    * Always returns true when the address is not checksummed.
+   * @param allowEmpty - allows '0x'
    */
-  isValid(checksummedAddress: string): boolean {
+  isValid: (checksummedAddress: string, allowEmpty = false): boolean => {
     let parsed: { hasPrefix: boolean; data: string };
     try {
-      parsed = addr.parse(checksummedAddress);
+      parsed = addr.parse(checksummedAddress, allowEmpty);
     } catch (error) {
       return false;
     }
@@ -79,6 +91,6 @@ export const addr = {
     const low = address.toLowerCase();
     const upp = address.toUpperCase();
     if (address === low || address === upp) return true;
-    return addr.addChecksum(low) === checksummedAddress;
+    return addr.addChecksum(low, allowEmpty) === checksummedAddress;
   },
 };
