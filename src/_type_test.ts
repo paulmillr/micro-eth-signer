@@ -3,7 +3,7 @@ import * as abi from './abi/decoder.ts';
 import * as typed from './typed-data.ts';
 // Should not be included in npm package, just for test of typescript compilation
 const assertType = <T>(_value: T) => {};
-const BytesVal = new Uint8Array();
+const BytesVal = Uint8Array.of();
 const BigIntVal = BigInt(0);
 const StringVal = 'string';
 StringVal;

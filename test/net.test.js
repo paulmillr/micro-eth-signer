@@ -1,29 +1,27 @@
-import { deepStrictEqual, rejects } from 'node:assert';
-import * as util from 'node:util';
-import { describe, should } from 'micro-should';
-import { tokenFromSymbol } from '../esm/abi/index.js';
-import { Web3Provider, calcTransfersDiff, ENS, Chainlink, UniswapV3 } from '../esm/net/index.js';
 import * as mftch from 'micro-ftch';
-import { weieth, numberTo0xHex } from '../esm/utils.js';
+import { describe, should } from 'micro-should';
+import { deepStrictEqual, rejects } from 'node:assert';
+import { tokenFromSymbol } from '../esm/abi/index.js';
+import { calcTransfersDiff, Chainlink, ENS, UniswapV3, Web3Provider } from '../esm/net/index.js';
+import { numberTo0xHex, weieth } from '../esm/utils.js';
 // These real network responses from real nodes, captured by replayable
-import { default as NET_ENS_REPLAY } from './vectors/rpc/ens.js';
 import { default as NET_CHAINLINK_REPLAY } from './vectors/rpc/chainlink.js';
-import { default as NET_UNISWAP_REPLAY } from './vectors/rpc/uniswap.js';
+import { default as NET_ENS_REPLAY } from './vectors/rpc/ens.js';
 import { default as NET_ESTIMATE_GAS_REPLAY } from './vectors/rpc/estimateGas.js';
+import { default as NET_UNISWAP_REPLAY } from './vectors/rpc/uniswap.js';
 
-import { default as NET_TX_VECTORS } from './vectors/rpc/parsed-transactions.js';
-import { default as NET_TX_SLOW_REPLAY } from './vectors/rpc/net_transfers_slow.js';
-import { default as NET_TX_BATCH_REPLAY } from './vectors/rpc/net_transfers_batch.js';
-import { default as NET_TX_BASIC } from './vectors/rpc/net_tx_basic.js';
 import { default as NET_TX_ALLOWANCES } from './vectors/rpc/net_allowances.js';
-import { default as NET_TX_TRANSFERS } from './vectors/rpc/net_tx_transfers.js';
-import { default as NET_TX_TOKEN_TRANSFERS_NFT } from './vectors/rpc/net_token_transfers_nft.js';
+import { default as NET_TX_CONTRACT_CAPABILITIES } from './vectors/rpc/net_contract_capabilities.js';
 import { default as NET_TX_TOKEN_BALANCES } from './vectors/rpc/net_token_balances.js';
 import { default as NET_TX_TOKEN_INFO } from './vectors/rpc/net_token_info.js';
-import { default as NET_TX_CONTRACT_CAPABILITIES } from './vectors/rpc/net_contract_capabilities.js';
+import { default as NET_TX_TOKEN_TRANSFERS_NFT } from './vectors/rpc/net_token_transfers_nft.js';
+import { default as NET_TX_BATCH_REPLAY } from './vectors/rpc/net_transfers_batch.js';
+import { default as NET_TX_SLOW_REPLAY } from './vectors/rpc/net_transfers_slow.js';
+import { default as NET_TX_BASIC } from './vectors/rpc/net_tx_basic.js';
+import { default as NET_TX_TRANSFERS } from './vectors/rpc/net_tx_transfers.js';
+import { default as NET_TX_VECTORS } from './vectors/rpc/parsed-transactions.js';
+// import { default as NET_TX_OTS_SEARCH } from './net_ots_vectors.js';
 
-import { events } from '../esm/abi/index.js';
-import { ERC20 } from '../esm/abi/index.js';
 
 const NODE_URL = 'https://NODE_URL/';
 const getKey = (url, opt) => JSON.stringify({ url: NODE_URL, opt });
@@ -564,6 +562,42 @@ describe('Network', () => {
       '0x3e7b38e7f6c089345ccca785b18890c528636673': new Map([[6929n, 1n]]),
     });
   });
+  // should('OTS', async () => {
+  //   const replay = mftch.replayable(fetch, NET_TX_OTS_SEARCH, {
+  //     getKey,
+  //     offline: true,
+  //   });
+  //   const ftch = mftch.ftch(replay, { concurrencyLimit: 5 });
+  //   const archive = new Web3Provider(mftch.jsonrpc(ftch, NODE_URL, { batchSize: 10 }));
+  //   const addr = '0x6994eCe772cC4aBb5C9993c065a34C94544A4087';
+  //   const OPTS = { fromBlock: 14_272_357, toBlock: 15_065_121 };
+  //   const internal = await archive.internalTransactions(addr, OPTS);
+
+  //   // NOTE: ots seems slower (small pagination limits, need to call trace separately).
+  //   const internalOTS = await archive.internalTransactionsOTS(addr, OPTS);
+  //   const internalOTSSlow = await archive.internalTransactionsOTS(addr, {
+  //     ...OPTS,
+  //     perRequestOTS: 3, // 3 results per page
+  //   });
+  //   deepStrictEqual(internalOTSSlow, internalOTS);
+  //   // Order is different and we cannot fully re-construct actions, but we don't need that for transfers
+  //   const simplify = (x) => {
+  //     const res = {};
+  //     for (const a of x) {
+  //       const name = `${a.blockNumber}-${a.transactionHash}-${a.action.from}-${a.action.to}-${a.action.input}-${a.result.output}`;
+  //       const cur = { ...a.action, gas: 0n, callType: a.action.callType.toLowerCase() };
+  //       res[name] = cur;
+  //     }
+  //     return res;
+  //   };
+  //   deepStrictEqual(simplify(internalOTS), simplify(internal));
+  //   const txs = await archive.transfers(addr);
+  //   const txsOts = await archive.transfers(addr, { otsInternalSearch: true });
+  //   const txDiff = calcTransfersDiff(txs).pop();
+  //   const txDiffOts = calcTransfersDiff(txsOts).pop();
+  //   deepStrictEqual(txDiff.balances, txDiffOts.balances);
+  //   deepStrictEqual(txDiff.tokenBalances, txDiffOts.tokenBalances);
+  // });
 });
 
 should.runWhen(import.meta.url);

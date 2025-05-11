@@ -113,6 +113,16 @@ export type Action = {
   type: string;
 };
 
+export type ActionOts = {
+  type: string;
+  depth: number;
+  from: string;
+  to: string;
+  value: bigint | null;
+  input: string;
+  output: string;
+};
+
 export type Log = {
   address: string;
   topics: string[];
@@ -149,6 +159,13 @@ export type TxInfo = {
   // blobs
   maxFeePerBlobGas?: bigint;
   blobVersionedHashes?: string[];
+};
+
+export type TxInfoFull = {
+  type: 'legacy' | 'eip2930' | 'eip1559' | 'eip4844' | 'eip7702';
+  info: TxInfo;
+  receipt: TxReceipt;
+  raw: string | undefined;
 };
 
 export type TxReceipt = {
@@ -234,6 +251,30 @@ export type TxTransfers = {
   };
 };
 
+// OtterScan API
+export type OtsSearchTransactionsRaw = {
+  txs: TxInfo[];
+  receipts: TxReceipt[];
+  firstPage: boolean;
+  lastPage: boolean;
+};
+
+export type OtsSearch = {
+  txs: { info: TxInfo; receipt: TxReceipt }[];
+  firstPage: boolean;
+  lastPage: boolean;
+};
+
+const fixOtsSearch = (search: OtsSearchTransactionsRaw): OtsSearch => {
+  const receipts: Record<string, TxReceipt> = {};
+  for (const r of search.receipts) receipts[r.transactionHash] = fixTxReceipt(r);
+  return {
+    txs: search.txs.map((tx) => ({ info: fixTxInfo(tx), receipt: receipts[tx.hash] })),
+    firstPage: search.firstPage,
+    lastPage: search.lastPage,
+  };
+};
+
 /**
  * Callbacks are needed, because we want to call getTx / getBlock / getTokenInfo
  * requests as fast as possible, to reduce amount of sequential execution.
@@ -246,12 +287,15 @@ export type Callbacks = {
   txCallback?: (txHash: string) => void;
   blockCallback?: (blockNum: number) => void;
   contractCallback?: (contrct: string) => void;
+  txInfoCallback?: (txHash: string, txInfo: TxInfoFull) => void;
 };
 
 export type Pagination = { fromBlock?: number; toBlock?: number };
 export type TraceOpts = Callbacks &
   Pagination & {
     perRequest?: number;
+    perRequestOTS?: number; // <25
+    otsInternalSearch?: boolean;
     limitTrace?: number;
   };
 export type LogOpts = Callbacks &
@@ -393,6 +437,12 @@ async function wait<T extends Record<string, Promise<any>>>(
   const res = p.map((r, i) => [keys[i], r.status === 'fulfilled' ? r.value : undefined]);
   return Object.fromEntries(res) as { [K in keyof T]?: T[K] extends Promise<infer R> ? R : never };
 }
+// TODO: merge with wait
+async function mapCache<T>(cache: Record<string, Promise<T> | T>): Promise<Record<string, T>> {
+  const keys = Object.keys(cache);
+  const values = await Promise.all(Object.values(cache));
+  return Object.fromEntries(values.map((v, i) => [keys[i], v]));
+}
 
 const isReverted = (e: Error) => e instanceof Error && e.message.toLowerCase().includes('revert');
 
@@ -455,6 +505,89 @@ export class Web3Provider implements IWeb3Provider {
     });
     for (const action of res) fixAction(action, opts);
     return res;
+  }
+
+  async ots_searchBefore(address: string, block: number, pageSize = 25): Promise<OtsSearch> {
+    if (typeof address !== 'string') throw new Error('ots_searchBefore: wrong address');
+    if (!Number.isSafeInteger(block)) throw new Error('ots_searchBefore: wrong block');
+    if (!Number.isSafeInteger(pageSize)) throw new Error('ots_searchBefore: wrong pageSize');
+    return fixOtsSearch(await this.call('ots_searchTransactionsBefore', address, block, pageSize));
+  }
+  async ots_searchAfter(address: string, block: number, pageSize = 25): Promise<OtsSearch> {
+    if (typeof address !== 'string') throw new Error('ots_searchAfter: wrong address');
+    if (!Number.isSafeInteger(block)) throw new Error('ots_searchAfter: wrong block');
+    if (!Number.isSafeInteger(pageSize)) throw new Error('ots_searchAfter: wrong pageSize');
+    return fixOtsSearch(await this.call('ots_searchTransactionsAfter', address, block, pageSize));
+  }
+  async ots_traceTransaction(txHash: string): Promise<ActionOts[]> {
+    if (typeof txHash !== 'string') throw new Error('ots_traceTransaction: wrong txHash');
+    return await this.call('ots_traceTransaction', txHash);
+  }
+
+  /**
+   * OTS API. A bit broken: when >= 25 txs/block per tx, we can't get more than 25 = we will miss
+   * information!
+   */
+  async internalTransactionsOTS(address: string, opts: TraceOpts = {}) {
+    if (typeof address !== 'string') throw new Error('internalTransactions: wrong address');
+    validateTraceOpts(opts);
+    // non-inclusive, which means we cannot access block=0?
+    let lastBlock = opts.fromBlock ? opts.fromBlock - 1 : 0;
+    const out: Action[] = [];
+    const traces: Record<string, Promise<ActionOts[]>> = {};
+    const info: Record<string, TxInfoFull> = {};
+    for (;;) {
+      // NOTE: we don't have enough info just from search, we need to call trace on every
+      // transaction, since internal transaction may include stuff like 'somebody called contract,
+      // contract sent eth' (not available via txInfo/txReceipt!)
+      // FUN: this is slower than trace?
+      const res = await this.ots_searchAfter(address, lastBlock, opts.perRequestOTS);
+      res.txs.reverse(); // fix order into: from oldest block to newest
+      for (const t of res.txs) {
+        const hash = t.info.hash;
+        const blockNumber = t.info.blockNumber;
+        if (opts.toBlock !== undefined && opts.toBlock < blockNumber) break;
+        const txInfo = this.txInfoRaw(t.info, t.receipt, opts);
+        info[hash] = txInfo;
+        // We already have info and receipt, no need to call txInfo in transfers
+        if (opts.txInfoCallback) opts.txInfoCallback(hash, txInfo);
+        if (!traces[hash]) traces[hash] = this.ots_traceTransaction(hash);
+        lastBlock = Math.max(lastBlock, blockNumber);
+      }
+      if (res.firstPage) break; // "Awesome" API!
+    }
+    const tracesRes = await mapCache(traces);
+    const addrLow = address.toLowerCase();
+
+    for (const hash in tracesRes) {
+      const actions = tracesRes[hash];
+      const currTx = info[hash];
+      for (const a of actions) {
+        if (a.from !== addrLow && a.to !== addrLow) continue; // filter unrelated traces
+        // Reconstruct trace action from ots trace + ots search
+        const action: Action = {
+          action: {
+            input: a.input,
+            from: a.from,
+            to: a.to,
+            gas: 0n,
+            value: a.value ? a.value : 0n,
+            callType: a.type,
+          },
+          result: { gasUsed: 0n, output: a.output },
+          subtraces: 0,
+          traceAddress: [],
+          blockHash: currTx.info.blockHash,
+          blockNumber: currTx.info.blockNumber,
+          transactionHash: hash,
+          transactionPosition: currTx.info.transactionIndex,
+          type: a.type,
+        };
+        fixAction(action, opts);
+        out.push(action);
+      }
+    }
+    return out;
   }
 
   async internalTransactions(address: string, opts: TraceOpts = {}): Promise<any[]> {
@@ -590,22 +723,7 @@ export class Web3Provider implements IWeb3Provider {
       ),
     ]);
   }
-
-  async txInfo(
-    txHash: string,
-    opts: TxInfoOpts = {}
-  ): Promise<{
-    type: 'legacy' | 'eip2930' | 'eip1559' | 'eip4844' | 'eip7702';
-    info: any;
-    receipt: any;
-    raw: string | undefined;
-  }> {
-    let [info, receipt] = await Promise.all([
-      this.call('eth_getTransactionByHash', txHash),
-      this.call('eth_getTransactionReceipt', txHash),
-    ]);
-    info = fixTxInfo(info);
-    receipt = fixTxReceipt(receipt);
+  private txInfoRaw(info: TxInfo, receipt: TxReceipt, opts: TxInfoOpts = {}) {
     const type = Object.keys(TxVersions)[info.type] as keyof typeof TxVersions;
     // This is not strictly neccessary, but allows to store tx info in very compact format and remove unneccessary fields
     // Also, there is additional validation that node returned actual with correct hash/sender and not corrupted stuff.
@@ -643,6 +761,13 @@ export class Web3Provider implements IWeb3Provider {
     }
     if (opts.blockCallback && info.blockNumber !== null) opts.blockCallback(info.blockNumber);
     return { type, info, receipt, raw };
+  }
+  async txInfo(txHash: string, opts: TxInfoOpts = {}): Promise<TxInfoFull> {
+    const [info, receipt] = await Promise.all([
+      this.call('eth_getTransactionByHash', txHash),
+      this.call('eth_getTransactionReceipt', txHash),
+    ]);
+    return this.txInfoRaw(fixTxInfo(info), fixTxReceipt(receipt), opts);
   }
   async tokenInfo(contract: string): Promise<TokenInfo | TokenError> {
     const c = createContract(ERC20, this, contract);
@@ -849,6 +974,10 @@ export class Web3Provider implements IWeb3Provider {
     const tokenCache: Record<string, any> = {};
     const _opts = {
       ...opts,
+      txInfoCallback: (txHash: string, info: TxInfoFull) => {
+        if (txCache[txHash]) return;
+        txCache[txHash] = info;
+      },
       txCallback: (txHash: string) => {
         if (txCache[txHash]) return;
         txCache[txHash] = this.txInfo(txHash, opts);
@@ -866,16 +995,13 @@ export class Web3Provider implements IWeb3Provider {
     // This runs in parallel and executes callbacks
     // Note, we ignore logs and weth, but they will call callbacks and fetch related
     const [actions, _logs, _weth] = await Promise.all([
-      this.internalTransactions(address, _opts),
+      _opts.otsInternalSearch
+        ? this.internalTransactionsOTS(address, _opts)
+        : this.internalTransactions(address, _opts),
       this.tokenTransfers(address, _opts),
       this.wethTransfers(address, _opts),
       this.erc1155Transfers(address, _opts),
     ]);
-    const mapCache = async (cache: Record<any, any>) => {
-      const keys = Object.keys(cache);
-      const values = await Promise.all(Object.values(cache));
-      return Object.fromEntries(values.map((v, i) => [keys[i], v]));
-    };
     // it is ok to do this sequentially, since promises already started and probably resolved at this point
     const blocks = await mapCache(blockCache);
     const tx = await mapCache(txCache);

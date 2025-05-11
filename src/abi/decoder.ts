@@ -367,7 +367,7 @@ export function createContract<T extends ArrLike<FnArg>>(
     const outputs = fn.outputs ? mapArgs(fn.outputs) : undefined;
     const decodeOutput = (b: Uint8Array) => outputs && outputs.decode(b);
     const encodeInput = (v: unknown) =>
-      concatBytes(hexToBytes(sh), inputs ? inputs.encode(v as any) : new Uint8Array());
+      concatBytes(hexToBytes(sh), inputs ? inputs.encode(v as any) : Uint8Array.of());
     res[name] = { decodeOutput, encodeInput };
 
     // .call and .estimateGas call network, when net is available
@@ -411,7 +411,7 @@ export function deployContract<T extends ArrLike<FnArg>>(
     const inputs = fn.inputs && fn.inputs.length ? mapArgs(fn.inputs) : undefined;
     if (inputs === undefined && args !== undefined && args.length)
       throw new Error('arguments to constructor without any');
-    consCall = inputs ? inputs.encode(args[0] as any) : new Uint8Array();
+    consCall = inputs ? inputs.encode(args[0] as any) : Uint8Array.of();
   }
   if (!consCall) throw new Error('constructor not found');
   return ethHex.encode(concatBytes(bytecode, consCall));
