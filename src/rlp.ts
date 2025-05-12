@@ -53,7 +53,7 @@ const rlpInner = P.tag(P.map(P.bits(1), { byte: 0, complex: 1 }), {
 
 const phex = P.hex(null);
 const pstr = P.string(null);
-const empty = Uint8Array.from([]);
+const empty = Uint8Array.of();
 
 /**
  * RLP parser.

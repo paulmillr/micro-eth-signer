@@ -76,9 +76,9 @@ const compressed = P.apply(P.U256BE, {
     const p = Point.fromAffine({ x, y: yRes });
     p.assertValidity();
     const t = Fp.sub(Fp.ONE, Fp.mul(bandersnatch.CURVE.a, Fp.sqr(x)));
-    const l = FpLegendre(Fp.ORDER)(Fp, t);
+    const l = FpLegendre(Fp, t);
     // Check if 1 - ax^2 is a quadratic residue
-    if (!Fp.eql(l, Fp.ONE)) throw new Error('subgroup check failed');
+    if (l !== 1) throw new Error('subgroup check failed');
     return p;
   },
   decode: (p) => {
@@ -607,7 +607,7 @@ export function verifyExecutionWitnessPreState(
     } else if (extPres === EXTPresent.None) {
       if (value !== undefined) return false;
       addLeafValuesByPathAndZ(
-        depth === 1 ? new Uint8Array() : stem.slice(0, depth),
+        depth === 1 ? Uint8Array.of() : stem.slice(0, depth),
         stem[depth - 1],
         Fr.ZERO
       );
