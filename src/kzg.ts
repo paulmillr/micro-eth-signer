@@ -376,7 +376,7 @@ export class KZG {
       // Rust
       // RUST mul=47951 add=2    sub=3 (microseconds)
       // JS: mul=597947 add=2613 sub=2653
-      // It could be optimized by copying optimizations from C:
+      // It could be optimized ~5x by copying optimizations from C:
       // - GLV endomorphism
       // - Windowed booth encode multiplication (wnaf-like stuff)
       const res = this.fftG1.direct(xExt);
@@ -502,6 +502,9 @@ export class KZG {
     const proofs = this.Fk20Proof(this.fftFr.inverse(recoveredCells, true).slice(0, FE_PER_BLOB));
     return [allCells, proofs];
   }
+  /**
+   * Why it's slow: fromHex & assertValidity, too many points in commitments
+   */
   verifyCellKzgProofBatch(
     commitments: string[],
     indices: number[],
