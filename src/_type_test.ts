@@ -16,7 +16,7 @@ type Writable<T> = T extends {}
     }
   : T;
 type A = Writable<Uint8Array>;
-const _a: A = Uint8Array.of();
+const _a: A = Uint8Array.from([]);
 _a;
 // IsEmptyArray
 const isEmpty = <T>(a: T): abi.IsEmptyArray<T> => a as any;

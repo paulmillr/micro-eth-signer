@@ -1,11 +1,11 @@
-import { deepStrictEqual, throws } from 'node:assert';
+import { trustedSetup as s_fast } from '@paulmillr/trusted-setups/fast-kzg.js';
+import { trustedSetup as s_small } from '@paulmillr/trusted-setups/small-kzg.js';
 import { describe, should } from 'micro-should';
+import { deepStrictEqual, throws } from 'node:assert';
 import { KZG } from '../esm/kzg.js';
 import { jsonGZ } from './util.js';
 import { default as KZG_VERIFY_PROOF } from './vectors/kzg/go_kzg_4844_verify_kzg_proof.json' with { type: 'json' };
-import { trustedSetup as s_small } from '@paulmillr/trusted-setups';
-import { trustedSetup as s_fast } from '@paulmillr/trusted-setups/fast.js';
-import ROOTS_UN from './vectors/kzg/roots_of_unity.json' with { type: "json" };
+import ROOTS_UN from './vectors/kzg/roots_of_unity.json' with { type: 'json' };
 
 // These are same as millions of yaml files in official repo, but easier to use
 const VIEM = Object.fromEntries(
@@ -25,9 +25,7 @@ const viem_verify_blog_kzg_proof = VIEM['verify-blob-kzg-proof']();
 
 function run(kzg) {
   should('ROOTS_OF_UNITY', () => {
-    deepStrictEqual(
-      kzg.ROOTS_OF_UNITY, ROOTS_UN.map(BigInt)
-    );
+    deepStrictEqual(kzg.ROOTS_OF_UNITY_BRP, ROOTS_UN.map(BigInt));
   });
 
   describe('VIEM', () => {
@@ -48,7 +46,10 @@ function run(kzg) {
     should('computeChallenge', () => {
       const challengeStuff = viem_verify_blog_kzg_proof[25].input;
       deepStrictEqual(
-        kzg.computeChallenge(kzg.parseBlob(challengeStuff.blob), kzg.parseG1(challengeStuff.commitment)),
+        kzg.computeChallenge(
+          kzg.parseBlob(challengeStuff.blob),
+          kzg.parseG1(challengeStuff.commitment)
+        ),
         0x4f00eef944a21cb9f3ac3390702621e4bbf1198767c43c0fb9c8e9923bfbb31an
       );
     });

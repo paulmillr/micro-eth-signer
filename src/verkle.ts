@@ -1,8 +1,9 @@
 import { precomputeMSMUnsafe } from '@noble/curves/abstract/curve';
 import { type ExtPointType, twistedEdwards } from '@noble/curves/abstract/edwards';
+import { poly, rootsOfUnity } from '@noble/curves/abstract/fft';
 import { Field, FpLegendre } from '@noble/curves/abstract/modular';
 import { bytesToNumberBE, bytesToNumberLE, numberToBytesBE } from '@noble/curves/abstract/utils';
-import { sha256 } from '@noble/hashes/sha256';
+import { sha256 } from '@noble/hashes/sha2';
 import { bytesToHex, concatBytes, hexToBytes, randomBytes, utf8ToBytes } from '@noble/hashes/utils';
 import * as P from 'micro-packed';
 import { ethHex } from './utils.ts';
@@ -38,6 +39,9 @@ const bandersnatch = twistedEdwards({
   hash: sha256,
   randomBytes,
 });
+
+const ROOTS_CACHE = rootsOfUnity(Fr);
+const polyFr = poly(Fr, ROOTS_CACHE);
 
 const { ExtendedPoint: Point } = bandersnatch;
 type Point = typeof Point.BASE;
@@ -169,6 +173,8 @@ function mapToField(p: Point) {
   return Fr.create(Fp.div(x, y));
 }
 
+// This works in domain of [1, 2, 3, 4, ...], which is not same as ROOTS_OF_UNITY domain in poly,
+// but problem is that coeffincents change for formulas if we move from ROOTS_OF_UNITY domain to different one.
 function getBarycentricWeights(domainSize: number) {
   const res = [];
   for (let i = 0; i < domainSize; i++) {
@@ -185,8 +191,8 @@ function getBarycentricWeights(domainSize: number) {
 
 function getInvertedWeights(domainSize: number) {
   const res = [];
-  for (let i = 1; i < domainSize; i++) res.push(Fr.inv(Fr.create(BigInt(i))));
-  return res;
+  for (let i = 1; i < domainSize; i++) res.push(Fr.create(BigInt(i)));
+  return Fr.invertBatch(res);
 }
 const WEIGTHS_BARYCENTRIC = getBarycentricWeights(DOMAIN_SIZE);
 const WEIGTHS_BARYCENTRIC_INV = Fr.invertBatch(WEIGTHS_BARYCENTRIC);
@@ -209,7 +215,6 @@ function divideByLinearVanishing(poly: Poly, idx: number): bigint[] {
   }
   return q;
 }
-
 function evaluateLagrangeCoefficients(point: bigint): bigint[] {
   const res = [];
   for (let i = 0; i < DOMAIN_SIZE; i++)
@@ -217,12 +222,6 @@ function evaluateLagrangeCoefficients(point: bigint): bigint[] {
   let az = Fr.ONE;
   for (let i = 0; i < DOMAIN_SIZE; i++) az = Fr.mul(az, Fr.sub(point, Fr.create(BigInt(i))));
   return Fr.invertBatch(res).map((i) => Fr.mul(i, az));
-}
-
-function innerProduct(a: bigint[], b: bigint[]): bigint {
-  let res = Fr.ZERO;
-  for (let i = 0; i < a.length; i++) res = Fr.add(res, Fr.mul(a[i], b[i]));
-  return res;
 }
 
 type VerifierQuery = {
@@ -294,7 +293,7 @@ function multiproofCheck(proof: MultiProof, queries: VerifierQuery[], transcript
     bi.push(b);
     gi.push(Fr.mul(proof.a, b));
   }
-  const b0 = innerProduct(b, bi);
+  const b0 = polyFr.eval(b, bi);
   const qi = Fr.mul(w, Fr.add(g2t, Fr.mul(proof.a, b0)));
   // TODO: this is fast only if we have precomputes, otherwise concat is better?
   const tmp = crsMSM(gi);
@@ -424,7 +423,7 @@ export const createProof = (proverInputs: ProverInput[]): Uint8Array => {
   if (a.length !== DOMAIN_SIZE || b.length !== DOMAIN_SIZE)
     throw new Error('Wrong polynominals length');
   // IPA
-  const w = ipaW(transcript, C, t, innerProduct(a, b));
+  const w = ipaW(transcript, C, t, polyFr.eval(a, b));
   const Q = CRS_Q.multiply(w);
   const cl = [];
   const cr = [];
@@ -432,8 +431,8 @@ export const createProof = (proverInputs: ProverInput[]): Uint8Array => {
     const [aL, aR] = splitHalf(a);
     const [bL, bR] = splitHalf(b);
     const [GL, GR] = splitHalf(G);
-    const zL = innerProduct(aR, bL);
-    const zR = innerProduct(aL, bR);
+    const zL = polyFr.eval(aR, bL);
+    const zR = polyFr.eval(aL, bR);
     const L = Point.msm(GL.concat(Q), aR.concat(zL));
     const R = Point.msm(GR.concat(Q), aL.concat(zR));
     cl.push(L);

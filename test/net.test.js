@@ -20,7 +20,6 @@ import { default as NET_TX_SLOW_REPLAY } from './vectors/rpc/net_transfers_slow.
 import { default as NET_TX_BASIC } from './vectors/rpc/net_tx_basic.js';
 import { default as NET_TX_TRANSFERS } from './vectors/rpc/net_tx_transfers.js';
 import { default as NET_TX_VECTORS } from './vectors/rpc/parsed-transactions.js';
-// import { default as NET_TX_OTS_SEARCH } from './net_ots_vectors.js';
 
 
 const NODE_URL = 'https://NODE_URL/';
@@ -562,42 +561,6 @@ describe('Network', () => {
       '0x3e7b38e7f6c089345ccca785b18890c528636673': new Map([[6929n, 1n]]),
     });
   });
-  // should('OTS', async () => {
-  //   const replay = mftch.replayable(fetch, NET_TX_OTS_SEARCH, {
-  //     getKey,
-  //     offline: true,
-  //   });
-  //   const ftch = mftch.ftch(replay, { concurrencyLimit: 5 });
-  //   const archive = new Web3Provider(mftch.jsonrpc(ftch, NODE_URL, { batchSize: 10 }));
-  //   const addr = '0x6994eCe772cC4aBb5C9993c065a34C94544A4087';
-  //   const OPTS = { fromBlock: 14_272_357, toBlock: 15_065_121 };
-  //   const internal = await archive.internalTransactions(addr, OPTS);
-
-  //   // NOTE: ots seems slower (small pagination limits, need to call trace separately).
-  //   const internalOTS = await archive.internalTransactionsOTS(addr, OPTS);
-  //   const internalOTSSlow = await archive.internalTransactionsOTS(addr, {
-  //     ...OPTS,
-  //     perRequestOTS: 3, // 3 results per page
-  //   });
-  //   deepStrictEqual(internalOTSSlow, internalOTS);
-  //   // Order is different and we cannot fully re-construct actions, but we don't need that for transfers
-  //   const simplify = (x) => {
-  //     const res = {};
-  //     for (const a of x) {
-  //       const name = `${a.blockNumber}-${a.transactionHash}-${a.action.from}-${a.action.to}-${a.action.input}-${a.result.output}`;
-  //       const cur = { ...a.action, gas: 0n, callType: a.action.callType.toLowerCase() };
-  //       res[name] = cur;
-  //     }
-  //     return res;
-  //   };
-  //   deepStrictEqual(simplify(internalOTS), simplify(internal));
-  //   const txs = await archive.transfers(addr);
-  //   const txsOts = await archive.transfers(addr, { otsInternalSearch: true });
-  //   const txDiff = calcTransfersDiff(txs).pop();
-  //   const txDiffOts = calcTransfersDiff(txsOts).pop();
-  //   deepStrictEqual(txDiff.balances, txDiffOts.balances);
-  //   deepStrictEqual(txDiff.tokenBalances, txDiffOts.tokenBalances);
-  // });
 });
 
 should.runWhen(import.meta.url);
