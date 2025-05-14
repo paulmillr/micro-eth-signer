@@ -1,22 +1,22 @@
 {
   "name": "@paulmillr/micro-eth-signer",
-  "version": "0.14.0",
+  "version": "0.15.0",
   "exports": {
     ".": "./src/index.ts",
-    "./abi": "./src/abi/index.ts",
-    "./address": "./src/address.ts",
-    "./kzg": "./src/kzg.ts",
-    "./net": "./src/net/index.ts",
-    "./rlp": "./src/rlp.ts",
-    "./tx": "./src/tx.ts",
-    "./typed-data": "./src/typed-data.ts",
-    "./verkle": "./src/verkle.ts",
-    "./utils": "./src/utils.ts"
+    "./abi.js": "./src/abi/index.ts",
+    "./address.js": "./src/address.ts",
+    "./kzg.js": "./src/kzg.ts",
+    "./net.js": "./src/net/index.ts",
+    "./rlp.js": "./src/rlp.ts",
+    "./tx.js": "./src/tx.ts",
+    "./typed-data.js": "./src/typed-data.ts",
+    "./verkle.js": "./src/verkle.ts",
+    "./utils.js": "./src/utils.ts"
   },
   "imports": {
-    "@noble/curves": "jsr:@noble/curves@~1.8.1",
-    "@noble/hashes": "jsr:@noble/hashes@~1.7.1",
-    "micro-packed": "jsr:@paulmillr/micro-packed@~0.7.2"
+    "@noble/curves": "jsr:@noble/curves@~1.9.1",
+    "@noble/hashes": "jsr:@noble/hashes@~1.8.0",
+    "micro-packed": "jsr:@paulmillr/micro-packed@~0.7.3"
   },
   "publish": {
     "include": [

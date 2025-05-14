@@ -1,6 +1,6 @@
 {
   "name": "micro-eth-signer",
-  "version": "0.14.0",
+  "version": "0.15.0",
   "description": "Minimal library for Ethereum transactions, addresses and smart contracts",
   "files": [
     "*.js",
@@ -18,7 +18,7 @@
   "dependencies": {
     "@noble/curves": "~1.9.1",
     "@noble/hashes": "~1.8.0",
-    "micro-packed": "~0.7.2"
+    "micro-packed": "~0.7.3"
   },
   "devDependencies": {
     "@paulmillr/jsbt": "0.4.0",
@@ -42,43 +42,43 @@
       "import": "./esm/index.js",
       "require": "./index.js"
     },
-    "./abi": {
+    "./abi.js": {
       "import": "./esm/abi/index.js",
       "require": "./abi/index.js"
     },
-    "./address": {
+    "./address.js": {
       "import": "./esm/address.js",
       "require": "./address.js"
     },
-    "./kzg": {
+    "./kzg.js": {
       "import": "./esm/kzg.js",
       "require": "./kzg.js"
     },
-    "./net": {
+    "./net.js": {
       "import": "./esm/net/index.js",
       "require": "./net/index.js"
     },
-    "./rlp": {
+    "./rlp.js": {
       "import": "./esm/rlp.js",
       "require": "./rlp.js"
     },
-    "./ssz": {
+    "./ssz.js": {
       "import": "./esm/ssz.js",
       "require": "./ssz.js"
     },
-    "./tx": {
+    "./tx.js": {
       "import": "./esm/tx.js",
       "require": "./tx.js"
     },
-    "./typed-data": {
+    "./typed-data.js": {
       "import": "./esm/typed-data.js",
       "require": "./typed-data.js"
     },
-    "./verkle": {
+    "./verkle.js": {
       "import": "./esm/verkle.js",
       "require": "./verkle.js"
     },
-    "./utils": {
+    "./utils.js": {
       "import": "./esm/utils.js",
       "require": "./utils.js"
     }

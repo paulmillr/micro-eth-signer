@@ -8,7 +8,7 @@ Minimal library for Ethereum transactions, addresses and smart contracts.
 - ✍️ Core: transactions, addresses, messages
 - 🌍 Network-related: execute Uniswap & Chainlink, fetch tx history
 - 🦺 Advanced: type-safe ABI parsing, RLP, SSZ, KZG, PeerDAS, Verkle
-- 🪶 29KB gzipped (1300 lines) for core, just 3 deps
+- 🪶 28KB gzipped (1300 lines) for core, just 3 deps
 
 _Check out all web3 utility libraries:_ [ETH](https://github.com/paulmillr/micro-eth-signer), [BTC](https://github.com/paulmillr/scure-btc-signer), [SOL](https://github.com/paulmillr/micro-sol-signer)
 
@@ -108,7 +108,7 @@ There are two messaging standards: [EIP-191](https://eips.ethereum.org/EIPS/eip-
 #### EIP-191
 
 ```ts
-import * as typed from 'micro-eth-signer/typed-data';
+import * as typed from 'micro-eth-signer/typed-data.js';
 
 // Example message
 const message = 'Hello, Ethereum!';
@@ -127,7 +127,7 @@ console.log('Is valid:', isValid);
 #### EIP-712
 
 ```ts
-import * as typed from 'micro-eth-signer/typed-data';
+import * as typed from 'micro-eth-signer/typed-data.js';
 
 const types = {
   Person: [
@@ -203,7 +203,7 @@ To initialize Web3Provider, do the following:
 ```js
 // Requests are made with fetch(), a built-in method
 import { jsonrpc } from 'micro-ftch';
-import { Web3Provider } from 'micro-eth-signer/net';
+import { Web3Provider } from 'micro-eth-signer/net.js';
 const RPC_URL = 'http://localhost:8545';
 const prov = new Web3Provider(jsonrpc(fetch, RPC_URL));
 
@@ -246,7 +246,7 @@ console.log('info for addr', addr, await prov.unspent(addr));
 ### Fetch Chainlink oracle prices
 
 ```ts
-import { Chainlink } from 'micro-eth-signer/net';
+import { Chainlink } from 'micro-eth-signer/net.js';
 const link = new Chainlink(prov);
 const btc = await link.coinPrice('BTC');
 const bat = await link.tokenPrice('BAT');
@@ -256,7 +256,7 @@ console.log({ btc, bat }); // BTC 19188.68870991, BAT 0.39728989 in USD
 ### Resolve ENS address
 
 ```ts
-import { ENS } from 'micro-eth-signer/net';
+import { ENS } from 'micro-eth-signer/net.js';
 const ens = new ENS(prov);
 const vitalikAddr = await ens.nameToAddress('vitalik.eth');
 ```
@@ -270,8 +270,8 @@ _Uniswap Founder_
 Swap 12.12 USDT to BAT with uniswap V3 defaults of 0.5% slippage, 30 min expiration.
 
 ```ts
-import { tokenFromSymbol } from 'micro-eth-signer/abi';
-import { UniswapV3 } from 'micro-eth-signer/net'; // or UniswapV2
+import { tokenFromSymbol } from 'micro-eth-signer/abi.js';
+import { UniswapV3 } from 'micro-eth-signer/net.js'; // or UniswapV2
 
 const USDT = tokenFromSymbol('USDT');
 const BAT = tokenFromSymbol('BAT');
@@ -290,7 +290,7 @@ console.log(swapData.amount, swapData.expectedAmount, swapData.allowance);
 The ABI is type-safe when `as const` is specified:
 
 ```ts
-import { createContract } from 'micro-eth-signer/abi';
+import { createContract } from 'micro-eth-signer/abi.js';
 const PAIR_CONTRACT = [
   {
     type: 'function',
@@ -348,7 +348,7 @@ The transaction sent ERC-20 USDT token between addresses. The library produces a
 > Transfer 22588 USDT to 0xdac17f958d2ee523a2206206994597c13d831ec7
 
 ```ts
-import { decodeTx } from 'micro-eth-signer/abi';
+import { decodeTx } from 'micro-eth-signer/abi.js';
 
 const tx =
   '0xf8a901851d1a94a20082c12a94dac17f958d2ee523a2206206994597c13d831ec780b844a9059cbb000000000000000000000000dac17f958d2ee523a2206206994597c13d831ec7000000000000000000000000000000000000000000000000000000054259870025a066fcb560b50e577f6dc8c8b2e3019f760da78b4c04021382ba490c572a303a42a0078f5af8ac7e11caba9b7dc7a64f7bdc3b4ce1a6ab0a1246771d7cc3524a7200';
@@ -367,7 +367,7 @@ deepStrictEqual(decodeTx(tx), {
 Or if you have already decoded tx:
 
 ```ts
-import { decodeData } from 'micro-eth-signer/abi';
+import { decodeData } from 'micro-eth-signer/abi.js';
 
 const to = '0x7a250d5630b4cf539739df2c5dacb4c659f2488d';
 const data =
@@ -415,7 +415,7 @@ Decoding the event produces the following hint:
 > Allow 0xe592427a0aece92de3edee1f18e0157c05861564 spending up to 1000 BAT from 0xd8da6bf26964af9d7eed9e03e53415d37aa96045
 
 ```ts
-import { decodeEvent } from 'micro-eth-signer/abi';
+import { decodeEvent } from 'micro-eth-signer/abi.js';
 
 const to = '0x0d8775f648430679a709e98d2b0cb6250d2887ef';
 const topics = [
@@ -436,13 +436,13 @@ RLP in just 100 lines of code, and SSZ in 1500 lines.
 SSZ includes [EIP-7495](https://eips.ethereum.org/EIPS/eip-7495) stable containers.
 
 ```ts
-import { RLP } from 'micro-eth-signer/rlp';
+import { RLP } from 'micro-eth-signer/rlp.js';
 // More RLP examples in test/rlp.test.js
 RLP.decode(RLP.encode('dog'));
 ```
 
 ```ts
-import * as ssz from 'micro-eth-signer/ssz';
+import * as ssz from 'micro-eth-signer/ssz.js';
 // More SSZ examples in test/ssz.test.js
 ```
 
@@ -451,9 +451,9 @@ import * as ssz from 'micro-eth-signer/ssz';
 Allows to create & verify KZG EIP-4844 proofs. Supports PeerDAS from EIP-7594.
 
 ```ts
-import * as verkle from 'micro-eth-signer/verkle';
+import * as verkle from 'micro-eth-signer/verkle.js';
 
-import { KZG } from 'micro-eth-signer/kzg';
+import { KZG } from 'micro-eth-signer/kzg.js';
 // 400kb, 4-sec init
 import { trustedSetup } from '@paulmillr/trusted-setups/small-kzg.js';
 // 800kb, instant init
