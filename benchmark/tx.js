@@ -1,11 +1,11 @@
-import { compare, utils as butils } from 'micro-bmark';
-
+import { bytesToHex } from '@noble/hashes/utils';
+import * as ethers from 'ethers';
+import { utils as butils, compare } from 'micro-bmark';
+import * as viem from 'viem';
 import { parseGwei } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 import * as micro from '../esm/index.js';
 import { amounts } from '../esm/utils.js';
-import * as viem from 'viem';
-import * as ethers from 'ethers';
 
 const PRIV = '0x0d3f15106182dd987498bec735ff2c229a0fe62529d30e2959227d4158112280';
 const VIEM_PRIV = privateKeyToAccount(PRIV);
@@ -14,7 +14,7 @@ const TO_ADDR = '0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266';
 const TX =
   '0x02f86b014584b2d05e008504a817c80082520894f39fd6e51aad88f6f4ce6ab8827279cfffb922668080c080a0a9ff766b8c2faa724e9658625e7c18c6694b1e8d1d740aa4075a5191abccd73ca008a1238402eb55cf19edcd197daf1b73c94d74bd16a1d590897956e6f881b326';
 
-console.log(micro.Transaction.fromHex(TX).removeSignature().signBy(PRIV).toHex());
+console.log(micro.Transaction.fromHex(TX).removeSignature().signBy(PRIV, false).toHex());
 
 const TX_PARAMS = {
   ethers: {
@@ -64,7 +64,7 @@ const LIBS = {
     samples: 10_000,
     ethers: async () => await ETHERS_PRIV.signTransaction(TX_PARAMS.ethers),
     viem: async () => await VIEM_PRIV.signTransaction(TX_PARAMS.viem),
-    'micro-eth-signer': () => micro.Transaction.prepare(TX_PARAMS.micro).signBy(PRIV).toHex(true),
+    'micro-eth-signer': () => micro.Transaction.prepare(TX_PARAMS.micro).signBy(PRIV, false).toHex(true),
   },
 };
 
@@ -80,8 +80,8 @@ export async function main() {
   // I have no idea how to do same with viem. But ethers API seems better.
   // Seems viem gets transaction hash via web3 node.
   deepStrictEqual(parsed.ethers.from, parsed['micro-eth-signer'].recoverSender().address);
-  deepStrictEqual(parsed.ethers.unsignedHash, `0x${parsed['micro-eth-signer'].calcHash(false)}`);
-  deepStrictEqual(parsed.ethers.hash, `0x${parsed['micro-eth-signer'].calcHash(true)}`);
+  deepStrictEqual(parsed.ethers.unsignedHash, `0x${bytesToHex(parsed['micro-eth-signer'].calcHash(false))}`);
+  deepStrictEqual(parsed.ethers.hash, `0x${bytesToHex(parsed['micro-eth-signer'].calcHash(true))}`);
   const signed = Object.fromEntries(
     (
       await Promise.all(
@@ -105,8 +105,8 @@ export async function main() {
 }
 
 // ESM is broken.
-import url from 'node:url';
 import { deepStrictEqual } from 'node:assert';
+import url from 'node:url';
 if (import.meta.url === url.pathToFileURL(process.argv[1]).href) {
   main();
 }

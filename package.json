@@ -16,19 +16,19 @@
   "module": "esm/index.js",
   "types": "esm/index.d.ts",
   "dependencies": {
-    "@noble/curves": "~1.9.0",
+    "@noble/curves": "~1.9.1",
     "@noble/hashes": "~1.8.0",
     "micro-packed": "~0.7.2"
   },
   "devDependencies": {
-    "@paulmillr/jsbt": "0.3.3",
-    "@paulmillr/trusted-setups": "0.1.2",
-    "micro-bmark": "0.4.1",
+    "@paulmillr/jsbt": "0.4.0",
+    "@paulmillr/trusted-setups": "~0.2.0",
+    "micro-bmark": "0.3.1",
     "micro-ftch": "0.4.3",
     "micro-should": "0.5.2",
-    "prettier": "3.5.3",
+    "prettier": "3.5.2",
     "snappyjs": "0.7.0",
-    "typescript": "5.8.3",
+    "typescript": "5.8.2",
     "yaml": "2.4.1"
   },
   "author": "Paul Miller (https://paulmillr.com)",
@@ -102,7 +102,7 @@
   "scripts": {
     "build": "tsc && tsc -p tsconfig.cjs.json",
     "build:release": "npx jsbt esbuild test/build",
-    "bench": "node benchmark/tx.js",
+    "bench": "cd benchmark; npm install; node tx.js; node rlp.js; node ssz.js; node kzg.js; node peerdas.js",
     "lint": "prettier --check src",
     "format": "prettier --write src",
     "test": "node test/index.js",

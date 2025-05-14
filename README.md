@@ -455,9 +455,9 @@ import * as verkle from 'micro-eth-signer/verkle';
 
 import { KZG } from 'micro-eth-signer/kzg';
 // 400kb, 4-sec init
-import { trustedSetup } from '@paulmillr/trusted-setups';
+import { trustedSetup } from '@paulmillr/trusted-setups/small-kzg.js';
 // 800kb, instant init
-import { trustedSetup as fastSetup } from '@paulmillr/trusted-setups/fast.js';
+import { trustedSetup as fastSetup } from '@paulmillr/trusted-setups/fast-kzg.js';
 
 // More KZG & Verkle examples in
 // https://github.com/ethereumjs/ethereumjs-monorepo

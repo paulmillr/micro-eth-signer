@@ -1,9 +1,9 @@
-import { compare, utils as butils } from 'micro-bmark';
+import { trustedSetup as s_fast } from '@paulmillr/trusted-setups/fast-kzg.js';
+import { trustedSetup } from '@paulmillr/trusted-setups/small-kzg.js';
 import { loadKZG } from 'kzg-wasm';
+import { utils as butils, compare } from 'micro-bmark';
 import * as kzg from '../esm/kzg.js';
-import { jsonGZ, __dirname } from '../test/util.js';
-import { trustedSetup as s_fast } from '@paulmillr/trusted-setups/fast.js';
-import { trustedSetup } from '@paulmillr/trusted-setups';
+import { jsonGZ } from '../test/util.js';
 
 // Test cases
 const VIEM = Object.fromEntries(
@@ -96,8 +96,8 @@ export async function main() {
 }
 
 // ESM is broken.
-import url from 'node:url';
 import { deepStrictEqual } from 'node:assert';
+import url from 'node:url';
 if (import.meta.url === url.pathToFileURL(process.argv[1]).href) {
   main();
 }

@@ -12,15 +12,16 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "@chainsafe/ssz": "^0.17.1",
+    "@chainsafe/ssz": "0.17.1",
     "@ethereumjs/rlp": "5.0.0",
     "@ethereumjs/util": "9.1.0",
     "@hazae41/binary": "1.3.4",
     "@hazae41/cubane": "0.1.14",
-    "@lodestar/types": "^1.5.0",
+    "@lodestar/types": "1.5.0",
     "ethers": "6.11.0",
-    "kzg-wasm": "^0.5.0",
+    "kzg-wasm": "0.5.0",
     "verkle-cryptography-wasm": "0.4.8",
-    "viem": "2.7.8"
+    "viem": "2.7.8",
+    "c-kzg": "4.1.0"
   }
 }
