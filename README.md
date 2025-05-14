@@ -448,7 +448,8 @@ import * as ssz from 'micro-eth-signer/ssz.js';
 
 ### KZG, PeerDAS, Verkle
 
-Allows to create & verify KZG EIP-4844 proofs. Supports PeerDAS from EIP-7594.
+Allows to create & verify KZG EIP-4844 proofs.
+Supports PeerDAS from EIP-7594.
 
 ```ts
 import * as verkle from 'micro-eth-signer/verkle.js';
