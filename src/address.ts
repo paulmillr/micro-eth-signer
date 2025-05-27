@@ -1,7 +1,7 @@
 /*! micro-eth-signer - MIT License (c) 2021 Paul Miller (paulmillr.com) */
 import { secp256k1 } from '@noble/curves/secp256k1';
-import { keccak_256 } from '@noble/hashes/sha3';
-import { bytesToHex } from '@noble/hashes/utils';
+import { keccak_256 } from '@noble/hashes/sha3.js';
+import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 import { add0x, astr, ethHex, strip0x } from './utils.ts';
 
 export const addr = {
@@ -37,7 +37,7 @@ export const addr = {
    */
   addChecksum: (nonChecksummedAddress: string, allowEmpty = false): string => {
     const low = addr.parse(nonChecksummedAddress, allowEmpty).data.toLowerCase();
-    const hash = bytesToHex(keccak_256(low));
+    const hash = bytesToHex(keccak_256(utf8ToBytes(low)));
     let checksummed = '';
     for (let i = 0; i < low.length; i++) {
       const hi = Number.parseInt(hash[i], 16);

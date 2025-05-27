@@ -1,15 +1,15 @@
-import { deepStrictEqual, throws } from 'node:assert';
-import { describe, should } from 'micro-should';
-import { bytesToHex, hexToBytes, utf8ToBytes } from '@noble/hashes/utils';
+import { bytesToHex, hexToBytes, utf8ToBytes } from '@noble/hashes/utils.js';
 import * as P from 'micro-packed';
+import { describe, should } from 'micro-should';
+import { deepStrictEqual, throws } from 'node:assert';
 import * as abi from '../esm/abi/decoder.js';
-import { strip0x } from '../esm/utils.js';
 import { CONTRACTS, decodeData, decodeEvent, decodeTx, deployContract } from '../esm/abi/index.js';
+import { strip0x } from '../esm/utils.js';
 
 import { default as ERC20 } from '../esm/abi/erc20.js';
+import { default as KYBER_NETWORK_PROXY, KYBER_NETWORK_PROXY_CONTRACT } from '../esm/abi/kyber.js';
 import { default as UNISWAP_V2_ROUTER, UNISWAP_V2_ROUTER_CONTRACT } from '../esm/abi/uniswap-v2.js';
 import { default as UNISWAP_V3_ROUTER, UNISWAP_V3_ROUTER_CONTRACT } from '../esm/abi/uniswap-v3.js';
-import { default as KYBER_NETWORK_PROXY, KYBER_NETWORK_PROXY_CONTRACT } from '../esm/abi/kyber.js';
 
 const hex = { encode: bytesToHex, decode: hexToBytes };
 

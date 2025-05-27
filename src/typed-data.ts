@@ -1,5 +1,5 @@
-import { keccak_256 } from '@noble/hashes/sha3';
-import { concatBytes, hexToBytes, utf8ToBytes } from '@noble/hashes/utils';
+import { keccak_256 } from '@noble/hashes/sha3.js';
+import { concatBytes, hexToBytes, utf8ToBytes } from '@noble/hashes/utils.js';
 import type { GetType as AbiGetType } from './abi/decoder.ts';
 import { mapComponent } from './abi/decoder.ts';
 import { addr } from './address.ts';
@@ -184,7 +184,9 @@ function getTypes(types: EIP712Types) {
     const n = [name].concat(Array.from(curDeps).sort());
     fullNames[name] = n.map((i) => names[i]).join('');
   }
-  const hashes = Object.fromEntries(Object.entries(fullNames).map(([k, v]) => [k, keccak_256(v)]));
+  const hashes = Object.fromEntries(
+    Object.entries(fullNames).map(([k, v]) => [k, keccak_256(utf8ToBytes(v))])
+  );
   // fields
   const fields: Record<string, Set<string>> = {};
   for (const type in types) {
@@ -237,7 +239,7 @@ export function encoder<T extends EIP712Types>(types: T, domain: GetType<T, 'EIP
     }
     if (type === 'string' || type === 'bytes') {
       if (type === 'bytes' && typeof data === 'string') data = ethHex.decode(data);
-      return keccak_256(data); // hashed as is!
+      return keccak_256(typeof data === 'string' ? utf8ToBytes(data) : data); // hashed as is!
     }
     // Type conversion is neccessary here, because we can get data from JSON (no Uint8Arrays/bigints).
     if (type.startsWith('bytes') && typeof data === 'string') data = ethHex.decode(data);

@@ -1,5 +1,5 @@
-import { keccak_256 } from '@noble/hashes/sha3';
-import { concatBytes, hexToBytes } from '@noble/hashes/utils';
+import { keccak_256 } from '@noble/hashes/sha3.js';
+import { concatBytes, hexToBytes } from '@noble/hashes/utils.js';
 import { type ContractInfo, createContract } from '../abi/decoder.ts';
 import { default as UNISWAP_V2_ROUTER, UNISWAP_V2_ROUTER_CONTRACT } from '../abi/uniswap-v2.ts';
 import { type IWeb3Provider, ethHex } from '../utils.ts';

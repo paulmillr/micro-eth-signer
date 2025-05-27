@@ -1,8 +1,7 @@
-import { deepStrictEqual, throws } from 'node:assert';
-import { describe, should } from 'micro-should';
-import { hexToBytes, bytesToHex } from '@noble/hashes/utils';
 import { numberToBytesLE } from '@noble/curves/abstract/utils';
-import { randomBytes } from '@noble/hashes/utils';
+import { bytesToHex, hexToBytes, randomBytes } from '@noble/hashes/utils.js';
+import { describe, should } from 'micro-should';
+import { deepStrictEqual } from 'node:assert';
 import * as verkle from '../esm/verkle.js';
 
 import kaustinenBlock72 from './vectors/verkle/kaustinen6Block72.json' with { type: 'json' };

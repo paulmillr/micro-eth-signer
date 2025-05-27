@@ -1,5 +1,5 @@
-import { keccak_256 } from '@noble/hashes/sha3';
-import { hexToBytes, utf8ToBytes } from '@noble/hashes/utils';
+import { keccak_256 } from '@noble/hashes/sha3.js';
+import { hexToBytes, utf8ToBytes } from '@noble/hashes/utils.js';
 import { describe, should } from 'micro-should';
 import { deepStrictEqual, throws } from 'node:assert';
 import { addr } from '../esm/address.js';
@@ -41,7 +41,7 @@ const typedData = {
 describe('typedData (EIP-712)', () => {
   // Stolen from EIP itself
   should('Basic', () => {
-    const privateKey = keccak_256('cow');
+    const privateKey = keccak_256(utf8ToBytes('cow'));
     const address = addr.fromPrivateKey(privateKey);
     deepStrictEqual(address, '0xCD2a3d9F938E13CD947Ec05AbC7FE734Df8DD826');
     deepStrictEqual(

@@ -1,5 +1,5 @@
-import { keccak_256 } from '@noble/hashes/sha3';
-import { concatBytes } from '@noble/hashes/utils';
+import { keccak_256 } from '@noble/hashes/sha3.js';
+import { concatBytes, utf8ToBytes } from '@noble/hashes/utils.js';
 import { createContract } from '../abi/decoder.ts';
 import { type IWeb3Provider, strip0x } from '../utils.ts';
 
@@ -8,7 +8,7 @@ export function namehash(address: string): Uint8Array {
   let res = new Uint8Array(32);
   if (!address) return res;
   for (let label of address.split('.').reverse())
-    res = keccak_256(concatBytes(res, keccak_256(label)));
+    res = keccak_256(concatBytes(res, keccak_256(utf8ToBytes(label))));
   return res;
 }
 

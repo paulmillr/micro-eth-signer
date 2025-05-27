@@ -1,5 +1,5 @@
-import { keccak_256 } from '@noble/hashes/sha3';
-import { bytesToHex, concatBytes, hexToBytes } from '@noble/hashes/utils';
+import { keccak_256 } from '@noble/hashes/sha3.js';
+import { bytesToHex, concatBytes, hexToBytes, utf8ToBytes } from '@noble/hashes/utils.js';
 import * as P from 'micro-packed';
 import {
   type IWeb3Provider,
@@ -320,7 +320,7 @@ function fnSignature(o: FnArg): string {
 }
 // Function signature hash
 export function evSigHash(o: FnArg): string {
-  return bytesToHex(keccak_256(fnSignature(o)));
+  return bytesToHex(keccak_256(utf8ToBytes(fnSignature(o))));
 }
 export function fnSigHash(o: FnArg): string {
   return evSigHash(o).slice(0, 8);
@@ -491,7 +491,8 @@ export function events<T extends ArrLike<FnArg>>(abi: T): ContractEventType<Writ
           }
           let topic: string;
           if (packer) topic = bytesToHex(packer.encode(value));
-          else if (['string', 'bytes'].includes(input.type)) topic = bytesToHex(keccak_256(value));
+          else if (['string', 'bytes'].includes(input.type))
+            topic = bytesToHex(keccak_256(typeof value === 'string' ? utf8ToBytes(value) : value));
           else {
             let m: any, parts: Uint8Array[];
             if ((m = ARRAY_RE.exec(input.type)))

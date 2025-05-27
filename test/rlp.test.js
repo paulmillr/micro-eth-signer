@@ -1,14 +1,14 @@
-import { deepStrictEqual, throws } from 'node:assert';
+import { hexToBytes } from '@noble/hashes/utils.js';
 import { describe, should } from 'micro-should';
-import { hexToBytes } from '@noble/hashes/utils';
+import { deepStrictEqual, throws } from 'node:assert';
 import { RLP } from '../esm/rlp.js';
 import { ethHex, ethHexNoLeadingZero } from '../esm/utils.js';
-import { ENCODE_TESTS, DECODE_TESTS, INVALID } from './vectors/monorepo/rlp.js';
 import { getEthersVectors, getViemVectors } from './util.js';
-import { default as RLP_TEST } from './vectors/ethereum-tests/RLPTests/rlptest.json' with { type: 'json' };
 import { default as INVALID_RLP } from './vectors/ethereum-tests/RLPTests/invalidRLPTest.json' with { type: 'json' };
 import { default as RANDOM_RLP } from './vectors/ethereum-tests/RLPTests/RandomRLPTests/example.json' with { type: 'json' };
+import { default as RLP_TEST } from './vectors/ethereum-tests/RLPTests/rlptest.json' with { type: 'json' };
 import { default as EIP2930 } from './vectors/monorepo/eip2930blockRLP.json' with { type: 'json' };
+import { DECODE_TESTS, ENCODE_TESTS, INVALID } from './vectors/monorepo/rlp.js';
 
 describe('RLP', () => {
   describe('@ethereumjs/rlp', () => {

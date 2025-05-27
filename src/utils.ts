@@ -1,5 +1,5 @@
 import { secp256k1 } from '@noble/curves/secp256k1';
-import { hexToBytes as _hexToBytes, isBytes as _isBytes, bytesToHex } from '@noble/hashes/utils';
+import { hexToBytes as _hexToBytes, isBytes as _isBytes, bytesToHex } from '@noble/hashes/utils.js';
 import { type Coder, coders } from 'micro-packed';
 
 export const isBytes: typeof _isBytes = _isBytes;

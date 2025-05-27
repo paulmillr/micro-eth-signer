@@ -3,8 +3,14 @@ import { type ExtPointType, twistedEdwards } from '@noble/curves/abstract/edward
 import { poly, rootsOfUnity } from '@noble/curves/abstract/fft';
 import { Field, FpLegendre } from '@noble/curves/abstract/modular';
 import { bytesToNumberBE, bytesToNumberLE, numberToBytesBE } from '@noble/curves/abstract/utils';
-import { sha256 } from '@noble/hashes/sha2';
-import { bytesToHex, concatBytes, hexToBytes, randomBytes, utf8ToBytes } from '@noble/hashes/utils';
+import { sha256 } from '@noble/hashes/sha2.js';
+import {
+  bytesToHex,
+  concatBytes,
+  hexToBytes,
+  randomBytes,
+  utf8ToBytes,
+} from '@noble/hashes/utils.js';
 import * as P from 'micro-packed';
 import { ethHex } from './utils.ts';
 
@@ -36,6 +42,7 @@ const bandersnatch = twistedEdwards({
   h: BigInt(4),
   Gx: BigInt('18886178867200960497001835917649091219057080094937609519140440539760939937304'),
   Gy: BigInt('19188667384257783945677642223292697773471335439753913231509108946878080696678'),
+  // @ts-ignore
   hash: sha256,
   randomBytes,
 });
@@ -107,7 +114,7 @@ type MultiProof = P.UnwrapCoder<typeof multipointProof>;
 
 function generateCRSPoints(seed: string, points: number) {
   const res = [];
-  const h = sha256.create().update(seed);
+  const h = sha256.create().update(utf8ToBytes(seed));
   for (let i = 0; res.length < points; i++) {
     const hash = h.clone().update(numberToBytesBE(i, 8)).digest();
     const x = Fp.create(bytesToNumberBE(hash));

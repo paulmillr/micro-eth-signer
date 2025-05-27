@@ -1,6 +1,6 @@
 /*! micro-eth-signer - MIT License (c) 2021 Paul Miller (paulmillr.com) */
-import { keccak_256 } from '@noble/hashes/sha3';
-import { bytesToHex, concatBytes, hexToBytes } from '@noble/hashes/utils';
+import { keccak_256 } from '@noble/hashes/sha3.js';
+import { bytesToHex, concatBytes, hexToBytes } from '@noble/hashes/utils.js';
 import type { UnwrapCoder } from 'micro-packed';
 import { addr } from './address.ts';
 // prettier-ignore

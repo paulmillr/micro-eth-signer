@@ -1,10 +1,10 @@
+import { bytesToHex, hexToBytes } from '@noble/hashes/utils.js';
+import { describe, should } from 'micro-should';
 import { deepStrictEqual, throws } from 'node:assert';
 import { readdirSync, readFileSync } from 'node:fs';
-import { describe, should } from 'micro-should';
-import { hexToBytes, bytesToHex } from '@noble/hashes/utils';
-import * as SSZ from '../esm/ssz.js';
 import * as snappy from 'snappyjs';
 import * as yaml from 'yaml';
+import * as SSZ from '../esm/ssz.js';
 import { __dirname } from './util.js';
 
 // https://github.com/ethereum/consensus-spec-tests

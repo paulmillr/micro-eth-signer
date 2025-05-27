@@ -5,8 +5,8 @@ import {
 } from '@noble/curves/abstract/fft';
 import { bytesToNumberBE, numberToBytesBE } from '@noble/curves/abstract/utils';
 import { bls12_381 as bls } from '@noble/curves/bls12-381';
-import { sha256 } from '@noble/hashes/sha2';
-import { bytesToHex, concatBytes, hexToBytes, utf8ToBytes } from '@noble/hashes/utils';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { bytesToHex, concatBytes, hexToBytes, utf8ToBytes } from '@noble/hashes/utils.js';
 import { add0x, hexToNumber, strip0x } from './utils.ts';
 /*
 KZG for [EIP-4844](https://eips.ethereum.org/EIPS/eip-4844).
