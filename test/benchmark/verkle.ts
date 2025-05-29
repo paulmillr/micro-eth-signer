@@ -1,7 +1,7 @@
-import { compare, utils as butils } from 'micro-bmark';
-import { hexToBytes } from '@noble/hashes/utils';
-import * as noble from '../esm/verkle.js';
+import { hexToBytes } from '@noble/hashes/utils.js';
+import { utils as butils, compare } from 'micro-bmark';
 import { loadVerkleCrypto } from 'verkle-cryptography-wasm';
+import * as noble from '../../src/verkle.ts';
 
 import VERKLE_MONOREPO_RAW from '../test/vectors/verkle/monorepo-dump.json' with { type: 'json' };
 const VERKLE_MONOREPO = JSON.parse(JSON.stringify(VERKLE_MONOREPO_RAW), (key, value) => {

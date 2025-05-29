@@ -4,8 +4,8 @@ import { describe, should } from 'micro-should';
 import { deepStrictEqual, throws } from 'node:assert';
 import { readdirSync, readFileSync } from 'node:fs';
 import * as yaml from 'yaml';
-import { KZG } from '../esm/kzg.js';
-import { __dirname } from './util.js';
+import { KZG } from '../src/kzg.ts';
+import { __dirname } from './util.ts';
 
 const yamlOpt = {};
 

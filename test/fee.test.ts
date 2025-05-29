@@ -1,7 +1,7 @@
-import { deepStrictEqual } from 'node:assert';
 import { describe, should } from 'micro-should';
-import { Transaction } from '../esm/index.js';
-import { weieth, weigwei } from '../esm/utils.js';
+import { deepStrictEqual } from 'node:assert';
+import { Transaction } from '../src/index.ts';
+import { weieth, weigwei } from '../src/utils.ts';
 
 // NOTE: other libraries doesn't support fee estimation, so there is no crosstests for now :(
 // But we need some tests to avoid accidental breakage.

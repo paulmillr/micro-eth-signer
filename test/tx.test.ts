@@ -2,9 +2,9 @@ import { bytesToHex } from '@noble/hashes/utils.js';
 import { describe, should } from 'micro-should';
 import { deepStrictEqual, throws } from 'node:assert';
 import { inspect } from 'node:util';
-import * as abi from '../esm/abi/decoder.js';
-import { Transaction, addr, authorization } from '../esm/index.js';
-import { RawTx, RlpTx, __tests } from '../esm/tx.js';
+import * as abi from '../src/abi/decoder.ts';
+import { Transaction, addr, authorization } from '../src/index.ts';
+import { RawTx, RlpTx, __tests } from '../src/tx.ts';
 import {
   add0x,
   amounts,
@@ -13,8 +13,8 @@ import {
   formatters,
   weieth,
   weigwei,
-} from '../esm/utils.js';
-import { getEthersVectors, getViemVectors } from './util.js';
+} from '../src/utils.ts';
+import { getEthersVectors, getViemVectors } from './util.ts';
 import { default as EIP155_VECTORS } from './vectors/eips/eip155.json' with { type: 'json' };
 import * as ethTests from './vectors/eth-tests-tx-vectors.js';
 import { default as TX_VECTORS } from './vectors/transactions.json' with { type: 'json' };

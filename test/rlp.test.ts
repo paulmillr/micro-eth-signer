@@ -1,9 +1,9 @@
 import { hexToBytes } from '@noble/hashes/utils.js';
 import { describe, should } from 'micro-should';
 import { deepStrictEqual, throws } from 'node:assert';
-import { RLP } from '../esm/rlp.js';
-import { ethHex, ethHexNoLeadingZero } from '../esm/utils.js';
-import { getEthersVectors, getViemVectors } from './util.js';
+import { RLP } from '../src/rlp.ts';
+import { ethHex, ethHexNoLeadingZero } from '../src/utils.ts';
+import { getEthersVectors, getViemVectors } from './util.ts';
 import { default as INVALID_RLP } from './vectors/ethereum-tests/RLPTests/invalidRLPTest.json' with { type: 'json' };
 import { default as RANDOM_RLP } from './vectors/ethereum-tests/RLPTests/RandomRLPTests/example.json' with { type: 'json' };
 import { default as RLP_TEST } from './vectors/ethereum-tests/RLPTests/rlptest.json' with { type: 'json' };

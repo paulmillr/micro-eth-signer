@@ -1,9 +1,10 @@
 import * as mftch from 'micro-ftch';
 import { describe, should } from 'micro-should';
 import { deepStrictEqual, rejects } from 'node:assert';
-import { tokenFromSymbol } from '../esm/abi/index.js';
-import { calcTransfersDiff, Chainlink, ENS, UniswapV3, Web3Provider } from '../esm/net/index.js';
-import { numberTo0xHex, weieth } from '../esm/utils.js';
+import { tokenFromSymbol } from '../src/abi/index.ts';
+import { calcTransfersDiff, Chainlink, ENS, UniswapV3, Web3Provider } from '../src/net/index.ts';
+import { numberTo0xHex, weieth } from '../src/utils.ts';
+
 // These real network responses from real nodes, captured by replayable
 import { default as NET_CHAINLINK_REPLAY } from './vectors/rpc/chainlink.js';
 import { default as NET_ENS_REPLAY } from './vectors/rpc/ens.js';

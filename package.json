@@ -8,27 +8,28 @@
     "*.js.map",
     "*.d.ts.map",
     "abi",
-    "esm",
     "net",
     "src"
   ],
+  "type": "module",
   "main": "index.js",
   "module": "esm/index.js",
   "types": "esm/index.d.ts",
   "dependencies": {
     "@noble/curves": "~1.9.1",
-    "@noble/hashes": "~1.8.0",
+    "@noble/hashes": "2.0.0-beta.1",
     "micro-packed": "~0.7.3"
   },
   "devDependencies": {
-    "@paulmillr/jsbt": "0.4.0",
+    "@paulmillr/jsbt": "0.4.1",
     "@paulmillr/trusted-setups": "~0.2.0",
-    "micro-bmark": "0.3.1",
+    "@types/node": "22.15.23",
+    "micro-bmark": "0.4.1",
     "micro-ftch": "0.4.3",
     "micro-should": "0.5.3",
     "prettier": "3.5.2",
     "snappyjs": "0.7.0",
-    "typescript": "5.8.2",
+    "typescript": "5.8.3",
     "yaml": "2.4.1"
   },
   "author": "Paul Miller (https://paulmillr.com)",
@@ -37,52 +38,6 @@
     "url": "git+https://github.com/paulmillr/micro-eth-signer.git"
   },
   "license": "MIT",
-  "exports": {
-    ".": {
-      "import": "./esm/index.js",
-      "require": "./index.js"
-    },
-    "./abi.js": {
-      "import": "./esm/abi/index.js",
-      "require": "./abi/index.js"
-    },
-    "./address.js": {
-      "import": "./esm/address.js",
-      "require": "./address.js"
-    },
-    "./kzg.js": {
-      "import": "./esm/kzg.js",
-      "require": "./kzg.js"
-    },
-    "./net.js": {
-      "import": "./esm/net/index.js",
-      "require": "./net/index.js"
-    },
-    "./rlp.js": {
-      "import": "./esm/rlp.js",
-      "require": "./rlp.js"
-    },
-    "./ssz.js": {
-      "import": "./esm/ssz.js",
-      "require": "./ssz.js"
-    },
-    "./tx.js": {
-      "import": "./esm/tx.js",
-      "require": "./tx.js"
-    },
-    "./typed-data.js": {
-      "import": "./esm/typed-data.js",
-      "require": "./typed-data.js"
-    },
-    "./verkle.js": {
-      "import": "./esm/verkle.js",
-      "require": "./verkle.js"
-    },
-    "./utils.js": {
-      "import": "./esm/utils.js",
-      "require": "./utils.js"
-    }
-  },
   "sideEffects": false,
   "keywords": [
     "ethereum",
@@ -100,13 +55,14 @@
     "signer"
   ],
   "scripts": {
-    "build": "tsc && tsc -p tsconfig.cjs.json",
+    "build": "npm run build:clean; tsc",
+    "build:clean": "rm -f *.{js,d.ts,js.map,d.ts.map}; rm -rf {abi,net}",
     "build:release": "npx jsbt esbuild test/build",
-    "bench": "cd benchmark; npm install; node tx.js; node rlp.js; node ssz.js; node kzg.js; node peerdas.js",
+    "bench": "cd test/benchmark; npm install; node tx.js; node rlp.js; node ssz.js; node kzg.js; node peerdas.js",
     "lint": "prettier --check src",
     "format": "prettier --write src",
-    "test": "node test/index.js",
-    "test:bun": "bun test/index.js",
-    "test:deno": "deno --allow-env --allow-read test/index.js"
+    "test": "node --experimental-strip-types --no-warnings test/index.ts",
+    "test:bun": "bun test/index.ts",
+    "test:deno": "deno --allow-env --allow-read test/index.ts"
   }
 }

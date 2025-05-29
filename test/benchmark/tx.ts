@@ -1,11 +1,11 @@
-import { bytesToHex } from '@noble/hashes/utils';
+import { bytesToHex } from '@noble/hashes/utils.js';
 import * as ethers from 'ethers';
-import { utils as butils, compare } from 'micro-bmark';
+import { utils as butils } from 'micro-bmark';
 import * as viem from 'viem';
 import { parseGwei } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
-import * as micro from '../esm/index.js';
-import { amounts } from '../esm/utils.js';
+import * as micro from '../../src/index.ts';
+import { amounts } from '../../src/utils.ts';
 
 const PRIV = '0x0d3f15106182dd987498bec735ff2c229a0fe62529d30e2959227d4158112280';
 const VIEM_PRIV = privateKeyToAccount(PRIV);
@@ -98,7 +98,7 @@ export async function main() {
   for (const fnName in LIBS) {
     const fns = Object.entries(LIBS[fnName]).filter(([k, _]) => k !== 'samples');
     const { samples } = LIBS[fnName];
-    await compare(`${fnName}`, samples, Object.fromEntries(fns));
+    // await compare(`${fnName}`, samples, Object.fromEntries(fns));
   }
 
   butils.logMem();

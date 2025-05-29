@@ -4,8 +4,8 @@ import { deepStrictEqual, throws } from 'node:assert';
 import { readdirSync, readFileSync } from 'node:fs';
 import * as snappy from 'snappyjs';
 import * as yaml from 'yaml';
-import * as SSZ from '../esm/ssz.js';
-import { __dirname } from './util.js';
+import * as SSZ from '../src/ssz.ts';
+import { __dirname } from './util.ts';
 
 // https://github.com/ethereum/consensus-spec-tests
 const PATH = './test/vectors/consensus-spec-tests/tests/general/phase0/ssz_generic/';

@@ -1,12 +1,12 @@
-import { compare, utils as butils } from 'micro-bmark';
-import { deepStrictEqual } from 'node:assert';
-import * as snappy from 'snappyjs';
-import { readFileSync } from 'node:fs';
-import { hexToBytes } from '@noble/hashes/utils';
-import * as micro from '../esm/ssz.js';
 import * as chainsafe from '@chainsafe/ssz';
+import { hexToBytes } from '@noble/hashes/utils';
+import { utils as butils, compare } from 'micro-bmark';
+import { deepStrictEqual } from 'node:assert';
+import { readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import * as snappy from 'snappyjs';
+import * as micro from '../../src/ssz.ts';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 

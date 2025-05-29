@@ -2,9 +2,9 @@ import { keccak_256 } from '@noble/hashes/sha3.js';
 import { hexToBytes, utf8ToBytes } from '@noble/hashes/utils.js';
 import { describe, should } from 'micro-should';
 import { deepStrictEqual, throws } from 'node:assert';
-import { addr } from '../esm/address.js';
-import * as typed from '../esm/typed-data.js';
-import { jsonGZ } from './util.js';
+import { addr } from '../src/address.ts';
+import * as typed from '../src/typed-data.ts';
+import { jsonGZ } from './util.ts';
 
 const typedData = {
   types: {

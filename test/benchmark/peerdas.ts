@@ -3,8 +3,8 @@ import { utils as butils, mark } from 'micro-bmark';
 import { hexToBytes } from '@noble/curves/abstract/utils';
 import { trustedSetup as s_fast } from '@paulmillr/trusted-setups/fast-peerdas.js';
 import ckzg from 'c-kzg';
-import * as kzg from '../esm/kzg.js';
-import { VECTORS } from '../test/peerdas.test.js';
+import * as kzg from '../../src/kzg.ts';
+import { VECTORS } from '../peerdas.test.js';
 
 function strip0x(hex) {
   return hex.replace(/^0[xX]/, '');

@@ -1,8 +1,8 @@
-import { compare, utils as butils } from 'micro-bmark';
 import { RLP } from '@ethereumjs/rlp';
-import { RLP as microrlp } from '../esm/rlp.js';
-import { Rlp as cubane } from '@hazae41/cubane';
 import { Writable } from '@hazae41/binary';
+import { Rlp as cubane } from '@hazae41/cubane';
+import { utils as butils, compare } from 'micro-bmark';
+import { RLP as microrlp } from '../../src/rlp.ts';
 
 const { RlpList, RlpString } = cubane;
 
@@ -72,8 +72,8 @@ export async function main() {
 }
 
 // ESM is broken.
-import url from 'node:url';
 import { deepStrictEqual } from 'node:assert';
+import url from 'node:url';
 if (import.meta.url === url.pathToFileURL(process.argv[1]).href) {
   main();
 }

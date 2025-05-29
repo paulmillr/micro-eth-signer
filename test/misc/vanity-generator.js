@@ -1,5 +1,5 @@
-import { addr } from '../esm/index.js';
-import { add0x } from '../esm/utils.js';
+import { addr } from '../src/index.ts';
+import { add0x } from '../src/utils.ts';
 function search(letters) {
   // speed-up: `import { secp256k1 } from '@noble/curves/secp256k1'; secp256k1.utils.precompute(16)`
   const prefix = add0x(letters);
