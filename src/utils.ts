@@ -54,7 +54,7 @@ export const amounts: {
   maxGasPrice: BigInt(10_000) * GWEI, // 10K gwei. Arbitrage HFT bots can use more
   maxNonce: BigInt(131_072), // 2**17, but in spec it's actually 2**64-1
   maxDataSize: 1_000_000, // Size of .data field. TODO: research
-  maxInitDataSize: 49_152, // EIP-3860
+  maxInitDataSize: 524_288, // EIP-7907
   maxChainId: BigInt(2 ** 32 - 1),
   maxUint64: BigInt(2) ** BigInt(64) - BigInt(1),
   maxUint256: BigInt(2) ** BigInt(256) - BigInt(1),

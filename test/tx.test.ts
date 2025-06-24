@@ -98,6 +98,7 @@ const SKIPPED_ERRORS = {
     'GasLimitPriceProductOverflowtMinusOne',
     'DataTestEnoughGasInitCode',
     'DataTestInitCodeLimit',
+    'DataTestInitCodeTooBig',
     // We are stricter
     'TransactionWithHighGasLimit63',
     'TransactionWithHighGasLimit64Minus1',
@@ -661,7 +662,7 @@ describe('Transactions', () => {
         // console.log('TTTT', cat, k, v.result, hasError);
         // TR_IntrinsicGas
         if (hasError === 'TR_IntrinsicGas') continue;
-        // console.log('ddd', cat, k, hasError);
+        console.log('ddd', cat, k, hasError);
         // if (k === 'TransactionWithRvaluePrefixed00BigInt') {
         //   console.log('TTT', v.txbytes, RlpTx.decode(ethHex().decode(v.txbytes)));
         //   console.log('AAA', Transaction.fromHex(v.txbytes, false));
