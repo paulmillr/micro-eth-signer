@@ -488,10 +488,10 @@ const validators: Record<string, (num: any, { strict, type, data }: ValidationOp
     if (typeof val !== 'string') throw new Error('data must be string');
     if (strict) {
       if (val.length > amounts.maxDataSize) throw new Error('data is too big: ' + val.length);
+      // NOTE: data is hex here
+      if (data.to === '0x' && val.length > 2 * amounts.maxInitDataSize)
+        throw new Error(`initcode is too big: ${val.length}`);
     }
-    // NOTE: data is hex here
-    if (data.to === '0x' && val.length > 2 * amounts.maxInitDataSize)
-      throw new Error(`initcode is too big: ${val.length}`);
   },
   chainId(num: bigint, { strict, type }: ValidationOpts) {
     // chainId is optional for legacy transactions
