@@ -13,8 +13,8 @@
   ],
   "type": "module",
   "main": "index.js",
-  "module": "esm/index.js",
-  "types": "esm/index.d.ts",
+  "module": "index.js",
+  "types": "index.d.ts",
   "dependencies": {
     "@noble/curves": "~1.9.1",
     "@noble/hashes": "2.0.0-beta.1",
@@ -31,6 +31,9 @@
     "snappyjs": "0.7.0",
     "typescript": "5.8.3",
     "yaml": "2.4.1"
+  },
+  "engines": {
+    "node": ">= 20.19.0"
   },
   "author": "Paul Miller (https://paulmillr.com)",
   "repository": {
