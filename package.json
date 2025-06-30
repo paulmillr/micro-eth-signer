@@ -11,10 +11,6 @@
     "net",
     "src"
   ],
-  "type": "module",
-  "main": "index.js",
-  "module": "index.js",
-  "types": "index.d.ts",
   "dependencies": {
     "@noble/curves": "~1.9.2",
     "@noble/hashes": "2.0.0-beta.1",
@@ -40,6 +36,10 @@
     "type": "git",
     "url": "git+https://github.com/paulmillr/micro-eth-signer.git"
   },
+  "type": "module",
+  "main": "index.js",
+  "module": "index.js",
+  "types": "index.d.ts",
   "license": "MIT",
   "sideEffects": false,
   "keywords": [
