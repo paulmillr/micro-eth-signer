@@ -40,7 +40,7 @@ If you don't like NPM, a standalone [eth-signer.js](https://github.com/paulmillr
   - [RLP & SSZ](#rlp--ssz)
   - [KZG, PeerDAS, Verkle](#kzg-peerdas-verkle)
 - [Security](#security)
-- [Performance](#performance)
+- [Speed](#speed)
 - [License](#license)
 
 ## Core
@@ -553,14 +553,14 @@ In the end, the balance would become 0.
 > Using the method would decrease privacy of a transfer, because
 > payments for services have specific amounts, and not _the whole amount_.
 
-## Performance
+## Speed
 
-Transaction signature matches `noble-curves` `sign()` speed,
-which means over 4000 times per second on an M2 mac.
+> `npm run bench`
+
+Transaction signature uses `noble-curves` `sign()`, which means
+7000+ signatures per second on an Apple M4. Benchmarks are located in test/benchmark dir.
 
 The first call of `sign` will take 20ms+ due to noble-curves secp256k1 `utils.precompute`.
-
-To run benchmarks, execute `npm run bench`.
 
 ## Contributing
 
