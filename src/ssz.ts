@@ -518,7 +518,7 @@ export const bytelist = (maxLen: number): ByteListType => {
     _isStableCompat(other) {
       return isStableCompat(this, other);
     },
-    default: new Uint8Array([]),
+    default: Uint8Array.of(),
     composite: true,
     chunkCount: Math.ceil(maxLen / 32),
     chunks(value) {

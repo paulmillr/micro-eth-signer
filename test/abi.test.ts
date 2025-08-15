@@ -1616,7 +1616,7 @@ should('ZST', () => {
   // Basic ZST works, they cannot cause DoS outside of array. You will need very big ABI definition to cause issues.
   deepStrictEqual(
     abi.mapComponent({ type: 'tuple', components: [] }).encode([]),
-    new Uint8Array([])
+    Uint8Array.of()
   );
   deepStrictEqual(
     abi.mapComponent({ type: 'uint32[]' }).encode([]),
