@@ -28,20 +28,20 @@
     "typescript": "5.9.2",
     "yaml": "2.4.1"
   },
+  "scripts": {
+    "build": "npm run build:clean; tsc",
+    "build:clean": "rm -f *.{js,d.ts,js.map,d.ts.map}; rm -rf {abi,net}",
+    "build:release": "npx --no @paulmillr/jsbt esbuild test/build",
+    "bench": "cd test/benchmark; npm install; node tx.ts",
+    "lint": "prettier --check src",
+    "format": "prettier --write src",
+    "test": "node --experimental-strip-types --no-warnings test/index.ts",
+    "test:bun": "bun test/index.ts",
+    "test:deno": "deno --allow-env --allow-read test/index.ts"
+  },
   "engines": {
     "node": ">= 20.19.0"
   },
-  "author": "Paul Miller (https://paulmillr.com)",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/paulmillr/micro-eth-signer.git"
-  },
-  "type": "module",
-  "main": "index.js",
-  "module": "index.js",
-  "types": "index.d.ts",
-  "license": "MIT",
-  "sideEffects": false,
   "keywords": [
     "ethereum",
     "eth",
@@ -57,15 +57,15 @@
     "nano",
     "signer"
   ],
-  "scripts": {
-    "build": "npm run build:clean; tsc",
-    "build:clean": "rm -f *.{js,d.ts,js.map,d.ts.map}; rm -rf {abi,net}",
-    "build:release": "npx --no @paulmillr/jsbt esbuild test/build",
-    "bench": "cd test/benchmark; npm install; node tx.ts",
-    "lint": "prettier --check src",
-    "format": "prettier --write src",
-    "test": "node --experimental-strip-types --no-warnings test/index.ts",
-    "test:bun": "bun test/index.ts",
-    "test:deno": "deno --allow-env --allow-read test/index.ts"
-  }
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/paulmillr/micro-eth-signer.git"
+  },
+  "type": "module",
+  "main": "index.js",
+  "module": "index.js",
+  "types": "index.d.ts",
+  "sideEffects": false,
+  "author": "Paul Miller (https://paulmillr.com)",
+  "license": "MIT"
 }
