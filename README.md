@@ -8,7 +8,7 @@ Minimal library for Ethereum transactions, addresses and smart contracts.
 - ✍️ Core: transactions, addresses, messages
 - 🌍 Network-related: execute Uniswap & Chainlink, fetch tx history
 - 🦺 Advanced: type-safe ABI parsing, RLP, SSZ, KZG, PeerDAS, Verkle
-- 🪶 28KB gzipped (1300 lines) for core, just 3 deps
+- 🪶 28KB (gzipped) for core, together with 3 deps
 
 _Check out all web3 utility libraries:_ [ETH](https://github.com/paulmillr/micro-eth-signer), [BTC](https://github.com/paulmillr/scure-btc-signer), [SOL](https://github.com/paulmillr/micro-sol-signer)
 

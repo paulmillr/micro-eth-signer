@@ -961,14 +961,14 @@ describe('SSZ', () => {
   should('Bitlist', () => {
     const bl256 = SSZ.bitlist(256);
     // encode
-    deepStrictEqual(bl256.encode([]), new Uint8Array([1]));
+    deepStrictEqual(bl256.encode([]), Uint8Array.of(1));
     deepStrictEqual(bl256.encode([false, true]), new Uint8Array([6]));
     deepStrictEqual(
       bl256.encode([false, false, false, true, true, false, false, false]),
       new Uint8Array([24, 1])
     );
     // decode
-    deepStrictEqual(bl256.decode(new Uint8Array([1])), []);
+    deepStrictEqual(bl256.decode(Uint8Array.of(1)), []);
     deepStrictEqual(bl256.decode(new Uint8Array([24, 1])), [
       false,
       false,

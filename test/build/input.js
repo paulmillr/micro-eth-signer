@@ -6,4 +6,3 @@ export * as typedData from 'micro-eth-signer/typed-data.js';
 export const utils = {
   amounts, ethHex, ethHexNoLeadingZero, weieth, weigwei,
 };
-

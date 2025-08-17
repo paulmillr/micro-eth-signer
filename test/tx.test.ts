@@ -12,7 +12,7 @@ import {
   ethHex,
   formatters,
   weieth,
-  weigwei,
+  weigwei
 } from '../src/utils.ts';
 import { getEthersVectors, getViemVectors } from './util.ts';
 import { default as EIP155_VECTORS } from './vectors/eips/eip155.json' with { type: 'json' };
@@ -919,7 +919,7 @@ describe('Transactions', () => {
     newTx.raw.chainId = fullTx.raw.chainId;
     newTx.isSigned = true;
     // Same as real tx
-    deepStrictEqual(RawTx.decode(newTx.toRawBytes()), RawTx.decode(ethHex.decode(txHex)));
+    deepStrictEqual(RawTx.decode(newTx.toBytes()), RawTx.decode(ethHex.decode(txHex)));
     deepStrictEqual(newTx.toHex(), txHex);
   });
   should('parse weird TXs without to or data', () => {

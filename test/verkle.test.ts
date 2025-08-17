@@ -1,4 +1,4 @@
-import { numberToBytesLE } from '@noble/curves/abstract/utils.js';
+import { numberToBytesLE } from '@noble/curves/utils.js';
 import { bytesToHex, hexToBytes, randomBytes } from '@noble/hashes/utils.js';
 import { describe, should } from 'micro-should';
 import { deepStrictEqual } from 'node:assert';
@@ -60,7 +60,7 @@ describe('Verkle', () => {
     });
     should('test4', () => {
       const t = new Transcript('simple_protocol');
-      t.appendPoint('generator', bandersnatch.ExtendedPoint.BASE);
+      t.appendPoint('generator', bandersnatch.BASE);
       const challenge = t.challengeScalar('simple_challenge');
       deepStrictEqual(
         bytesToHex(numberToBytesLE(challenge, 32)),
@@ -2701,7 +2701,7 @@ describe('Verkle', () => {
           // console.log('monorepo', i);
           deepStrictEqual(verkle[k](...t.arguments), t.result);
         }
-      })
+      });
     }
   });
 });
