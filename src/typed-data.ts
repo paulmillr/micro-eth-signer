@@ -1,3 +1,4 @@
+import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { keccak_256 } from '@noble/hashes/sha3.js';
 import { concatBytes, hexToBytes, utf8ToBytes } from '@noble/hashes/utils.js';
 import type { GetType as AbiGetType } from './abi/decoder.ts';
@@ -32,7 +33,7 @@ function getSigner<T>(version: number, msgFn: (message: T) => Uint8Array): Typed
       if (typeof privateKey === 'string') privateKey = ethHex.decode(privateKey);
       const sig = sign(hash, privateKey, extraEntropy);
       const end = sig.recovery === 0 ? '1b' : '1c';
-      return add0x(sig.toCompactHex() + end);
+      return add0x(sig.toHex('compact') + end);
     },
     recoverPublicKey(signature: string, message: T) {
       astr(signature);
@@ -43,9 +44,12 @@ function getSigner<T>(version: number, msgFn: (message: T) => Uint8Array): Typed
       const end = signature.slice(-2);
       if (!['1b', '1c'].includes(end)) throw new Error('invalid recovery bit');
       const sig = initSig(hexToBytes(sigh), end === '1b' ? 0 : 1);
-      const pub = sig.recoverPublicKey(hash).toRawBytes(false);
-      if (!verify(sig, hash, pub)) throw new Error('invalid signature');
-      return addr.fromPublicKey(pub);
+      const publicKey = secp256k1.recoverPublicKey(sig.toBytes('recovered'), hash, {
+        prehash: false,
+      });
+      // const pub = sig.recoverPublicKey(hash).toBytes(false);
+      if (!verify(sig.toBytes('compact'), hash, publicKey)) throw new Error('invalid signature');
+      return addr.fromPublicKey(publicKey);
     },
     verify(signature: string, message: T, address: string): boolean {
       const recAddr = this.recoverPublicKey(signature, message);

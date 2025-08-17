@@ -1,6 +1,6 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import * as P from 'micro-packed';
-import { isBytes, isObject } from './utils.ts';
+import { isBytes, isObject, type Bytes } from './utils.ts';
 /*
 
 Simple serialize (SSZ) is the serialization method used on the Beacon Chain.
@@ -42,13 +42,13 @@ export type SSZCoder<T> = P.CoderType<T> & {
   composite: boolean;
   chunkCount: number;
   // It is possible to create prover based on this, but we don't have one yet
-  chunks: (value: T) => Uint8Array[];
-  merkleRoot: (value: T) => Uint8Array;
+  chunks: (value: T) => Bytes[];
+  merkleRoot: (value: T) => Bytes;
   _isStableCompat: (other: SSZCoder<any>) => boolean;
 };
 
 // Utils for hashing
-function chunks(data: Uint8Array): Uint8Array[] {
+function chunks(data: Bytes): Bytes[] {
   const res = [];
   for (let i = 0; i < Math.ceil(data.length / BYTES_PER_CHUNK); i++) {
     const chunk = data.subarray(i * BYTES_PER_CHUNK, (i + 1) * BYTES_PER_CHUNK);
@@ -68,7 +68,7 @@ const mixInLength = (root: Uint8Array, length: number) =>
 
 // Will OOM without this, because tree padded to next power of two.
 const zeroHashes = /* @__PURE__ */ (() => {
-  const res = [EMPTY_CHUNK];
+  const res: Bytes[] = [EMPTY_CHUNK];
   for (let i = 0; i < 64; i++) res.push(hash(res[i], res[i]));
   return res;
 })();
@@ -366,7 +366,7 @@ export const container = <T extends Record<string, SSZCoder<any>>>(
 };
 
 // Like 'P.bits', but different direction
-const bitsCoder = (len: number): P.Coder<Uint8Array, boolean[]> => ({
+const bitsCoder = (len: number): P.Coder<Bytes, boolean[]> => ({
   encode: (data: Uint8Array): boolean[] => {
     const res: boolean[] = [];
     for (const byte of data) for (let i = 0; i < 8; i++) res.push(!!(byte & (1 << i)));
@@ -500,7 +500,7 @@ export const union = (
     },
   };
 };
-type ByteListType = SSZCoder<Uint8Array> & {
+type ByteListType = SSZCoder<Bytes> & {
   info: { type: 'list'; N: number; inner: typeof byte };
 };
 /**
@@ -518,7 +518,7 @@ export const bytelist = (maxLen: number): ByteListType => {
     _isStableCompat(other) {
       return isStableCompat(this, other);
     },
-    default: new Uint8Array([]),
+    default: Uint8Array.of(),
     composite: true,
     chunkCount: Math.ceil(maxLen / 32),
     chunks(value) {
@@ -529,7 +529,7 @@ export const bytelist = (maxLen: number): ByteListType => {
     },
   };
 };
-type ByteVectorType = SSZCoder<Uint8Array> & {
+type ByteVectorType = SSZCoder<Bytes> & {
   info: { type: 'vector'; N: number; inner: typeof byte };
 };
 /**

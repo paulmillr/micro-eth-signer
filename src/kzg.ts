@@ -1,12 +1,20 @@
 // prettier-ignore
+import { pippenger } from '@noble/curves/abstract/curve.js';
 import {
-  type PolyFn, type Polynomial,
-  bitReversalPermutation, FFT, log2, poly, reverseBits, rootsOfUnity,
-} from '@noble/curves/abstract/fft';
-import { bytesToNumberBE, numberToBytesBE } from '@noble/curves/abstract/utils';
-import { bls12_381 as bls } from '@noble/curves/bls12-381';
+  type PolyFn,
+  type Polynomial,
+  bitReversalPermutation,
+  FFT,
+  log2,
+  poly,
+  reverseBits,
+  rootsOfUnity,
+} from '@noble/curves/abstract/fft.js';
+import { Field } from '@noble/curves/abstract/modular.js';
+import { bls12_381 as bls } from '@noble/curves/bls12-381.js';
+import { asciiToBytes, numberToBytesBE } from '@noble/curves/utils.js';
 import { sha256 } from '@noble/hashes/sha2.js';
-import { bytesToHex, concatBytes, hexToBytes, utf8ToBytes } from '@noble/hashes/utils.js';
+import { bytesToHex, concatBytes, hexToBytes } from '@noble/hashes/utils.js';
 import { add0x, hexToNumber, strip0x } from './utils.ts';
 /*
 KZG for [EIP-4844](https://eips.ethereum.org/EIPS/eip-4844).
@@ -27,11 +35,14 @@ TODO(high-level):
   - rlp([tx, blobs, commitments, proofs])
   - this means there are two eip4844 txs: with sidecars and without
 */
-const { Fr, Fp12 } = bls.fields;
-const G1 = bls.G1.ProjectivePoint;
-const G2 = bls.G2.ProjectivePoint;
-type G1Point = typeof bls.G1.ProjectivePoint.BASE;
-type G2Point = typeof bls.G2.ProjectivePoint.BASE;
+const { Fr: blsFr, Fp12 } = bls.fields;
+
+// Scalars over curve order are invalid here. Even with skipValidation .fromBytes will do modN
+const Fr = Field(blsFr.ORDER, { isLE: blsFr.isLE });
+const G1 = bls.G1.Point;
+const G2 = bls.G2.Point;
+type G1Point = typeof bls.G1.Point.BASE;
+type G2Point = typeof bls.G2.Point.BASE;
 type Scalar = string | bigint;
 type Blob = string | string[] | bigint[];
 const BLOB_REGEX = /.{1,64}/g; // TODO: is this valid?
@@ -47,7 +58,7 @@ function parseScalar(s: Scalar): bigint {
 }
 
 function formatScalar(n: bigint) {
-  return add0x(bytesToHex(numberToBytesBE(n, Fr.BYTES)));
+  return add0x(bytesToHex(Fr.toBytes(n)));
 }
 
 function pairingVerify(a1: G1Point, a2: G2Point, b1: G1Point, b2: G2Point) {
@@ -106,15 +117,13 @@ const Cell = {
   encode(fields: bigint[]): string {
     if (fields.length !== FE_PER_CELL)
       throw new Error(`Cell.encode: Expected ${FE_PER_CELL} field elements`);
-    return add0x(bytesToHex(concatBytes(...fields.map(Fr.toBytes))));
+    return add0x(bytesToHex(concatBytes(...fields.map((i) => Fr.toBytes(i)))));
   },
   decode(hex: string): bigint[] {
     const bytes = hexToBytes(strip0x(hex));
     if (bytes.length !== BYTES_PER_CELL)
       throw new Error(`Cell.decode: Expected ${BYTES_PER_CELL} bytes after decoding hex`);
-    const fields = chunkBytes(bytes, Fr.BYTES).map(Fr.fromBytes);
-    for (const f of fields) if (!Fr.isValid(f)) throw new Error('invalid fr');
-    return fields;
+    return chunkBytes(bytes, Fr.BYTES).map((n) => Fr.fromBytes(n));
   },
 };
 
@@ -134,8 +143,8 @@ export class KZG {
   private readonly fftG1: ReturnType<typeof FFT<G1Point>>;
   private readonly polyFr: PolyFn<bigint[], bigint>;
   // Should they be configurable?
-  private readonly FIAT_SHAMIR_PROTOCOL_DOMAIN = utf8ToBytes('FSBLOBVERIFY_V1_');
-  private readonly RANDOM_CHALLENGE_KZG_BATCH_DOMAIN = utf8ToBytes('RCKZGBATCH___V1_');
+  private readonly FIAT_SHAMIR_PROTOCOL_DOMAIN = asciiToBytes('FSBLOBVERIFY_V1_');
+  private readonly RANDOM_CHALLENGE_KZG_BATCH_DOMAIN = asciiToBytes('RCKZGBATCH___V1_');
   private readonly POLY_NUM_BYTES: Uint8Array;
   // PeerDAS
   private fk20Columns?: G1Point[][];
@@ -161,7 +170,7 @@ export class KZG {
       add: (a, b) => a.add(b),
       sub: (a, b) => a.subtract(b),
       mul: (a, scalar) => a.multiplyUnsafe(scalar),
-      inv: Fr.inv,
+      inv: (a) => Fr.inv(a),
     });
     this.polyFr = poly(Fr, this.ROOTS_CACHE);
     this.POLY_NUM_BYTES = numberToBytesBE(this.POLY_NUM, 8);
@@ -221,7 +230,7 @@ export class KZG {
       _points.push(points[i]);
       _scalars.push(s);
     }
-    return G1.msm(_points, _scalars);
+    return pippenger(G1, _points, _scalars);
   }
   private computeChallenge(blob: bigint[], commitment: G1Point): bigint {
     const h = sha256
@@ -229,9 +238,9 @@ export class KZG {
       .update(this.FIAT_SHAMIR_PROTOCOL_DOMAIN)
       .update(numberToBytesBE(0, 8))
       .update(this.POLY_NUM_BYTES);
-    for (const b of blob) h.update(numberToBytesBE(b, Fr.BYTES));
-    h.update(commitment.toRawBytes(true));
-    const res = Fr.create(bytesToNumberBE(h.digest()));
+    for (const b of blob) h.update(Fr.toBytes(b));
+    h.update(commitment.toBytes(true));
+    const res = Fr.create(Fr.fromBytes(h.digest(), true));
     h.destroy();
     return res;
   }
@@ -300,19 +309,19 @@ export class KZG {
   // There are no test vectors for this
   private verifyProofBatch(commitments: G1Point[], zs: bigint[], ys: bigint[], proofs: string[]) {
     const n = commitments.length;
-    const p: G1Point[] = proofs.map((i) => this.parseG1(i));
+    const p: G1Point[] = proofs.map(this.parseG1);
     const h = sha256
       .create()
       .update(this.RANDOM_CHALLENGE_KZG_BATCH_DOMAIN)
       .update(this.POLY_NUM_BYTES)
       .update(numberToBytesBE(n, 8));
     for (let i = 0; i < n; i++) {
-      h.update(commitments[i].toRawBytes(true));
+      h.update(commitments[i].toBytes(true));
       h.update(Fr.toBytes(zs[i]));
       h.update(Fr.toBytes(ys[i]));
-      h.update(p[i].toRawBytes(true));
+      h.update(p[i].toBytes(true));
     }
-    const r = Fr.create(bytesToNumberBE(h.digest()));
+    const r = Fr.create(Fr.fromBytes(h.digest(), true));
     h.destroy();
     const rPowers = this.getRPowers(r, n);
     const proofPowers = this.G1msm(p, rPowers);
@@ -360,7 +369,7 @@ export class KZG {
     }
   }
   // PeerDAS (https://eips.ethereum.org/EIPS/eip-7594)
-  private Fk20Precomputes = (): G1Point[][] => {
+  _Fk20Precomputes(): G1Point[][] {
     if (!this.G1M) throw new Error('PeerDAS requires full kzg setup (with G1 monomial)');
     if (this.fk20Columns) return this.fk20Columns;
     // This is very slow and takes 38s on first run!
@@ -385,8 +394,8 @@ export class KZG {
     this.fk20Columns = columns;
     return columns;
   };
-  private Fk20Proof = (poly: Polynomial<bigint>): string[] => {
-    const precomputes = this.Fk20Precomputes(); // 128x64
+  private Fk20Proof(poly: Polynomial<bigint>): string[] {
+    const precomputes = this._Fk20Precomputes(); // 128x64
     if (poly.length !== FE_PER_BLOB) throw new Error('Fk20Proof: wrong poly');
     const coeffs: bigint[][] = Array.from({ length: CIRCULANT_DOMAIN_SIZE }, () =>
       new Array(FE_PER_CELL).fill(Fr.ZERO)
@@ -540,7 +549,7 @@ export class KZG {
     }
     // Compute challenge r (5ms)
     const h = sha256.create();
-    h.update(utf8ToBytes('RCKZGCBATCH__V1_'));
+    h.update(asciiToBytes('RCKZGCBATCH__V1_'));
     h.update(numberToBytesBE(FE_PER_CELL, 8)); // uint64
     h.update(numberToBytesBE(uniqueCommitments.length, 8)); // uint64
     h.update(numberToBytesBE(cells.length, 8)); // uint64
@@ -549,10 +558,10 @@ export class KZG {
     for (const idx of indices) h.update(numberToBytesBE(idx, 8)); // uint64
     for (const c of cells) h.update(hexToBytes(strip0x(c)));
     for (const p of proofs) h.update(hexToBytes(strip0x(p)));
-    const r = Fr.create(bytesToNumberBE(h.digest()));
+    const r = Fr.create(Fr.fromBytes(h.digest(), true));
     // Proofs lincomb (175ms)
     const rPowers = this.getRPowers(r, cells.length); //
-    const proofsG1 = proofs.map((hex) => this.parseG1(hex)); // 120ms
+    const proofsG1 = proofs.map(this.parseG1); // 120ms
     const proofLincomb = this.G1msm(proofsG1, rPowers); // 51ms
     // Weighted sum of commitments (4ms)
     const uniqueCommitmentsG1 = uniqueCommitments.map(this.parseG1);

@@ -1,15 +1,11 @@
 /*! micro-eth-signer - MIT License (c) 2021 Paul Miller (paulmillr.com) */
 import { keccak_256 } from '@noble/hashes/sha3.js';
 import { bytesToHex, concatBytes, hexToBytes } from '@noble/hashes/utils.js';
-import type { UnwrapCoder } from 'micro-packed';
+import { type UnwrapCoder } from 'micro-packed';
 import { addr } from './address.ts';
 // prettier-ignore
 import { RLP } from './rlp.ts';
 import {
-  type AuthorizationItem,
-  type AuthorizationRequest,
-  type TxCoder,
-  type TxType,
   RawTx,
   TxVersions,
   authorizationRequest,
@@ -17,15 +13,26 @@ import {
   removeSig,
   sortRawData,
   validateFields,
+  type AuthorizationItem,
+  type AuthorizationRequest,
+  type TxCoder,
+  type TxType,
 } from './tx.ts';
 // prettier-ignore
+import { secp256k1 } from '@noble/curves/secp256k1.js';
 import {
-  amounts, astr,
+  amounts,
+  astr,
   cloneDeep,
-  ethHex, ethHexNoLeadingZero,
+  ethHex,
+  ethHexNoLeadingZero,
   initSig,
   isBytes,
-  sign, strip0x, verify, weieth, weigwei
+  sign,
+  strip0x,
+  verify,
+  weieth,
+  weigwei,
 } from './utils.ts';
 export { addr, weieth, weigwei };
 
@@ -42,14 +49,15 @@ export const authorization = {
   sign(req: AuthorizationRequest, privateKey: string): AuthorizationItem {
     astr(privateKey);
     const sig = sign(this._getHash(req), ethHex.decode(privateKey));
-    return { ...req, r: sig.r, s: sig.s, yParity: sig.recovery };
+    return { ...req, r: sig.r, s: sig.s, yParity: sig.recovery! };
   },
   getAuthority(item: AuthorizationItem): string {
     const { r, s, yParity, ...req } = item;
     const hash = this._getHash(req);
     const sig = initSig({ r, s }, yParity);
-    const point = sig.recoverPublicKey(hash);
-    return addr.fromPublicKey(point.toHex(false));
+    // const point = sig.recoverPublicKey(hash);
+    const bytes = secp256k1.recoverPublicKey(sig.toBytes('recovered'), hash, { prehash: false });
+    return addr.fromPublicKey(bytes);
   },
 };
 // Transaction-related utils.
@@ -194,7 +202,7 @@ export class Transaction<T extends TxType> {
    * Converts transaction to RLP.
    * @param includeSignature whether to include signature
    */
-  toRawBytes(includeSignature: boolean = this.isSigned): Uint8Array {
+  toBytes(includeSignature: boolean = this.isSigned): Uint8Array {
     // cloneDeep is not necessary here
     let data = Object.assign({}, this.raw);
     if (includeSignature) {
@@ -209,7 +217,7 @@ export class Transaction<T extends TxType> {
    * @param includeSignature whether to include signature
    */
   toHex(includeSignature: boolean = this.isSigned): string {
-    return ethHex.encode(this.toRawBytes(includeSignature));
+    return ethHex.encode(this.toBytes(includeSignature));
   }
   /** Calculates keccak-256 hash of signed transaction. Used in block explorers. */
   get hash(): string {
@@ -227,7 +235,7 @@ export class Transaction<T extends TxType> {
     return decodeLegacyV(this.raw);
   }
   private calcHash(includeSignature: boolean): Uint8Array {
-    return keccak_256(this.toRawBytes(includeSignature));
+    return keccak_256(this.toBytes(includeSignature));
   }
   /** Calculates MAXIMUM fee in wei that could be spent. */
   get fee(): bigint {
@@ -254,7 +262,7 @@ export class Transaction<T extends TxType> {
     this.assertIsSigned();
     const { r, s } = this.raw;
     return verify(
-      { r: r!, s: s! },
+      new secp256k1.Signature(r!, s!).toBytes(),
       this.calcHash(false),
       hexToBytes(this.recoverSender().publicKey)
     );
@@ -275,7 +283,8 @@ export class Transaction<T extends TxType> {
     if (this.isSigned) throw new Error('expected unsigned transaction');
     const priv = isBytes(privateKey) ? privateKey : hexToBytes(strip0x(privateKey));
     const hash = this.calcHash(false);
-    const { r, s, recovery } = sign(hash, priv, extraEntropy);
+    const sig = sign(hash, priv, extraEntropy);
+    const { r, s, recovery } = sig;
     const sraw = Object.assign(cloneDeep(this.raw), { r, s, yParity: recovery });
     // The copied result is validated in non-strict way, strict is only for user input.
     return new Transaction(this.type, sraw, false);
@@ -287,7 +296,10 @@ export class Transaction<T extends TxType> {
     const sig = initSig({ r: r!, s: s! }, yParity!);
     // Will crash on 'chainstart' hardfork
     if (sig.hasHighS()) throw new Error('invalid s');
-    const point = sig.recoverPublicKey(this.calcHash(false));
-    return { publicKey: point.toHex(true), address: addr.fromPublicKey(point.toHex(false)) };
+    const publicKey = secp256k1.recoverPublicKey(sig.toBytes('recovered'), this.calcHash(false), {
+      prehash: false,
+    });
+    // const point = sig.recoverPublicKey(this.calcHash(false));
+    return { publicKey: bytesToHex(publicKey), address: addr.fromPublicKey(publicKey) };
   }
 }

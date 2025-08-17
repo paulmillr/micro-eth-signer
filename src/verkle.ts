@@ -1,16 +1,15 @@
-import { precomputeMSMUnsafe } from '@noble/curves/abstract/curve';
-import { type ExtPointType, twistedEdwards } from '@noble/curves/abstract/edwards';
-import { poly, rootsOfUnity } from '@noble/curves/abstract/fft';
-import { Field, FpLegendre } from '@noble/curves/abstract/modular';
-import { bytesToNumberBE, bytesToNumberLE, numberToBytesBE } from '@noble/curves/abstract/utils';
-import { sha256 } from '@noble/hashes/sha2.js';
+import { pippenger, precomputeMSMUnsafe } from '@noble/curves/abstract/curve.js';
+import { edwards, type EdwardsPoint } from '@noble/curves/abstract/edwards.js';
+import { poly, rootsOfUnity } from '@noble/curves/abstract/fft.js';
+import { Field, FpLegendre } from '@noble/curves/abstract/modular.js';
 import {
-  bytesToHex,
-  concatBytes,
-  hexToBytes,
-  randomBytes,
-  utf8ToBytes,
-} from '@noble/hashes/utils.js';
+  asciiToBytes,
+  bytesToNumberBE,
+  bytesToNumberLE,
+  numberToBytesBE,
+} from '@noble/curves/utils.js';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { bytesToHex, concatBytes, hexToBytes } from '@noble/hashes/utils.js';
 import * as P from 'micro-packed';
 import { ethHex } from './utils.ts';
 
@@ -24,33 +23,26 @@ const MSM_PRECOMPUTE_WINDOW = 8;
 const MSM_PRECOMPUTE_2_SIZE = 8;
 const TWO_POW_128 = BigInt(2) ** BigInt(128);
 
-const Fp = Field(
-  BigInt('52435875175126190479447740508185965837690552500527637822603658699938581184513'),
-  undefined,
-  true
-);
+// != bandersnatch.Fn !!!
 const Fr = Field(
   BigInt('13108968793781547619861935127046491459309155893440570251786403306729687672801'),
-  undefined,
-  true
+  { isLE: true }
 );
-const bandersnatch = twistedEdwards({
-  Fp: Fp,
-  a: BigInt(-5),
+const bandersnatch = edwards({
+  p: BigInt('52435875175126190479447740508185965837690552500527637822603658699938581184513'),
+  a: BigInt('52435875175126190479447740508185965837690552500527637822603658699938581184508'), // -5
   d: BigInt('45022363124591815672509500913686876175488063829319466900776701791074614335719'),
   n: BigInt('52435875175126190479447740508185965837690552500527637822603658699938581184513'),
   h: BigInt(4),
   Gx: BigInt('18886178867200960497001835917649091219057080094937609519140440539760939937304'),
   Gy: BigInt('19188667384257783945677642223292697773471335439753913231509108946878080696678'),
-  // @ts-ignore
-  hash: sha256,
-  randomBytes,
 });
+const Fp = bandersnatch.Fp;
 
 const ROOTS_CACHE = rootsOfUnity(Fr);
 const polyFr = poly(Fr, ROOTS_CACHE);
 
-const { ExtendedPoint: Point } = bandersnatch;
+const Point = bandersnatch;
 type Point = typeof Point.BASE;
 type Poly = bigint[];
 
@@ -80,13 +72,13 @@ const compressed = P.apply(P.U256BE, {
   encode: (b) => {
     const x = Fp.create(b);
     const x2 = Fp.sqr(x);
-    const dx2 = Fp.sub(Fp.mul(bandersnatch.CURVE.d, x2), Fp.ONE); // dx^2-1
-    const ax2 = Fp.sub(Fp.mul(bandersnatch.CURVE.a, x2), Fp.ONE); // ax^2-1
+    const dx2 = Fp.sub(Fp.mul(bandersnatch.CURVE().d, x2), Fp.ONE); // dx^2-1
+    const ax2 = Fp.sub(Fp.mul(bandersnatch.CURVE().a, x2), Fp.ONE); // ax^2-1
     const y = Fp.sqrt(Fp.div(ax2, dx2)); // sqrt((ax^2-1)/(dx^2-1))
     const yRes = isPositive(y) ? y : Fp.neg(y);
     const p = Point.fromAffine({ x, y: yRes });
     p.assertValidity();
-    const t = Fp.sub(Fp.ONE, Fp.mul(bandersnatch.CURVE.a, Fp.sqr(x)));
+    const t = Fp.sub(Fp.ONE, Fp.mul(bandersnatch.CURVE().a, Fp.sqr(x)));
     const l = FpLegendre(Fp, t);
     // Check if 1 - ax^2 is a quadratic residue
     if (l !== 1) throw new Error('subgroup check failed');
@@ -107,14 +99,14 @@ const multipointProof = P.struct({
   D: compressed,
   cl: P.array(DOMAIN_SIZE_LOG2, compressed),
   cr: P.array(DOMAIN_SIZE_LOG2, compressed),
-  a: P.validate(P.U256LE, Fr.create),
+  a: P.validate(P.U256LE, (i) => Fr.create(i)),
 });
 
 type MultiProof = P.UnwrapCoder<typeof multipointProof>;
 
 function generateCRSPoints(seed: string, points: number) {
   const res = [];
-  const h = sha256.create().update(utf8ToBytes(seed));
+  const h = sha256.create().update(asciiToBytes(seed));
   for (let i = 0; res.length < points; i++) {
     const hash = h.clone().update(numberToBytesBE(i, 8)).digest();
     const x = Fp.create(bytesToNumberBE(hash));
@@ -128,16 +120,15 @@ function generateCRSPoints(seed: string, points: number) {
 }
 // This is pedersen like hashes
 const CRS_Q = Point.BASE;
-let CRS_G: ExtPointType[];
+let CRS_G: EdwardsPoint[];
 let precomputed = false;
 let CRS_G_PREC: any;
 let CRS_G0_TREEKEY: any;
 function precomputeOnFirstRun() {
   if (precomputed) return;
   CRS_G = generateCRSPoints('eth_verkle_oct_2021', DOMAIN_SIZE);
-  for (let i = 0; i < MSM_PRECOMPUTE_SMALL; i++)
-    bandersnatch.utils.precompute(MSM_PRECOMPUTE_WINDOW, CRS_G[i]);
-  CRS_G_PREC = precomputeMSMUnsafe(Point, Fr, CRS_G, MSM_PRECOMPUTE_2_SIZE);
+  for (let i = 0; i < MSM_PRECOMPUTE_SMALL; i++) CRS_G[i].precompute(MSM_PRECOMPUTE_WINDOW, false);
+  CRS_G_PREC = precomputeMSMUnsafe(Point, CRS_G, MSM_PRECOMPUTE_2_SIZE);
   CRS_G0_TREEKEY = CRS_G[0].multiplyUnsafe(BigInt(16386));
   precomputed = true;
 }
@@ -153,7 +144,7 @@ class Transcript {
     this.domainSeparator(label);
   }
   domainSeparator(label: string): void {
-    this.state.push(utf8ToBytes(label));
+    this.state.push(asciiToBytes(label));
   }
   private appendMessage(message: Uint8Array, label: string) {
     this.domainSeparator(label);
@@ -167,7 +158,7 @@ class Transcript {
   }
   challengeScalar(label: string): bigint {
     this.domainSeparator(label);
-    const scalar = Fr.create(Fr.fromBytes(sha256(concatBytes(...this.state))));
+    const scalar = Fr.create(Fr.fromBytes(sha256(concatBytes(...this.state)), true));
     this.state = [];
     this.appendScalar(label, scalar);
     return scalar;
@@ -204,7 +195,7 @@ function getInvertedWeights(domainSize: number) {
 const WEIGTHS_BARYCENTRIC = getBarycentricWeights(DOMAIN_SIZE);
 const WEIGTHS_BARYCENTRIC_INV = Fr.invertBatch(WEIGTHS_BARYCENTRIC);
 const WEIGHTS_INVERTED = getInvertedWeights(DOMAIN_SIZE);
-const WEIGHTS_INVERTED_NEG = WEIGHTS_INVERTED.map(Fr.neg);
+const WEIGHTS_INVERTED_NEG = WEIGHTS_INVERTED.map((i) => Fr.neg(i));
 
 function divideByLinearVanishing(poly: Poly, idx: number): bigint[] {
   const q: bigint[] = new Array(poly.length).fill(Fr.ZERO);
@@ -275,7 +266,8 @@ function multiproofCheck(proof: MultiProof, queries: VerifierQuery[], transcript
   let g2t = Fr.ZERO;
   for (let i = 0; i < helperScalars.length; i++)
     g2t = Fr.add(g2t, Fr.mul(helperScalars[i], queries[i].result));
-  const E = Point.msm(
+  const E = pippenger(
+    Point,
     queries.map((q) => q.commitment),
     helperScalars
   );
@@ -306,7 +298,7 @@ function multiproofCheck(proof: MultiProof, queries: VerifierQuery[], transcript
   const tmp = crsMSM(gi);
   const points = proof.cl.concat(proof.cr).concat([C, CRS_Q]);
   const scalars = challenges.concat(challengesInv).concat([Fr.ONE, qi]);
-  return Point.msm(points, scalars).add(tmp).equals(Point.ZERO);
+  return pippenger(Point, points, scalars).add(tmp).equals(Point.ZERO);
 }
 
 const scalarMulIndex = (bytes: Uint8Array, index: number) => {
@@ -331,7 +323,7 @@ export const hashCommitment = (commitment: Uint8Array): Uint8Array =>
   Fr.toBytes(mapToField(uncompressed.decode(commitment)));
 export const commitToScalars = (vector: Uint8Array[]): Uint8Array => {
   if (vector.length > DOMAIN_SIZE) throw new Error('vector length greater than DOMAIN_SIZE');
-  const scalars = vector.map(Fr.fromBytes);
+  const scalars = vector.map((n) => Fr.fromBytes(n));
   return uncompressed.encode(crsMSM(scalars));
 };
 // TODO: implement optimization (batch inv inside mapToField)
@@ -341,6 +333,7 @@ export const getTreeKeyHash = (address: Uint8Array, treeIndexLE: Uint8Array): Ui
   if (address.length !== 32) throw new Error('Address must be 32 bytes');
   if (treeIndexLE.length !== 32) throw new Error('Tree index must be 32 bytes');
   precomputeOnFirstRun();
+  // These are half of scalar, so cannot use Fn.fromBytes here!
   const P0 = CRS_G[1].multiplyUnsafe(bytesToNumberLE(address.subarray(0, 16)));
   const P1 = CRS_G[2].multiplyUnsafe(bytesToNumberLE(address.subarray(16, 32)));
   const P2 = CRS_G[3].multiplyUnsafe(bytesToNumberLE(treeIndexLE.subarray(0, 16)));
@@ -440,8 +433,8 @@ export const createProof = (proverInputs: ProverInput[]): Uint8Array => {
     const [GL, GR] = splitHalf(G);
     const zL = polyFr.eval(aR, bL);
     const zR = polyFr.eval(aL, bR);
-    const L = Point.msm(GL.concat(Q), aR.concat(zL));
-    const R = Point.msm(GR.concat(Q), aL.concat(zR));
+    const L = pippenger(Point, GL.concat(Q), aR.concat(zL));
+    const R = pippenger(Point, GR.concat(Q), aL.concat(zR));
     cl.push(L);
     cr.push(R);
     const x = ipaX(transcript, L, R);

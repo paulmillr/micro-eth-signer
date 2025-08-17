@@ -1,9 +1,9 @@
-import { numberToVarBytesBE } from '@noble/curves/abstract/utils';
+import { numberToVarBytesBE } from '@noble/curves/utils.js';
 import * as P from 'micro-packed';
-import { isBytes } from './utils.ts';
+import { isBytes, type Bytes } from './utils.ts';
 
 // Spec-compliant RLP in 100 lines of code.
-export type RLPInput = string | number | Uint8Array | bigint | RLPInput[] | null;
+export type RLPInput = string | number | Bytes | bigint | RLPInput[] | null;
 // length: first 3 bit !== 111 ? 6 bit length : 3bit lenlen
 const RLPLength = P.wrap({
   encodeStream(w: P.Writer, value: number) {

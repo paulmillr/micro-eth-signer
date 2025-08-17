@@ -1,7 +1,7 @@
 import * as P from 'micro-packed';
 import { addr } from './address.ts';
 import { RLP } from './rlp.ts';
-import { amounts, ethHex, isBytes, isObject } from './utils.ts';
+import { amounts, ethHex, isBytes, isObject, type Bytes } from './utils.ts';
 
 // Transaction parsers
 
@@ -71,7 +71,7 @@ function ensure32(b: Uint8Array): Uint8Array {
   if (!isBytes(b) || b.length !== 32) throw new Error('expected 32 bytes');
   return b;
 }
-const Bytes32: P.Coder<Uint8Array, string> = {
+const Bytes32: P.Coder<Bytes, string> = {
   encode: (from) => ethHex.encode(ensure32(from)),
   decode: (to) => ensure32(ethHex.decode(to)),
 };
@@ -178,7 +178,7 @@ const yParityCoder = P.coders.reverse(
 type CoderOutput<F> = F extends P.Coder<any, infer T> ? T : never;
 
 const accessListItem: P.Coder<
-  (Uint8Array | Uint8Array[])[],
+  (Bytes | Bytes[])[],
   {
     address: string;
     storageKeys: string[];
@@ -187,7 +187,7 @@ const accessListItem: P.Coder<
 export type AccessList = CoderOutput<typeof accessListItem>[];
 
 export const authorizationRequest: P.Coder<
-  Uint8Array[],
+  Bytes[],
   {
     chainId: bigint;
     address: string;
@@ -200,7 +200,7 @@ export const authorizationRequest: P.Coder<
 });
 // [chain_id, address, nonce, y_parity, r, s]
 const authorizationItem: P.Coder<
-  Uint8Array[],
+  Bytes[],
   {
     chainId: bigint;
     address: string;

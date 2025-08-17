@@ -1,7 +1,7 @@
 /*! micro-eth-signer - MIT License (c) 2021 Paul Miller (paulmillr.com) */
 import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { keccak_256 } from '@noble/hashes/sha3.js';
-import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
+import { bytesToHex, hexToBytes, utf8ToBytes } from '@noble/hashes/utils.js';
 import { add0x, astr, ethHex, strip0x } from './utils.ts';
 
 export const addr = {
@@ -52,7 +52,8 @@ export const addr = {
    */
   fromPublicKey: (key: string | Uint8Array): string => {
     if (!key) throw new Error('invalid public key: ' + key);
-    const pub65b = secp256k1.ProjectivePoint.fromHex(key).toRawBytes(false);
+    if (typeof key === 'string') key = hexToBytes(strip0x(key));
+    const pub65b = secp256k1.Point.fromBytes(key).toBytes(false);
     const hashed = keccak_256(pub65b.subarray(1, 65));
     const address = bytesToHex(hashed).slice(24); // slice 24..64
     return addr.addChecksum(address);
@@ -61,17 +62,20 @@ export const addr = {
   /**
    * Creates address from ETH private key in hex or ui8a format.
    */
-  fromPrivateKey: (key: string | Uint8Array): string => {
-    if (typeof key === 'string') key = strip0x(key);
+  fromSecretKey: (key: string | Uint8Array): string => {
+    if (typeof key === 'string') key = hexToBytes(strip0x(key));
     return addr.fromPublicKey(secp256k1.getPublicKey(key, false));
+  },
+  fromPrivateKey: (key: string | Uint8Array): string => {
+    return addr.fromSecretKey(key);
   },
 
   /**
    * Generates hex string with new random private key and address. Uses CSPRNG internally.
    */
   random(): { privateKey: string; address: string } {
-    const privateKey = ethHex.encode(secp256k1.utils.randomPrivateKey());
-    return { privateKey, address: addr.fromPrivateKey(privateKey) };
+    const privateKey = ethHex.encode(secp256k1.utils.randomSecretKey());
+    return { privateKey: privateKey, address: addr.fromSecretKey(privateKey) };
   },
 
   /**
