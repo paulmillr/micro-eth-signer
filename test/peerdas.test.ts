@@ -1,6 +1,6 @@
+import { describe, should } from '@paulmillr/jsbt/test.js';
 import { trustedSetup as s_fast } from '@paulmillr/trusted-setups/fast-peerdas.js';
 import { trustedSetup as s_small } from '@paulmillr/trusted-setups/small-peerdas.js';
-import { describe, should } from 'micro-should';
 import { deepStrictEqual, throws } from 'node:assert';
 import { readdirSync, readFileSync } from 'node:fs';
 import * as yaml from 'yaml';

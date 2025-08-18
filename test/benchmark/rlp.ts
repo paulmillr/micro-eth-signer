@@ -1,7 +1,7 @@
 import { RLP } from '@ethereumjs/rlp';
 import { Writable } from '@hazae41/binary';
 import { Rlp as cubane } from '@hazae41/cubane';
-import { utils as butils, compare } from 'micro-bmark';
+import { utils as butils, compare } from '@paulmillr/jsbt/bench.js';
 import { RLP as microrlp } from '../../src/rlp.ts';
 
 const { RlpList, RlpString } = cubane;

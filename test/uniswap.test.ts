@@ -1,5 +1,5 @@
 import { bytesToHex, concatBytes, hexToBytes } from '@noble/hashes/utils.js';
-import { describe, should } from 'micro-should';
+import { describe, should } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual, throws } from 'node:assert';
 import * as uniswap2 from '../src/net/uniswap-v2.ts';
 import * as uniswap3 from '../src/net/uniswap-v3.ts';

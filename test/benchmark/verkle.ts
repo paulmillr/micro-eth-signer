@@ -1,5 +1,5 @@
 import { hexToBytes } from '@noble/hashes/utils.js';
-import { utils as butils, compare } from 'micro-bmark';
+import { utils as butils, compare } from '@paulmillr/jsbt/bench.js';
 import { loadVerkleCrypto } from 'verkle-cryptography-wasm';
 import * as noble from '../../src/verkle.ts';
 

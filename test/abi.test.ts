@@ -1,6 +1,6 @@
 import { bytesToHex, hexToBytes, utf8ToBytes } from '@noble/hashes/utils.js';
+import { describe, should } from '@paulmillr/jsbt/test.js';
 import * as P from 'micro-packed';
-import { describe, should } from 'micro-should';
 import { deepStrictEqual, throws } from 'node:assert';
 import * as abi from '../src/abi/decoder.ts';
 import { CONTRACTS, decodeData, decodeEvent, decodeTx, deployContract } from '../src/abi/index.ts';

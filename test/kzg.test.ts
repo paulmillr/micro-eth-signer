@@ -1,6 +1,6 @@
+import { describe, should } from '@paulmillr/jsbt/test.js';
 import { trustedSetup as s_fast } from '@paulmillr/trusted-setups/fast-kzg.js';
 import { trustedSetup as s_small } from '@paulmillr/trusted-setups/small-kzg.js';
-import { describe, should } from 'micro-should';
 import { deepStrictEqual, throws } from 'node:assert';
 import { KZG } from '../src/kzg.ts';
 import { jsonGZ } from './util.ts';

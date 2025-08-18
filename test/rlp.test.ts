@@ -1,5 +1,5 @@
 import { hexToBytes } from '@noble/hashes/utils.js';
-import { describe, should } from 'micro-should';
+import { describe, should } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual, throws } from 'node:assert';
 import { RLP } from '../src/rlp.ts';
 import { ethHex, ethHexNoLeadingZero } from '../src/utils.ts';

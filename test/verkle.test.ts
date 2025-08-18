@@ -1,6 +1,6 @@
 import { numberToBytesLE } from '@noble/curves/utils.js';
 import { bytesToHex, hexToBytes, randomBytes } from '@noble/hashes/utils.js';
-import { describe, should } from 'micro-should';
+import { describe, should } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual } from 'node:assert';
 import * as verkle from '../src/verkle.ts';
 

@@ -1,7 +1,7 @@
 import { trustedSetup as s_fast } from '@paulmillr/trusted-setups/fast-kzg.js';
 import { trustedSetup } from '@paulmillr/trusted-setups/small-kzg.js';
 import { loadKZG } from 'kzg-wasm';
-import { utils as butils, compare } from 'micro-bmark';
+import { utils as butils, compare } from '@paulmillr/jsbt/bench.js';
 import * as kzg from '../../src/kzg.ts';
 import { jsonGZ } from '../util.ts';
 

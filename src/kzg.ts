@@ -393,7 +393,7 @@ export class KZG {
     }
     this.fk20Columns = columns;
     return columns;
-  };
+  }
   private Fk20Proof(poly: Polynomial<bigint>): string[] {
     const precomputes = this._Fk20Precomputes(); // 128x64
     if (poly.length !== FE_PER_BLOB) throw new Error('Fk20Proof: wrong poly');
@@ -415,7 +415,7 @@ export class KZG {
     const h = this.fftG1.inverse(hExtFFT);
     for (let i = CELLS_PER_BLOB; i < CIRCULANT_DOMAIN_SIZE; i++) h[i] = G1.ZERO;
     return this.fftG1.direct(h, false, true).map((p) => add0x(p.toHex(true)));
-  };
+  }
   private getCells(blob: string) {
     if (!this.G1M) throw new Error('PeerDAS requires full kzg setup (with G1 monomial)');
     // Convert compact poly into extended

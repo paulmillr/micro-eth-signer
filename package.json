@@ -1,6 +1,6 @@
 {
   "name": "micro-eth-signer",
-  "version": "0.16.0",
+  "version": "0.17.0",
   "description": "Minimal library for Ethereum transactions, addresses and smart contracts",
   "files": [
     "*.js",
@@ -17,13 +17,11 @@
     "micro-packed": "~0.8.0-beta.1"
   },
   "devDependencies": {
-    "@paulmillr/jsbt": "0.4.2",
+    "@paulmillr/jsbt": "0.4.3",
     "@paulmillr/trusted-setups": "~0.2.0",
     "@types/node": "24.2.1",
-    "micro-bmark": "0.4.2",
     "micro-ftch": "0.4.3",
-    "micro-should": "0.5.3",
-    "prettier": "3.5.2",
+    "prettier": "3.6.2",
     "snappyjs": "0.7.0",
     "typescript": "5.9.2",
     "yaml": "2.4.1"

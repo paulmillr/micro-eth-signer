@@ -1,6 +1,6 @@
 import * as chainsafe from '@chainsafe/ssz';
 import { hexToBytes } from '@noble/hashes/utils';
-import { utils as butils, compare } from 'micro-bmark';
+import { utils as butils, compare } from '@paulmillr/jsbt/bench.js';
 import { deepStrictEqual } from 'node:assert';
 import { readFileSync } from 'node:fs';
 import { dirname } from 'node:path';

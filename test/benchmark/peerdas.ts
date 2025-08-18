@@ -1,4 +1,4 @@
-import { utils as butils, mark } from 'micro-bmark';
+import { utils as butils, mark } from '@paulmillr/jsbt/bench.js';
 
 import { hexToBytes } from '@noble/curves/abstract/utils';
 import { trustedSetup as s_fast } from '@paulmillr/trusted-setups/fast-peerdas.js';

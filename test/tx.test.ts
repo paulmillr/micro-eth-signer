@@ -1,18 +1,18 @@
 import { bytesToHex } from '@noble/hashes/utils.js';
-import { describe, should } from 'micro-should';
+import { describe, should } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual, throws } from 'node:assert';
 import { inspect } from 'node:util';
 import * as abi from '../src/abi/decoder.ts';
 import { Transaction, addr, authorization } from '../src/index.ts';
 import { RawTx, RlpTx, __tests } from '../src/tx.ts';
 import {
-  add0x,
-  amounts,
-  createDecimal,
-  ethHex,
-  formatters,
-  weieth,
-  weigwei
+    add0x,
+    amounts,
+    createDecimal,
+    ethHex,
+    formatters,
+    weieth,
+    weigwei
 } from '../src/utils.ts';
 import { getEthersVectors, getViemVectors } from './util.ts';
 import { default as EIP155_VECTORS } from './vectors/eips/eip155.json' with { type: 'json' };

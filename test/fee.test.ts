@@ -1,4 +1,4 @@
-import { describe, should } from 'micro-should';
+import { describe, should } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual } from 'node:assert';
 import { Transaction } from '../src/index.ts';
 import { weieth, weigwei } from '../src/utils.ts';

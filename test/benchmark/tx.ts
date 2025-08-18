@@ -1,6 +1,6 @@
 import { bytesToHex } from '@noble/hashes/utils.js';
 import * as ethers from 'ethers';
-import { utils as butils } from 'micro-bmark';
+import { utils as butils } from '@paulmillr/jsbt/bench.js';
 import * as viem from 'viem';
 import { parseGwei } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';

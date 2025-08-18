@@ -1,5 +1,5 @@
+import { describe, should } from '@paulmillr/jsbt/test.js';
 import * as mftch from 'micro-ftch';
-import { describe, should } from 'micro-should';
 import { deepStrictEqual, rejects } from 'node:assert';
 import { tokenFromSymbol } from '../src/abi/index.ts';
 import { calcTransfersDiff, Chainlink, ENS, UniswapV3, Web3Provider } from '../src/net/index.ts';
