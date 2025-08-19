@@ -1,6 +1,9 @@
 import { concatBytes } from '@noble/hashes/utils.js';
-import { type ContractInfo, createContract } from '../abi/decoder.ts';
-import { default as UNISWAP_V3_ROUTER, UNISWAP_V3_ROUTER_CONTRACT } from '../abi/uniswap-v3.ts';
+import { type ContractInfo, createContract } from '../advanced/abi-decoder.ts';
+import {
+  default as UNISWAP_V3_ROUTER,
+  UNISWAP_V3_ROUTER_CONTRACT,
+} from '../advanced/abi-uniswap-v3.ts';
 import { type IWeb3Provider, ethHex } from '../utils.ts';
 import * as uni from './uniswap-common.ts';
 

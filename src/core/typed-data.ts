@@ -1,10 +1,9 @@
 import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { keccak_256 } from '@noble/hashes/sha3.js';
 import { concatBytes, hexToBytes, utf8ToBytes } from '@noble/hashes/utils.js';
-import type { GetType as AbiGetType } from './abi/decoder.ts';
-import { mapComponent } from './abi/decoder.ts';
+import { mapComponent, type GetType as AbiGetType } from '../advanced/abi-mapper.ts';
+import { add0x, astr, ethHex, initSig, isObject, sign, strip0x, verify } from '../utils.ts';
 import { addr } from './address.ts';
-import { add0x, astr, ethHex, initSig, isObject, sign, strip0x, verify } from './utils.ts';
 
 // EIP-191 signed data (https://eips.ethereum.org/EIPS/eip-191)
 export type Hex = string | Uint8Array;
@@ -71,7 +70,7 @@ function getSigner<T>(version: number, msgFn: (message: T) => Uint8Array): Typed
 // );
 
 // EIP-191: 0x19 <0x45 (E)> <thereum Signed Message:\n" + len(message)> <data to sign>
-export const personal: TypedSigner<string | Uint8Array> = getSigner(
+export const eip191Signer: TypedSigner<string | Uint8Array> = getSigner(
   0x45,
   (msg: string | Uint8Array) => {
     if (typeof msg === 'string') msg = utf8ToBytes(msg);

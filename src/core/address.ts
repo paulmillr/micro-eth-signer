@@ -2,7 +2,7 @@
 import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { keccak_256 } from '@noble/hashes/sha3.js';
 import { bytesToHex, hexToBytes, utf8ToBytes } from '@noble/hashes/utils.js';
-import { add0x, astr, ethHex, strip0x } from './utils.ts';
+import { add0x, astr, ethHex, strip0x } from '../utils.ts';
 
 export const addr = {
   RE: /^(0[xX])?([0-9a-fA-F]{40})?$/ satisfies RegExp as RegExp,

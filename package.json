@@ -7,9 +7,11 @@
     "*.d.ts",
     "*.js.map",
     "*.d.ts.map",
-    "abi",
+    "advanced",
+    "core",
     "net",
-    "src"
+    "src",
+    "!_type_test.*"
   ],
   "dependencies": {
     "@noble/curves": "2.0.0-beta.3",
@@ -28,7 +30,7 @@
   },
   "scripts": {
     "build": "tsc",
-    "build:clean": "rm -f *.{js,d.ts,js.map,d.ts.map}; rm -rf {abi,net}",
+    "build:clean": "rm -f *.{js,d.ts,js.map,d.ts.map}; rm -rf {advanced,core,net}",
     "build:release": "npx --no @paulmillr/jsbt esbuild test/build",
     "bench": "cd test/benchmark; npm install; node tx.ts",
     "format": "prettier --write src",

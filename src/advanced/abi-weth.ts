@@ -1,5 +1,5 @@
-import { addHints } from './common.ts';
-import { hints as erc20hints } from './erc20.ts';
+import { addHints } from './abi-common.ts';
+import { hints as erc20hints } from './abi-erc20.ts';
 
 // prettier-ignore
 const _ABI = [

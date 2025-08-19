@@ -4,7 +4,7 @@ import { trustedSetup as s_small } from '@paulmillr/trusted-setups/small-peerdas
 import { deepStrictEqual, throws } from 'node:assert';
 import { readdirSync, readFileSync } from 'node:fs';
 import * as yaml from 'yaml';
-import { KZG } from '../src/kzg.ts';
+import { KZG } from '../src/advanced/kzg.ts';
 import { __dirname } from './util.ts';
 
 const yamlOpt = {};

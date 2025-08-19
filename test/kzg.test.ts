@@ -2,7 +2,7 @@ import { describe, should } from '@paulmillr/jsbt/test.js';
 import { trustedSetup as s_fast } from '@paulmillr/trusted-setups/fast-kzg.js';
 import { trustedSetup as s_small } from '@paulmillr/trusted-setups/small-kzg.js';
 import { deepStrictEqual, throws } from 'node:assert';
-import { KZG } from '../src/kzg.ts';
+import { KZG } from '../src/advanced/kzg.ts';
 import { jsonGZ } from './util.ts';
 import { default as KZG_VERIFY_PROOF } from './vectors/kzg/go_kzg_4844_verify_kzg_proof.json' with { type: 'json' };
 import ROOTS_UN from './vectors/kzg/roots_of_unity.json' with { type: 'json' };

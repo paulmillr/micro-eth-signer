@@ -2,7 +2,7 @@ import { numberToBytesLE } from '@noble/curves/utils.js';
 import { bytesToHex, hexToBytes, randomBytes } from '@noble/hashes/utils.js';
 import { describe, should } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual } from 'node:assert';
-import * as verkle from '../src/verkle.ts';
+import * as verkle from '../src/advanced/verkle.ts';
 
 import kaustinenBlock72 from './vectors/verkle/kaustinen6Block72.json' with { type: 'json' };
 import kaustinenBlock73 from './vectors/verkle/kaustinen6Block73.json' with { type: 'json' };

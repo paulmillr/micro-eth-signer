@@ -1,8 +1,8 @@
 import { describe, should } from '@paulmillr/jsbt/test.js';
 import * as mftch from 'micro-ftch';
 import { deepStrictEqual, rejects } from 'node:assert';
-import { tokenFromSymbol } from '../src/abi/index.ts';
-import { calcTransfersDiff, Chainlink, ENS, UniswapV3, Web3Provider } from '../src/net/index.ts';
+import { tokenFromSymbol } from '../src/advanced/abi.ts';
+import { calcTransfersDiff, Chainlink, ENS, UniswapV3, Web3Provider } from '../src/net.ts';
 import { numberTo0xHex, weieth } from '../src/utils.ts';
 
 // These real network responses from real nodes, captured by replayable

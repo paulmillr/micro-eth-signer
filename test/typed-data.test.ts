@@ -2,8 +2,8 @@ import { keccak_256 } from '@noble/hashes/sha3.js';
 import { hexToBytes, utf8ToBytes } from '@noble/hashes/utils.js';
 import { describe, should } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual, throws } from 'node:assert';
-import { addr } from '../src/address.ts';
-import * as typed from '../src/typed-data.ts';
+import * as typed from '../src/core/typed-data.ts';
+import { addr } from '../src/index.ts';
 import { jsonGZ } from './util.ts';
 
 const typedData = {
@@ -353,18 +353,18 @@ describe('typedData (EIP-712)', () => {
       );
     });
   });
-  describe('personal', () => {
+  describe('eip191Signer', () => {
     should('Basic', () => {
       deepStrictEqual(
-        typed.personal._getHash('Hello World'),
+        typed.eip191Signer._getHash('Hello World'),
         '0xa1de988600a42c4b4ab089b619297c17d53cffae5d5120d82d8a92d0bb3b78f2'
       );
       deepStrictEqual(
-        typed.personal._getHash(new Uint8Array([0x42, 0x43])),
+        typed.eip191Signer._getHash(new Uint8Array([0x42, 0x43])),
         '0x0d3abc18ec299cf9b42ba439ac6f7e3e6ec9f5c048943704e30fc2d9c7981438'
       );
       deepStrictEqual(
-        typed.personal._getHash('0x4243'),
+        typed.eip191Signer._getHash('0x4243'),
         '0x6d91b221f765224b256762dcba32d62209cf78e9bebb0a1b758ca26c76db3af4'
       );
     });
@@ -374,13 +374,13 @@ describe('typedData (EIP-712)', () => {
       );
       const address = addr.fromPrivateKey(privateKey);
       const message = 'Hello, world!';
-      const sig = typed.personal.sign(message, privateKey, false);
+      const sig = typed.eip191Signer.sign(message, privateKey, false);
       deepStrictEqual(
         sig,
         '0x90a938f7457df6e8f741264c32697fc52f9a8f867c52dd70713d9d2d472f2e415d9c94148991bbe1f4a1818d1dff09165782749c877f5cf1eff4ef126e55714d1c'
       );
-      deepStrictEqual(typed.personal.verify(sig, message, address), true);
-      deepStrictEqual(typed.personal.recoverPublicKey(sig, message), address);
+      deepStrictEqual(typed.eip191Signer.verify(sig, message, address), true);
+      deepStrictEqual(typed.eip191Signer.recoverPublicKey(sig, message), address);
     });
     should('more tests (based on @metamask/eth-sig-util)', () => {
       const VECTORS = [
@@ -407,10 +407,10 @@ describe('typedData (EIP-712)', () => {
         },
       ];
       for (const t of VECTORS) {
-        const sig = typed.personal.sign(t.message, t.key, false);
+        const sig = typed.eip191Signer.sign(t.message, t.key, false);
         deepStrictEqual(sig, t.signature);
-        deepStrictEqual(typed.personal.verify(sig, t.message, t.address), true);
-        deepStrictEqual(typed.personal.recoverPublicKey(sig, t.message).toLowerCase(), t.address);
+        deepStrictEqual(typed.eip191Signer.verify(sig, t.message, t.address), true);
+        deepStrictEqual(typed.eip191Signer.recoverPublicKey(sig, t.message).toLowerCase(), t.address);
       }
     });
   });

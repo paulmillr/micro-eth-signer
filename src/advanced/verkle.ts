@@ -11,7 +11,7 @@ import {
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex, concatBytes, hexToBytes } from '@noble/hashes/utils.js';
 import * as P from 'micro-packed';
-import { ethHex } from './utils.ts';
+import { ethHex } from '../utils.ts';
 
 const DOMAIN_SIZE = 256;
 const DOMAIN_SIZE_LOG2 = Math.log2(DOMAIN_SIZE);

@@ -1,7 +1,10 @@
+import { secp256k1 } from '@noble/curves/secp256k1.js';
+import { keccak_256 } from '@noble/hashes/sha3.js';
+import { concatBytes } from '@noble/hashes/utils.js';
 import * as P from 'micro-packed';
+import { amounts, astr, ethHex, initSig, isBytes, isObject, sign, type Bytes } from '../utils.ts';
 import { addr } from './address.ts';
 import { RLP } from './rlp.ts';
-import { amounts, ethHex, isBytes, isObject, type Bytes } from './utils.ts';
 
 // Transaction parsers
 
@@ -413,7 +416,7 @@ export const RawTx = P.apply(createTxMap(TxVersions), {
  */
 export const RlpTx: P.CoderType<{
   type: string;
-  data: import('./rlp.js').RLPInput;
+  data: import('./rlp.ts').RLPInput;
 }> = createTxMap(Object.fromEntries(Object.keys(TxVersions).map((k) => [k, RLP])));
 
 // Field-related utils
@@ -597,6 +600,27 @@ export function sortRawData(raw: TxCoder<any>): any {
 export function decodeLegacyV(raw: TxCoder<any>): bigint | undefined {
   return legacySig.decode(raw).v;
 }
+
+/** EIP-7702 Authorizations. */
+export const authorization = {
+  _getHash(req: AuthorizationRequest): Uint8Array {
+    const msg = RLP.encode(authorizationRequest.decode(req));
+    return keccak_256(concatBytes(new Uint8Array([0x05]), msg));
+  },
+  sign(req: AuthorizationRequest, privateKey: string): AuthorizationItem {
+    astr(privateKey);
+    const sig = sign(this._getHash(req), ethHex.decode(privateKey));
+    return { ...req, r: sig.r, s: sig.s, yParity: sig.recovery! };
+  },
+  getAuthority(item: AuthorizationItem): string {
+    const { r, s, yParity, ...req } = item;
+    const hash = this._getHash(req);
+    const sig = initSig({ r, s }, yParity);
+    // const point = sig.recoverPublicKey(hash);
+    const bytes = secp256k1.recoverPublicKey(sig.toBytes('recovered'), hash, { prehash: false });
+    return addr.fromPublicKey(bytes);
+  },
+};
 
 // NOTE: for tests only, don't use
 export const __tests: any = { legacySig, TxVersions };

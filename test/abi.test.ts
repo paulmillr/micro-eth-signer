@@ -2,14 +2,15 @@ import { bytesToHex, hexToBytes, utf8ToBytes } from '@noble/hashes/utils.js';
 import { describe, should } from '@paulmillr/jsbt/test.js';
 import * as P from 'micro-packed';
 import { deepStrictEqual, throws } from 'node:assert';
-import * as abi from '../src/abi/decoder.ts';
-import { CONTRACTS, decodeData, decodeEvent, decodeTx, deployContract } from '../src/abi/index.ts';
+import * as abi from '../src/advanced/abi-decoder.ts';
+import { mapArgs, mapComponent } from '../src/advanced/abi-mapper.ts';
+import { CONTRACTS, decodeData, decodeEvent, decodeTx, deployContract } from '../src/advanced/abi.ts';
 import { strip0x } from '../src/utils.ts';
 
-import { default as ERC20 } from '../src/abi/erc20.ts';
-import { default as KYBER_NETWORK_PROXY, KYBER_NETWORK_PROXY_CONTRACT } from '../src/abi/kyber.ts';
-import { default as UNISWAP_V2_ROUTER, UNISWAP_V2_ROUTER_CONTRACT } from '../src/abi/uniswap-v2.ts';
-import { default as UNISWAP_V3_ROUTER, UNISWAP_V3_ROUTER_CONTRACT } from '../src/abi/uniswap-v3.ts';
+import { default as ERC20 } from '../src/advanced/abi-erc20.ts';
+import { default as KYBER_NETWORK_PROXY, KYBER_NETWORK_PROXY_CONTRACT } from '../src/advanced/abi-kyber.ts';
+import { default as UNISWAP_V2_ROUTER, UNISWAP_V2_ROUTER_CONTRACT } from '../src/advanced/abi-uniswap-v2.ts';
+import { default as UNISWAP_V3_ROUTER, UNISWAP_V3_ROUTER_CONTRACT } from '../src/advanced/abi-uniswap-v3.ts';
 
 const hex = { encode: bytesToHex, decode: hexToBytes };
 
@@ -877,13 +878,13 @@ should('unwrapTestType', () => {
 
 function t(type, value, exp) {
   should(`mapType(${type}, ${value}, ${exp})`, () => {
-    const p = abi.mapComponent(unwrapTestType(type));
+    const p = mapComponent(unwrapTestType(type));
     deepStrictEqual(hex.encode(p.encode(value)), exp);
     deepStrictEqual(p.decode(hex.decode(strip0x(exp))), value);
   });
 }
 function tErr(type, value, exp) {
-  const p = abi.mapComponent(unwrapTestType(type));
+  const p = mapComponent(unwrapTestType(type));
   if (value !== undefined) throws(() => hex.encode(p.encode(value)));
   if (exp !== undefined) throws(() => p.decode(hex.decode(strip0x(exp))));
 }
@@ -1267,7 +1268,7 @@ describe('Type mapping', () => {
 });
 should('mapArgs', () => {
   function t(contract, fn, args, exp) {
-    let m = abi.mapArgs(contract.find((i) => i.name == fn).inputs, true);
+    let m = mapArgs(contract.find((i) => i.name == fn).inputs, true);
     deepStrictEqual(hex.encode(m.encode(args)), exp);
   }
   // FROM SPEC: https://docs.soliditylang.org/en/develop/abi-spec.html#argument-encoding
@@ -1611,15 +1612,15 @@ should('ZST', () => {
 
   for (const type in TYPES) {
     // it would crash process before
-    throws(() => abi.mapComponent(TYPES[type]).decode(payload));
+    throws(() => mapComponent(TYPES[type]).decode(payload));
   }
   // Basic ZST works, they cannot cause DoS outside of array. You will need very big ABI definition to cause issues.
   deepStrictEqual(
-    abi.mapComponent({ type: 'tuple', components: [] }).encode([]),
+    mapComponent({ type: 'tuple', components: [] }).encode([]),
     Uint8Array.of()
   );
   deepStrictEqual(
-    abi.mapComponent({ type: 'uint32[]' }).encode([]),
+    mapComponent({ type: 'uint32[]' }).encode([]),
     new Uint8Array([
       0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
       32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -1631,12 +1632,12 @@ should('ZST', () => {
 should('Recursive ptrs', () => {
   //const EPad = (p) => P.padLeft(32, p, P.ZeroPad);
   //const PTR = EPad(P.U32BE);
-  const arr2 = abi.mapComponent(unwrapTestType('uint256[][]'));
-  const arr4 = abi.mapComponent(unwrapTestType('uint256[][][][]'));
-  const arr10 = abi.mapComponent(unwrapTestType('uint256[][][][][][][][][][]'));
+  const arr2 = mapComponent(unwrapTestType('uint256[][]'));
+  const arr4 = mapComponent(unwrapTestType('uint256[][][][]'));
+  const arr10 = mapComponent(unwrapTestType('uint256[][][][][][][][][][]'));
   const a = [[], [], [], [], [], [], [], [], [], []];
   const p = arr2.encode(a);
-  const ptrArr = abi.mapComponent(unwrapTestType('uint256[]'));
+  const ptrArr = mapComponent(unwrapTestType('uint256[]'));
   deepStrictEqual(
     hex.encode(p),
 
@@ -1684,17 +1685,17 @@ should('Recursive ptrs', () => {
 });
 
 should('Recursive ptrs2', () => {
-  const arr10 = abi.mapComponent(unwrapTestType('uint256[][][][][][][][][][]'));
+  const arr10 = mapComponent(unwrapTestType('uint256[][][][][][][][][][]'));
   const a = [[], [], [], [], [], [], [], [], [], []];
-  const ptrArr = abi.mapComponent(unwrapTestType('uint256[]'));
+  const ptrArr = mapComponent(unwrapTestType('uint256[]'));
   const mainPtr = hex.encode(ptrArr.encode(a.map((_, i) => BigInt(a.length - i + 1) * 32n)));
   throws(() => arr10.decode(hex.decode(mainPtr.repeat(10 + 1))));
 });
 
 should('Interleave ptrs', () => {
-  const ptrArr = abi.mapComponent(unwrapTestType('uint256[]'));
+  const ptrArr = mapComponent(unwrapTestType('uint256[]'));
   const raw = P.array(null, P.U256BE);
-  const arr2 = abi.mapComponent(unwrapTestType('uint256[][]'));
+  const arr2 = mapComponent(unwrapTestType('uint256[][]'));
 
   const getArr = (length) => {
     const arr = Array.from({ length }, (i, j) => BigInt(length - j) * 32n);
@@ -1748,7 +1749,7 @@ should('Interleave ptrs', () => {
 });
 
 should('Junk data', () => {
-  const t = abi.mapComponent(unwrapTestType('uint256[]'));
+  const t = mapComponent(unwrapTestType('uint256[]'));
   const DATA = [1n, 2n, 3n, 4n];
   const encoded = hex.encode(t.encode(DATA));
   const dataWithFingerpint = encoded + '11'.repeat(32);
@@ -1779,7 +1780,7 @@ should('Junk data from real tx', () => {
     },
   ];
   const sh = abi.fnSigHash(ABI[0]);
-  const inputs = abi.mapArgs(ABI[0].inputs);
+  const inputs = mapArgs(ABI[0].inputs);
   const txBytes = hex.decode(tx);
 
   const txSigHash = hex.encode(txBytes.slice(0, 4));

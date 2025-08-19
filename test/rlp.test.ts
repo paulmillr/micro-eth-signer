@@ -1,7 +1,7 @@
 import { hexToBytes } from '@noble/hashes/utils.js';
 import { describe, should } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual, throws } from 'node:assert';
-import { RLP } from '../src/rlp.ts';
+import { RLP } from '../src/core/rlp.ts';
 import { ethHex, ethHexNoLeadingZero } from '../src/utils.ts';
 import { getEthersVectors, getViemVectors } from './util.ts';
 import { default as INVALID_RLP } from './vectors/ethereum-tests/RLPTests/invalidRLPTest.json' with { type: 'json' };

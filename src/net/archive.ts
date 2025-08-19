@@ -1,6 +1,6 @@
-import { ERC1155, ERC20, ERC721, WETH, createContract, events } from '../abi/index.ts';
-import { Transaction } from '../index.ts';
-import { TxVersions, legacySig, type AccessList } from '../tx.ts';
+import { ERC1155, ERC20, ERC721, WETH, createContract, events } from '../advanced/abi.ts';
+import { TxVersions, legacySig, type AccessList } from '../core/tx-internal.ts';
+import { Transaction } from '../core/tx.ts';
 import { amounts, ethHex, hexToNumber, type IWeb3Provider, type Web3CallArgs } from '../utils.ts';
 
 /*

@@ -1,4 +1,4 @@
-import { addr } from '../address.ts';
+import { addr } from '../core/address.ts';
 import { Transaction } from '../index.ts';
 import { ethHex } from '../utils.ts';
 import {
@@ -8,14 +8,14 @@ import {
   createContract,
   deployContract,
   events,
-} from './decoder.ts';
-import { default as ERC1155 } from './erc1155.ts';
-import { default as ERC20 } from './erc20.ts';
-import { default as ERC721 } from './erc721.ts';
-import { default as KYBER_NETWORK_PROXY, KYBER_NETWORK_PROXY_CONTRACT } from './kyber.ts';
-import { default as UNISWAP_V2_ROUTER, UNISWAP_V2_ROUTER_CONTRACT } from './uniswap-v2.ts';
-import { default as UNISWAP_V3_ROUTER, UNISWAP_V3_ROUTER_CONTRACT } from './uniswap-v3.ts';
-import { default as WETH, WETH_CONTRACT } from './weth.ts';
+} from './abi-decoder.ts';
+import { default as ERC1155 } from './abi-erc1155.ts';
+import { default as ERC20 } from './abi-erc20.ts';
+import { default as ERC721 } from './abi-erc721.ts';
+import { default as KYBER_NETWORK_PROXY, KYBER_NETWORK_PROXY_CONTRACT } from './abi-kyber.ts';
+import { default as UNISWAP_V2_ROUTER, UNISWAP_V2_ROUTER_CONTRACT } from './abi-uniswap-v2.ts';
+import { default as UNISWAP_V3_ROUTER, UNISWAP_V3_ROUTER_CONTRACT } from './abi-uniswap-v3.ts';
+import { default as WETH, WETH_CONTRACT } from './abi-weth.ts';
 
 // We need to export raw contracts, because 'CONTRACTS' object requires to know address it is not static type
 // so it cannot be re-used in createContract with nice types.

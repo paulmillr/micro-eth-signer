@@ -1,7 +1,7 @@
 import { keccak_256 } from '@noble/hashes/sha3.js';
 import { concatBytes, utf8ToBytes } from '@noble/hashes/utils.js';
-import { createContract } from '../abi/decoder.ts';
-import { type IWeb3Provider, type Bytes, strip0x } from '../utils.ts';
+import { createContract } from '../advanced/abi-decoder.ts';
+import { type Bytes, type IWeb3Provider, strip0x } from '../utils.ts';
 // No support for IDN names
 export function namehash(address: string): Uint8Array {
   let res: Bytes = new Uint8Array(32);

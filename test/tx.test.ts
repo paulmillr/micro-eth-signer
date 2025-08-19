@@ -2,17 +2,17 @@ import { bytesToHex } from '@noble/hashes/utils.js';
 import { describe, should } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual, throws } from 'node:assert';
 import { inspect } from 'node:util';
-import * as abi from '../src/abi/decoder.ts';
+import { deployContract } from '../src/advanced/abi-decoder.ts';
+import { RawTx, RlpTx, __tests } from '../src/core/tx-internal.ts';
 import { Transaction, addr, authorization } from '../src/index.ts';
-import { RawTx, RlpTx, __tests } from '../src/tx.ts';
 import {
-    add0x,
-    amounts,
-    createDecimal,
-    ethHex,
-    formatters,
-    weieth,
-    weigwei
+  add0x,
+  amounts,
+  createDecimal,
+  ethHex,
+  formatters,
+  weieth,
+  weigwei
 } from '../src/utils.ts';
 import { getEthersVectors, getViemVectors } from './util.ts';
 import { default as EIP155_VECTORS } from './vectors/eips/eip155.json' with { type: 'json' };
@@ -907,7 +907,7 @@ describe('Transactions', () => {
       value: 0n,
       gasLimit: 1500000n,
       gasPrice: 21000000000n,
-      data: abi.deployContract(
+      data: deployContract(
         [{ type: 'constructor', inputs: [] }],
         `0x${consPrefix}${actualCode}` // NOTE: solidity provides already concatenated initcode
       ),

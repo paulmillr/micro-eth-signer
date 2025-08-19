@@ -15,7 +15,7 @@ import { bls12_381 as bls } from '@noble/curves/bls12-381.js';
 import { asciiToBytes, numberToBytesBE } from '@noble/curves/utils.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex, concatBytes, hexToBytes } from '@noble/hashes/utils.js';
-import { add0x, hexToNumber, strip0x } from './utils.ts';
+import { add0x, hexToNumber, strip0x } from '../utils.ts';
 /*
 KZG for [EIP-4844](https://eips.ethereum.org/EIPS/eip-4844).
 

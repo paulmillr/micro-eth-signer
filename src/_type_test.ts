@@ -1,6 +1,7 @@
 import * as P from 'micro-packed';
-import * as abi from './abi/decoder.ts';
-import * as typed from './typed-data.ts';
+import * as abic from './advanced/abi-decoder.ts';
+import * as abi from './advanced/abi-mapper.ts';
+import * as typed from './core/typed-data.ts';
 // Should not be included in npm package, just for test of typescript compilation
 const assertType = <T>(_value: T) => {};
 const BytesVal = Uint8Array.of();
@@ -131,7 +132,7 @@ assertType<{
     decodeOutput: (b: Bytes) => [Bytes, string];
   };
 }>(
-  abi.createContract([
+  abic.createContract([
     {
       name: 'lol',
       type: 'function',
@@ -147,7 +148,7 @@ assertType<{
     decodeOutput: (b: Bytes) => [Bytes, string];
   };
 }>(
-  abi.createContract([
+  abic.createContract([
     {
       name: 'lol',
       type: 'function',
@@ -162,7 +163,7 @@ assertType<{
     decodeOutput: (b: Bytes) => [Bytes, string];
   };
 }>(
-  abi.createContract([
+  abic.createContract([
     {
       name: 'lol',
       type: 'function',
@@ -180,7 +181,7 @@ assertType<{
     estimateGas: (v: [bigint, string]) => Promise<bigint>;
   };
 }>(
-  abi.createContract(
+  abic.createContract(
     [
       {
         name: 'lol',
@@ -194,7 +195,7 @@ assertType<{
 );
 // Without const there is not much can be derived from abi
 assertType<{}>(
-  abi.createContract([
+  abic.createContract([
     {
       name: 'lol',
       type: 'function',
@@ -221,7 +222,7 @@ assertType<{
     encodeInput: () => Bytes;
     decodeOutput: (b: Bytes) => { reserve0: bigint; reserve1: bigint; blockTimestampLast: bigint };
   };
-}>(abi.createContract(PAIR_CONTRACT));
+}>(abic.createContract(PAIR_CONTRACT));
 
 const TRANSFER_EVENT = [
   {
@@ -245,7 +246,7 @@ assertType<{
       value: bigint | null;
     }) => (string | null)[];
   };
-}>(abi.events(TRANSFER_EVENT));
+}>(abic.events(TRANSFER_EVENT));
 
 // Typed data
 const types = {
@@ -343,20 +344,20 @@ assertType<{
 
 // constructor
 
-abi.deployContract(
+abic.deployContract(
   [{ type: 'constructor', inputs: [], stateMutability: 'nonpayable' }] as const,
   '0x00'
 );
-abi.deployContract([{ type: 'constructor', stateMutability: 'nonpayable' }] as const, '0x00');
-// abi.deployContract(
+abic.deployContract([{ type: 'constructor', stateMutability: 'nonpayable' }] as const, '0x00');
+// abic.deployContract(
 //   [{ type: 'constructor', stateMutability: 'nonpayable' }] as const,
 //   '0x00',
 //   undefined
 // ); // should fail!
 
-abi.deployContract([{ type: 'constructor', stateMutability: 'nonpayable' }], '0x00', undefined); // if we cannot infer type - it will be 'unknown' (and user forced to provide any argument, undefined is ok)
+abic.deployContract([{ type: 'constructor', stateMutability: 'nonpayable' }], '0x00', undefined); // if we cannot infer type - it will be 'unknown' (and user forced to provide any argument, undefined is ok)
 
-abi.deployContract(
+abic.deployContract(
   [
     {
       type: 'constructor',
@@ -368,7 +369,7 @@ abi.deployContract(
   BigInt(100)
 );
 
-abi.deployContract(
+abic.deployContract(
   [
     {
       type: 'constructor',

@@ -1,6 +1,6 @@
 import { numberToVarBytesBE } from '@noble/curves/utils.js';
 import * as P from 'micro-packed';
-import { isBytes, type Bytes } from './utils.ts';
+import { isBytes, type Bytes } from '../utils.ts';
 
 // Spec-compliant RLP in 100 lines of code.
 export type RLPInput = string | number | Bytes | bigint | RLPInput[] | null;

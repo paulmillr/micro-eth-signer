@@ -1,5 +1,6 @@
-import { tokenFromSymbol } from '../abi/index.ts';
-import { addr } from '../index.ts';
+import { type ContractInfo } from '../advanced/abi-decoder.ts';
+import { tokenFromSymbol } from '../advanced/abi.ts';
+import { addr } from '../core/address.ts';
 import { type IWeb3Provider, createDecimal, ethHex, isBytes, weieth } from '../utils.ts';
 
 export type SwapOpt = { slippagePercent: number; ttl: number };
@@ -79,7 +80,7 @@ export async function awaitDeep<T, E extends boolean | undefined>(
 
 export type CommonBase = {
   contract: string;
-} & import('../abi/decoder.js').ContractInfo;
+} & ContractInfo;
 export const COMMON_BASES: CommonBase[] = [
   'WETH',
   'DAI',
