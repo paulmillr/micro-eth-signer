@@ -8,7 +8,7 @@ Minimal library for Ethereum transactions, addresses and smart contracts.
 - ✍️ Core: transactions, addresses, messages
 - 🌍 Network-related: execute Uniswap & Chainlink, fetch tx history
 - 🦺 Advanced: type-safe ABI parsing, RLP, SSZ, KZG, PeerDAS, Verkle
-- 🪶 28KB (gzipped) for core, together with 3 deps
+- 🪶 28KB (gzipped) for core+deps. Viem 2 is 93KB, Ethers 6 is 137KB
 
 _Check out all web3 utility libraries:_ [ETH](https://github.com/paulmillr/micro-eth-signer), [BTC](https://github.com/paulmillr/scure-btc-signer), [SOL](https://github.com/paulmillr/micro-sol-signer)
 
@@ -44,6 +44,12 @@ If you don't like NPM, a standalone [eth-signer.js](https://github.com/paulmillr
 - [License](#license)
 
 ## Core
+
+```ts
+import { addr, authorization, Transaction } from 'micro-eth-signer';
+import { eip191Signer, recoverPublicKeyTyped, signTyped, verifyTyped } from 'micro-eth-signer';
+import { amounts, ethHex, ethHexNoLeadingZero, weieth, weigwei } from 'micro-eth-signer';
+```
 
 ### Create random wallet
 
@@ -108,26 +114,26 @@ There are two messaging standards: [EIP-191](https://eips.ethereum.org/EIPS/eip-
 #### EIP-191
 
 ```ts
-import * as typed from 'micro-eth-signer/typed-data.js';
+import { eip191Signer } from 'micro-eth-signer';
 
 // Example message
 const message = 'Hello, Ethereum!';
 const privateKey = '0x4c0883a69102937d6231471b5dbb6204fe512961708279f1d7b1b8e7e8b1b1e1';
 
 // Sign the message
-const signature = typed.personal.sign(message, privateKey);
+const signature = eip191Signer.sign(message, privateKey);
 console.log('Signature:', signature);
 
 // Verify the signature
 const address = '0xYourEthereumAddress';
-const isValid = typed.personal.verify(signature, message, address);
+const isValid = eip191Signer.verify(signature, message, address);
 console.log('Is valid:', isValid);
 ```
 
 #### EIP-712
 
 ```ts
-import * as typed from 'micro-eth-signer/typed-data.js';
+import { signTyped, verifyTyped, recoverPublicKeyTyped, EIP712Domain, TypedData } from 'micro-eth-signer';
 
 const types = {
   Person: [
@@ -142,7 +148,7 @@ const types = {
 };
 
 // Define the domain
-const domain: typed.EIP712Domain = {
+const domain: EIP712Domain = {
   name: 'Ether Mail',
   version: '1',
   chainId: 1,
@@ -164,7 +170,7 @@ const message = {
 };
 
 // Create the typed data
-const typedData: typed.TypedData<typeof types, 'Mail'> = {
+const typedData: TypedData<typeof types, 'Mail'> = {
   types,
   primaryType: 'Mail',
   domain,
@@ -173,15 +179,15 @@ const typedData: typed.TypedData<typeof types, 'Mail'> = {
 
 // Sign the typed data
 const privateKey = '0x4c0883a69102937d6231471b5dbb6204fe512961708279f1d7b1b8e7e8b1b1e1';
-const signature = typed.signTyped(typedData, privateKey);
+const signature = signTyped(typedData, privateKey);
 console.log('Signature:', signature);
 
 // Verify the signature
 const address = '0xYourEthereumAddress';
-const isValid = typed.verifyTyped(signature, typedData, address);
+const isValid = verifyTyped(signature, typedData, address);
 
 // Recover the public key
-const publicKey = typed.recoverPublicKeyTyped(signature, typedData);
+const publicKey = recoverPublicKeyTyped(signature, typedData);
 ```
 
 ## Network-related
@@ -270,7 +276,7 @@ _Uniswap Founder_
 Swap 12.12 USDT to BAT with uniswap V3 defaults of 0.5% slippage, 30 min expiration.
 
 ```ts
-import { tokenFromSymbol } from 'micro-eth-signer/abi.js';
+import { tokenFromSymbol } from 'micro-eth-signer/advanced/abi.js';
 import { UniswapV3 } from 'micro-eth-signer/net.js'; // or UniswapV2
 
 const USDT = tokenFromSymbol('USDT');
@@ -290,7 +296,7 @@ console.log(swapData.amount, swapData.expectedAmount, swapData.allowance);
 The ABI is type-safe when `as const` is specified:
 
 ```ts
-import { createContract } from 'micro-eth-signer/abi.js';
+import { createContract } from 'micro-eth-signer/advanced/abi.js';
 const PAIR_CONTRACT = [
   {
     type: 'function',
@@ -348,7 +354,7 @@ The transaction sent ERC-20 USDT token between addresses. The library produces a
 > Transfer 22588 USDT to 0xdac17f958d2ee523a2206206994597c13d831ec7
 
 ```ts
-import { decodeTx } from 'micro-eth-signer/abi.js';
+import { decodeTx } from 'micro-eth-signer/advanced/abi.js';
 
 const tx =
   '0xf8a901851d1a94a20082c12a94dac17f958d2ee523a2206206994597c13d831ec780b844a9059cbb000000000000000000000000dac17f958d2ee523a2206206994597c13d831ec7000000000000000000000000000000000000000000000000000000054259870025a066fcb560b50e577f6dc8c8b2e3019f760da78b4c04021382ba490c572a303a42a0078f5af8ac7e11caba9b7dc7a64f7bdc3b4ce1a6ab0a1246771d7cc3524a7200';
@@ -367,7 +373,7 @@ deepStrictEqual(decodeTx(tx), {
 Or if you have already decoded tx:
 
 ```ts
-import { decodeData } from 'micro-eth-signer/abi.js';
+import { decodeData } from 'micro-eth-signer/advanced/abi.js';
 
 const to = '0x7a250d5630b4cf539739df2c5dacb4c659f2488d';
 const data =
@@ -415,7 +421,7 @@ Decoding the event produces the following hint:
 > Allow 0xe592427a0aece92de3edee1f18e0157c05861564 spending up to 1000 BAT from 0xd8da6bf26964af9d7eed9e03e53415d37aa96045
 
 ```ts
-import { decodeEvent } from 'micro-eth-signer/abi.js';
+import { decodeEvent } from 'micro-eth-signer/advanced/abi.js';
 
 const to = '0x0d8775f648430679a709e98d2b0cb6250d2887ef';
 const topics = [
@@ -436,13 +442,13 @@ RLP in just 100 lines of code, and SSZ in 1500 lines.
 SSZ includes [EIP-7495](https://eips.ethereum.org/EIPS/eip-7495) stable containers.
 
 ```ts
-import { RLP } from 'micro-eth-signer/rlp.js';
+import { RLP } from 'micro-eth-signer/core/rlp.js';
 // More RLP examples in test/rlp.test.js
 RLP.decode(RLP.encode('dog'));
 ```
 
 ```ts
-import * as ssz from 'micro-eth-signer/ssz.js';
+import * as ssz from 'micro-eth-signer/advanced/ssz.js';
 // More SSZ examples in test/ssz.test.js
 ```
 
@@ -452,9 +458,9 @@ Allows to create & verify KZG EIP-4844 proofs.
 Supports PeerDAS from EIP-7594.
 
 ```ts
-import * as verkle from 'micro-eth-signer/verkle.js';
+import * as verkle from 'micro-eth-signer/advanced/verkle.js';
 
-import { KZG } from 'micro-eth-signer/kzg.js';
+import { KZG } from 'micro-eth-signer/advanced/kzg.js';
 // 400kb, 4-sec init
 import { trustedSetup } from '@paulmillr/trusted-setups/small-kzg.js';
 // 800kb, instant init
@@ -493,9 +499,9 @@ const isValidB = kzg.verifyBlobProof(blob, commitment, proof);
 
 ## Security
 
-You can verify standalone built files using github CLI:
-
-    gh attestation verify --owner paulmillr micro-eth-signer.js
+**Releases** are transparent and built on GitHub CI.
+Check out [attested checksums of single-file builds](https://github.com/paulmillr/micro-eth-signer/attestations)
+and [provenance logs](https://github.com/paulmillr/micro-eth-signer/actions/workflows/release.yml)
 
 Main points to consider when auditing the library:
 

@@ -3,20 +3,13 @@
   "version": "0.16.0",
   "exports": {
     ".": "./src/index.ts",
-    "./abi.js": "./src/abi/index.ts",
-    "./address.js": "./src/address.ts",
-    "./kzg.js": "./src/kzg.ts",
-    "./net.js": "./src/net/index.ts",
-    "./rlp.js": "./src/rlp.ts",
-    "./tx.js": "./src/tx.ts",
-    "./typed-data.js": "./src/typed-data.ts",
-    "./verkle.js": "./src/verkle.ts",
+    "./net.js": "./src/net.ts",
     "./utils.js": "./src/utils.ts"
   },
   "imports": {
-    "@noble/curves": "jsr:@noble/curves@~2.0.0-beta.3",
-    "@noble/hashes": "jsr:@noble/hashes@~2.0.0-beta.5",
-    "micro-packed": "jsr:@paulmillr/micro-packed@~0.8.0-beta.1"
+    "@noble/curves": "jsr:@noble/curves@^2.0.0-beta.3",
+    "@noble/hashes": "jsr:@noble/hashes@^2.0.0-beta.5",
+    "micro-packed": "jsr:@paulmillr/micro-packed@^0.8.0-beta.1"
   },
   "publish": {
     "include": [
