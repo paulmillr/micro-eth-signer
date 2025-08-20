@@ -1,6 +1,6 @@
 {
   "name": "@paulmillr/micro-eth-signer",
-  "version": "0.16.0",
+  "version": "0.17.0",
   "exports": {
     ".": "./src/index.ts",
     "./net.js": "./src/net.ts",
