@@ -20,7 +20,7 @@
   },
   "devDependencies": {
     "@paulmillr/jsbt": "0.4.3",
-    "@paulmillr/trusted-setups": "~0.2.0",
+    "@paulmillr/trusted-setups": "~0.3.0",
     "@types/node": "24.2.1",
     "micro-ftch": "0.4.3",
     "prettier": "3.6.2",
