@@ -1,15 +1,15 @@
 {
   "name": "@paulmillr/micro-eth-signer",
-  "version": "0.17.0",
+  "version": "0.17.1",
   "exports": {
     ".": "./src/index.ts",
     "./net.js": "./src/net.ts",
     "./utils.js": "./src/utils.ts"
   },
   "imports": {
-    "@noble/curves": "jsr:@noble/curves@^2.0.0-beta.3",
-    "@noble/hashes": "jsr:@noble/hashes@^2.0.0-beta.5",
-    "micro-packed": "jsr:@paulmillr/micro-packed@^0.8.0-beta.1"
+    "@noble/curves": "jsr:@noble/curves@^2.0.0",
+    "@noble/hashes": "jsr:@noble/hashes@^2.0.0",
+    "micro-packed": "jsr:@paulmillr/micro-packed@^0.8.0"
   },
   "publish": {
     "include": [
