@@ -42,7 +42,7 @@
     ".": "./index.js",
     "./net.js": "./net.js",
     "./utils.js": "./utils.js",
-    "./advanced/abi.js": "./advanced/ai.js",
+    "./advanced/abi.js": "./advanced/abi.js",
     "./advanced/kzg.js": "./advanced/kzg.js",
     "./advanced/ssz.js": "./advanced/ssz.js",
     "./advanced/verkle.js": "./advanced/verkle.js"
