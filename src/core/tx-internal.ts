@@ -483,9 +483,9 @@ const validators: Record<string, (num: any, { strict, type, data }: ValidationOp
     if (strict && address === '0x' && !data.data)
       throw new Error('Empty address (0x) without contract deployment code');
   },
-  value(num: bigint) {
+  value(num: bigint, { strict }: ValidationOpts) {
     abig(num);
-    minmax(num, _0n, amounts.maxAmount, '>= 0 and < 100M eth');
+    if (strict) minmax(num, _0n, amounts.maxAmount, '>= 0 and < 1M eth');
   },
   data(val: string, { strict, data }: ValidationOpts) {
     if (typeof val !== 'string') throw new Error('data must be string');
