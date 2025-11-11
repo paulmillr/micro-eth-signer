@@ -54,6 +54,7 @@ export type MapTuple<T> =
 // prettier-ignore
 export type MapType<T extends BaseComponent> =
   T extends Tuple<Array<Component<string>>> ? MapTuple<T['components']> :
+  T extends { readonly type: 'tuple[]'; readonly components: infer C extends Array<Component<string>> } ? MapTuple<C>[] :
   T extends Component<infer Type> ? GetType<Type> :
   unknown; // default
 export type UnmapType<T> = T extends MapType<infer U> ? U : never;
