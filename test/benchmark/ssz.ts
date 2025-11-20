@@ -1,16 +1,15 @@
 import * as chainsafe from '@chainsafe/ssz';
 import { hexToBytes } from '@noble/hashes/utils';
-import { utils as butils, compare } from '@paulmillr/jsbt/bench.js';
+import bench from '@paulmillr/jsbt/bench.js';
 import { deepStrictEqual } from 'node:assert';
 import { readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as snappy from 'snappyjs';
-import * as micro from '../../src/ssz.ts';
+import * as micro from '../../src/advanced/ssz.ts';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-
-const VECTORS_PATH = __dirname + `/../test/vectors/consensus-spec-tests/tests/mainnet/deneb/ssz_static`;
+const VECTORS_PATH = __dirname + `/../vectors/consensus-spec-tests/tests/mainnet/deneb/ssz_static`;
 
 // eth-signer is x2-x4+ slower than chainsafe.
 // - packed executes a lot of checks, which contributes to slow-down
@@ -358,17 +357,16 @@ export async function main() {
   for (const k in TYPES) {
     const t = TYPES[k];
     const data = t.data ? t.data : Uint8Array.from(snappy.uncompress(readFileSync(t.dataPath)));
-    console.log(`====== ${k} ======`);
-    await compare(`decode`, SAMPLES, {
-      chainsafe: () => t.chainsafe.deserialize(data),
-      micro: () => t.micro.decode(data),
-    });
+    console.log('##', k);
     const chainsafeDecoded = t.chainsafe.deserialize(data);
     const microDecoded = t.micro.decode(data);
-    await compare(`encode`, SAMPLES, {
-      chainsafe: () => t.chainsafe.serialize(chainsafeDecoded),
-      micro: () => t.micro.encode(microDecoded),
-    });
+
+    await bench('decode micro-eth-signer', () => t.micro.decode(data));
+    await bench('decode chainsafe', () => t.chainsafe.deserialize(data));
+
+    await bench('encode micro-eth-signer', () => t.micro.encode(microDecoded));
+    await bench('encode chainsafe', () => t.chainsafe.serialize(chainsafeDecoded));
+
     deepStrictEqual(t.micro.encode(microDecoded), data, 'micro(round-trip)');
     deepStrictEqual(
       t.chainsafe.deserialize(t.chainsafe.serialize(chainsafeDecoded)),
@@ -376,18 +374,16 @@ export async function main() {
       'chainsafe(round-trip1)'
     );
     deepStrictEqual(t.chainsafe.serialize(chainsafeDecoded), data, 'chainSafe(round-trip2)');
-    await compare(`merkleRoot`, HASH_SAMPLES, {
-      chainsafe: () => t.chainsafe.hashTreeRoot(chainsafeDecoded),
-      micro: () => t.micro.merkleRoot(microDecoded),
-    });
+
+    await bench('merkleRoot micro-eth-signer', () => t.micro.merkleRoot(microDecoded));
+    await bench('merkleRoot chainsafe', () => t.chainsafe.hashTreeRoot(chainsafeDecoded));
+
     deepStrictEqual(
       t.micro.merkleRoot(microDecoded),
       t.chainsafe.hashTreeRoot(chainsafeDecoded),
-      'merke-root'
+      'merkle-root'
     );
   }
-
-  butils.logMem();
 }
 
 // ESM is broken.

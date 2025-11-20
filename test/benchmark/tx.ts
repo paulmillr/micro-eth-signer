@@ -1,6 +1,6 @@
 import { bytesToHex } from '@noble/hashes/utils.js';
+import { bench } from '@paulmillr/jsbt/bench.js';
 import * as ethers from 'ethers';
-import { utils as butils } from '@paulmillr/jsbt/bench.js';
 import * as viem from 'viem';
 import { parseGwei } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
@@ -43,35 +43,32 @@ const TX_PARAMS = {
   },
 };
 
-const LIBS = {
+const ALL = {
   decodeTx: {
-    samples: 30_000,
     ethers: () => ethers.Transaction.from(TX),
     viem: () => viem.parseTransaction(TX),
     'micro-eth-signer': () => micro.Transaction.fromHex(TX),
   },
   decodeTxFrom: {
-    samples: 1_000,
     ethers: () => ethers.Transaction.from(TX).from,
     'micro-eth-signer': () => micro.Transaction.fromHex(TX).recoverSender().address,
   },
   decodeTxHash: {
-    samples: 10_000,
     ethers: () => ethers.Transaction.from(TX).hash,
     'micro-eth-signer': () => micro.Transaction.fromHex(TX).calcHash(true),
   },
   sign: {
-    samples: 10_000,
     ethers: async () => await ETHERS_PRIV.signTransaction(TX_PARAMS.ethers),
     viem: async () => await VIEM_PRIV.signTransaction(TX_PARAMS.viem),
-    'micro-eth-signer': () => micro.Transaction.prepare(TX_PARAMS.micro).signBy(PRIV, false).toHex(true),
+    'micro-eth-signer': () =>
+      micro.Transaction.prepare(TX_PARAMS.micro).signBy(PRIV, false).toHex(true),
   },
 };
 
 export async function main() {
   // Sanity check
   const parsed = Object.fromEntries(
-    Object.entries(LIBS.decodeTx)
+    Object.entries(ALL.decodeTx)
       .filter(([k, _]) => k !== 'samples')
       .map(([k, v]) => [k, v()])
   );
@@ -80,28 +77,31 @@ export async function main() {
   // I have no idea how to do same with viem. But ethers API seems better.
   // Seems viem gets transaction hash via web3 node.
   deepStrictEqual(parsed.ethers.from, parsed['micro-eth-signer'].recoverSender().address);
-  deepStrictEqual(parsed.ethers.unsignedHash, `0x${bytesToHex(parsed['micro-eth-signer'].calcHash(false))}`);
+  deepStrictEqual(
+    parsed.ethers.unsignedHash,
+    `0x${bytesToHex(parsed['micro-eth-signer'].calcHash(false))}`
+  );
   deepStrictEqual(parsed.ethers.hash, `0x${bytesToHex(parsed['micro-eth-signer'].calcHash(true))}`);
   const signed = Object.fromEntries(
     (
       await Promise.all(
-        Object.entries(LIBS.sign)
+        Object.entries(ALL.sign)
           .filter(([k, _]) => k !== 'samples')
           .map(([k, v]) => v())
       )
-    ).map((i, j) => [Object.keys(LIBS.sign).filter((i) => i !== 'samples')[j], i])
+    ).map((i, j) => [Object.keys(ALL.sign).filter((i) => i !== 'samples')[j], i])
   );
 
   deepStrictEqual(signed.viem, signed['micro-eth-signer']);
   deepStrictEqual(signed.ethers, signed['micro-eth-signer']);
 
-  for (const fnName in LIBS) {
-    const fns = Object.entries(LIBS[fnName]).filter(([k, _]) => k !== 'samples');
-    const { samples } = LIBS[fnName];
-    // await compare(`${fnName}`, samples, Object.fromEntries(fns));
+  for (const fnName in ALL) {
+    const libs = ALL[fnName];
+    for (let libName in libs) {
+      const fn = libs[libName];
+      await bench(`${fnName} ${libName}`, fn);
+    }
   }
-
-  butils.logMem();
 }
 
 // ESM is broken.

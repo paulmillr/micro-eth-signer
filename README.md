@@ -561,10 +561,39 @@ In the end, the balance would become 0.
 
 > `npm run bench`
 
-Transaction signature uses `noble-curves` `sign()`, which means
-7000+ signatures per second on an Apple M4. Benchmarks are located in test/benchmark dir.
+> [!NOTE]
+> The first call of `sign` will take 20ms+ due to noble-curves secp256k1 BASE point precompute.
 
-The first call of `sign` will take 20ms+ due to noble-curves secp256k1 `utils.precompute`.
+```
+decodeTxFrom ethers x 1,014 ops/sec @ 985μs/op
+decodeTxFrom micro-eth-signer x 1,035 ops/sec @ 966μs/op
+
+decodeTxHash ethers x 15,716 ops/sec @ 63μs/op
+decodeTxHash micro-eth-signer x 24,597 ops/sec @ 40μs/op
+
+sign ethers x 5,477 ops/sec @ 182μs/op
+sign viem x 6,427 ops/sec @ 155μs/op
+sign micro-eth-signer x 5,339 ops/sec @ 187μs/op
+
+# KZG and PeerDAS
+init micro-eth-signer 4ms
+init kzg-wasm 190ms
+
+# micro-eth-signer
+blobToKzgCommitment x 1 ops/sec @ 550ms/op
+computeProof x 135 ops/sec @ 7ms/op
+computeBlobProof x 1 ops/sec @ 558ms/op ± 1.42% (557ms..559ms)
+verifyProof x 539 ops/sec @ 1ms/op
+verifyBlogProof x 146 ops/sec @ 6ms/op
+verifyBlobProofBatch x 17 ops/sec @ 56ms/op
+
+# compared to pure WASM kzg-wasm
+blobToKZGCommitment x 5 ops/sec @ 192ms/op
+computeBlobProof x 5 ops/sec @ 197ms/op ± 1.06% (195ms..201ms)
+verifyProof x 377 ops/sec @ 2ms/op
+verifyBlogProof x 164 ops/sec @ 6ms/op
+verifyBlobProofBatch x 23 ops/sec @ 43ms/op
+```
 
 ## Contributing
 

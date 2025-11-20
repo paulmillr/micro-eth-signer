@@ -16,9 +16,10 @@
     "@ethereumjs/rlp": "5.0.0",
     "@ethereumjs/util": "9.1.0",
     "@lodestar/types": "1.5.0",
+    "@noble/curves": "^2.0.1",
+    "c-kzg": "4.1.0",
     "ethers": "6.11.0",
     "kzg-wasm": "0.5.0",
-    "viem": "2.7.8",
-    "c-kzg": "4.1.0"
+    "viem": "2.7.8"
   }
 }
