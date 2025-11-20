@@ -1,10 +1,6 @@
 import { RLP } from '@ethereumjs/rlp';
-import { Writable } from '@hazae41/binary';
-import { Rlp as cubane } from '@hazae41/cubane';
 import { utils as butils, compare } from '@paulmillr/jsbt/bench.js';
 import { RLP as microrlp } from '../../src/rlp.ts';
-
-const { RlpList, RlpString } = cubane;
 
 const buf = (n) => new Uint8Array(n).fill(n);
 const arr = (n, fn) => Array.from({ length: n }, (_, i) => fn(i));
@@ -50,22 +46,6 @@ export async function main() {
       samples,
       Object.fromEntries(Object.entries(rlp).map(([k, v]) => [k, () => v.decode(encoded)]))
     );
-  }
-
-  {
-    const { samples, input } = data['list of buffers (big)'];
-
-    const bytes = Writable.writeToBytesOrThrow(RlpList.from(input.map((i) => RlpString.from(i))));
-    await compare('@hazae41/cubane', samples, {
-      encode_cubane: () => {
-        const t = RlpList.from(input.map((i) => RlpString.from(i)));
-        return Writable.writeToBytesOrThrow(t);
-      },
-      // ReadUnderflowError: Cursor has 134218240 remaining bytes after read
-      // decode_cubane: () => {
-      //   const value = cubane.toPrimitive(Readable.readFromBytesOrThrow(cubane, bytes));
-      // },
-    });
   }
 
   butils.logMem();

@@ -7,8 +7,7 @@
     "./utils.js": "./src/utils.ts",
     "./advanced/abi.js": "./src/advanced/abi.ts",
     "./advanced/kzg.js": "./src/advanced/kzg.ts",
-    "./advanced/ssz.js": "./src/advanced/ssz.ts",
-    "./advanced/verkle.js": "./src/advanced/verkle.ts"
+    "./advanced/ssz.js": "./src/advanced/ssz.ts"
   },
   "imports": {
     "@noble/curves": "jsr:@noble/curves@^2.0.0",

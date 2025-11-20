@@ -7,7 +7,7 @@ Minimal library for Ethereum transactions, addresses and smart contracts.
 - 🔍 Reliable: 150MB of test vectors from EIPs, ethers and viem
 - ✍️ Core: transactions, addresses, messages
 - 🌍 Network-related: execute Uniswap & Chainlink, fetch tx history
-- 🦺 Advanced: type-safe ABI parsing, RLP, SSZ, KZG, PeerDAS, Verkle
+- 🦺 Advanced: type-safe ABI parsing, RLP, SSZ, KZG, PeerDAS
 - 🪶 28KB (gzipped) for core+deps. Viem 2 is 93KB, Ethers 6 is 137KB
 
 _Check out all web3 utility libraries:_ [ETH](https://github.com/paulmillr/micro-eth-signer), [BTC](https://github.com/paulmillr/scure-btc-signer), [SOL](https://github.com/paulmillr/micro-sol-signer)
@@ -38,7 +38,7 @@ If you don't like NPM, a standalone [eth-signer.js](https://github.com/paulmillr
   - [Human-readable transaction hints](#human-readable-transaction-hints)
   - [Human-readable event hints](#human-readable-event-hints)
   - [RLP & SSZ](#rlp--ssz)
-  - [KZG, PeerDAS, Verkle](#kzg-peerdas-verkle)
+  - [KZG & PeerDAS](#kzg--peerdas)
 - [Security](#security)
 - [Speed](#speed)
 - [License](#license)
@@ -452,14 +452,12 @@ import * as ssz from 'micro-eth-signer/advanced/ssz.js';
 // More SSZ examples in test/ssz.test.js
 ```
 
-### KZG, PeerDAS, Verkle
+### KZG & PeerDAS
 
 Allows to create & verify KZG EIP-4844 proofs.
 Supports PeerDAS from EIP-7594.
 
 ```ts
-import * as verkle from 'micro-eth-signer/advanced/verkle.js';
-
 import { KZG } from 'micro-eth-signer/advanced/kzg.js';
 // 400kb, 4-sec init
 import { trustedSetup } from '@paulmillr/trusted-setups/small-kzg.js';
@@ -469,7 +467,7 @@ import { trustedSetup } from '@paulmillr/trusted-setups/small-kzg.js';
 // import { trustedSetup } from '@paulmillr/trusted-setups/small-peerdas.js';
 // import { trustedSetup } from '@paulmillr/trusted-setups/fast-peerdas.js';
 
-// More KZG & Verkle examples in
+// More KZG examples in
 // https://github.com/ethereumjs/ethereumjs-monorepo
 
 const kzg = new KZG(trustedSetup);
