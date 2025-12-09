@@ -8,7 +8,7 @@ Minimal library for Ethereum transactions, addresses and smart contracts.
 - ✍️ Transactions, addresses, messages
 - 🦺 Type-safe ABI, RLP, SSZ, KZG, PeerDAS
 - 🌍 Archive node connector
-- 🪶 28KB (gzipped) for core+deps. Viem 2 is 93KB, Ethers 6 is 137KB
+- 🪶 28KB (gzipped) for core+deps: 4x smaller than alternatives
 
 _Check out all web3 utility libraries:_ [ETH](https://github.com/paulmillr/micro-eth-signer), [BTC](https://github.com/paulmillr/scure-btc-signer), [SOL](https://github.com/paulmillr/micro-sol-signer)
 
