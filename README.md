@@ -77,7 +77,8 @@ console.log('signed tx', signedTx, signedTx.toHex());
 console.log('fee', signedTx.fee);
 
 // Hedged signatures, with extra noise / security
-const signedTx2 = tx.signBy(random.privateKey, { extraEntropy: true });
+const tx2 = tx.signBy(random.privateKey, { extraEntropy: true }); // default, same as above
+const tx3 = tx.signBy(random.privateKey, { extraEntropy: false }); // disable
 
 // Send whole account balance. See Security section for caveats
 const CURRENT_BALANCE = '1.7182050000017'; // in eth
