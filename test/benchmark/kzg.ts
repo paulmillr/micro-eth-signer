@@ -29,11 +29,14 @@ export async function main() {
     g1: strip0x(trustedSetup.g1_lagrange),
     g2: strip0x(trustedSetup.g2_monomial),
   };
-  const wasmKZG = await loadKZG(opts);
-  const nobleKZG = new kzg.KZG(s_fast);
+  let mkzg, wkzg;
 
-  await bench('init micro-eth-signer', () => new kzg.KZG(s_fast), 1);
-  await bench('init kzg-wasm', () => loadKZG(opts), 1);
+  await bench('init micro-eth-signer', () => {
+    mkzg = new kzg.KZG(s_fast);
+  }, 1);
+  await bench('init kzg-wasm', async () => {
+    wkzg = await loadKZG(opts)
+  }, 1);
 
   const i0 = VIEM['blob-to-kzg-commitment'][1].input;
   const i1 = VIEM['compute-kzg-proof'][0].input;
@@ -42,50 +45,50 @@ export async function main() {
   const i4 = VIEM['verify-blob-kzg-proof'][0].input;
   const i5 = VIEM['verify-blob-kzg-proof-batch'][1].input;
 
-  eql(nobleKZG.blobToKzgCommitment(i0.blob), wasmKZG.blobToKZGCommitment(i0.blob).toLowerCase());
+  eql(mkzg.blobToKzgCommitment(i0.blob), wkzg.blobToKZGCommitment(i0.blob).toLowerCase());
   eql(
-    nobleKZG.computeBlobProof(i2.blob, i2.commitment),
-    wasmKZG.computeBlobKZGProof(i2.blob, i2.commitment).toLowerCase()
+    mkzg.computeBlobProof(i2.blob, i2.commitment),
+    wkzg.computeBlobKZGProof(i2.blob, i2.commitment).toLowerCase()
   );
   eql(
-    nobleKZG.verifyProof(i3.commitment, i3.z, i3.y, i3.proof),
-    wasmKZG.verifyKZGProof(i3.commitment, i3.z, i3.y, i3.proof)
+    mkzg.verifyProof(i3.commitment, i3.z, i3.y, i3.proof),
+    wkzg.verifyKZGProof(i3.commitment, i3.z, i3.y, i3.proof)
   );
   eql(
-    nobleKZG.verifyBlobProof(i4.blob, i4.commitment, i4.proof),
-    wasmKZG.verifyBlobKZGProof(i4.blob, i4.commitment, i4.proof)
+    mkzg.verifyBlobProof(i4.blob, i4.commitment, i4.proof),
+    wkzg.verifyBlobKZGProof(i4.blob, i4.commitment, i4.proof)
   );
   eql(
-    nobleKZG.verifyBlobProofBatch(i5.blobs, i5.commitments, i5.proofs),
-    wasmKZG.verifyBlobKZGProofBatch(i5.blobs, i5.commitments, i5.proofs)
+    mkzg.verifyBlobProofBatch(i5.blobs, i5.commitments, i5.proofs),
+    wkzg.verifyBlobKZGProofBatch(i5.blobs, i5.commitments, i5.proofs)
   );
   async function benchSigner() {
     console.log();
     console.log('# micro-eth-signer');
-    await bench('blobToKzgCommitment', () => nobleKZG.blobToKzgCommitment(i0.blob));
-    await bench('computeProof', () => nobleKZG.computeProof(i1.blob, i1.z));
-    await bench('computeBlobProof', () => nobleKZG.computeBlobProof(i2.blob, i2.commitment));
-    await bench('verifyProof', () => nobleKZG.verifyProof(i3.commitment, i3.z, i3.y, i3.proof));
-    await bench('verifyBlogProof', () =>
-      nobleKZG.verifyBlobProof(i4.blob, i4.commitment, i4.proof)
+    await bench('blobToKzgCommitment', () => mkzg.blobToKzgCommitment(i0.blob));
+    await bench('computeProof', () => mkzg.computeProof(i1.blob, i1.z));
+    await bench('computeBlobProof', () => mkzg.computeBlobProof(i2.blob, i2.commitment));
+    await bench('verifyProof', () => mkzg.verifyProof(i3.commitment, i3.z, i3.y, i3.proof));
+    await bench('verifyBlobProof', () =>
+      mkzg.verifyBlobProof(i4.blob, i4.commitment, i4.proof)
     );
     await bench('verifyBlobProofBatch', () =>
-      nobleKZG.verifyBlobProofBatch(i5.blobs, i5.commitments, i5.proofs)
+      mkzg.verifyBlobProofBatch(i5.blobs, i5.commitments, i5.proofs)
     );
   }
 
   async function benchWasm() {
     console.log();
     console.log('# kzg-wasm');
-    await bench('blobToKZGCommitment', () => wasmKZG.blobToKZGCommitment(i0.blob));
+    await bench('blobToKZGCommitment', () => wkzg.blobToKZGCommitment(i0.blob));
     // () => nobleKZG.computeProof(i1.blob, i1.z)
-    await bench('computeBlobProof', () => wasmKZG.computeBlobKZGProof(i2.blob, i2.commitment));
-    await bench('verifyProof', () => wasmKZG.verifyKZGProof(i3.commitment, i3.z, i3.y, i3.proof));
-    await bench('verifyBlogProof', () =>
-      wasmKZG.verifyBlobKZGProof(i4.blob, i4.commitment, i4.proof)
+    await bench('computeBlobProof', () => wkzg.computeBlobKZGProof(i2.blob, i2.commitment));
+    await bench('verifyProof', () => wkzg.verifyKZGProof(i3.commitment, i3.z, i3.y, i3.proof));
+    await bench('verifyBlobProof', () =>
+      wkzg.verifyBlobKZGProof(i4.blob, i4.commitment, i4.proof)
     );
     await bench('verifyBlobProofBatch', () =>
-      wasmKZG.verifyBlobKZGProofBatch(i5.blobs, i5.commitments, i5.proofs)
+      wkzg.verifyBlobKZGProofBatch(i5.blobs, i5.commitments, i5.proofs)
     );
   }
   await benchSigner();
@@ -97,27 +100,3 @@ import url from 'node:url';
 if (import.meta.url === url.pathToFileURL(process.argv[1]).href) {
   main();
 }
-
-/*
-M2, Nov 2024
-init
-├─wasm x 3 ops/sec @ 294ms/op
-└─noble x 161 ops/sec @ 6ms/op
-blobToKzgCommitment
-├─wasm x 3 ops/sec @ 304ms/op
-└─noble x 1 ops/sec @ 705ms/op
-computeKzgProof
-└─noble x 112 ops/sec @ 8ms/op
-computeBlobKzgProof
-├─wasm x 3 ops/sec @ 311ms/op
-└─noble x 1 ops/sec @ 725ms/op
-verifyKzgProof
-├─wasm x 241 ops/sec @ 4ms/op
-└─noble x 91 ops/sec @ 10ms/op
-verifyBlobKzgProof
-├─wasm x 109 ops/sec @ 9ms/op
-└─noble x 59 ops/sec @ 16ms/op
-verifyBlobKzgProofBatch
-├─wasm x 15 ops/sec @ 64ms/op
-└─noble x 14 ops/sec @ 71ms/op
-*/
