@@ -6,8 +6,8 @@ Minimal library for Ethereum transactions, addresses and smart contracts.
 - 🔻 Tree-shakeable: unused code is excluded from your builds
 - 🔍 Reliable: 150MB of test vectors from EIPs, ethers and viem
 - ✍️ Transactions, addresses, messages
-- 🌍 Archive node connector
 - 🦺 Type-safe ABI, RLP, SSZ, KZG, PeerDAS
+- 🌍 Archive node connector
 - 🪶 28KB (gzipped) for core+deps. Viem 2 is 93KB, Ethers 6 is 137KB
 
 _Check out all web3 utility libraries:_ [ETH](https://github.com/paulmillr/micro-eth-signer), [BTC](https://github.com/paulmillr/scure-btc-signer), [SOL](https://github.com/paulmillr/micro-sol-signer)
@@ -27,18 +27,18 @@ If you don't like NPM, a standalone [eth-signer.js](https://github.com/paulmillr
   - [Transactions: create, sign](#transactions-create-sign)
   - [Addresses: create, checksum](#addresses-create-checksum)
   - [Messages: sign, verify](#messages-sign-verify)
-- Archive node connector
-  - [Init network](#init-network)
-  - [Fetch balances and history](#fetch-balances-and-history-from-an-archive-node)
-  - [Fetch Chainlink oracle prices](#fetch-chainlink-oracle-prices)
-  - [Resolve ENS address](#resolve-ens-address)
-  - [Swap tokens with Uniswap](#swap-tokens-with-uniswap)
 - Advanced
   - [Type-safe ABI parsing](#type-safe-abi-parsing)
   - [Readable transaction hints](#readable-transaction-hints)
   - [Readable event hints](#readable-event-hints)
   - [RLP & SSZ](#rlp--ssz)
   - [KZG & PeerDAS](#kzg--peerdas)
+- Archive node connector
+  - [Init network](#init-network)
+  - [Fetch balances and history](#fetch-balances-and-history-from-an-archive-node)
+  - [Fetch Chainlink oracle prices](#fetch-chainlink-oracle-prices)
+  - [Resolve ENS address](#resolve-ens-address)
+  - [Swap tokens with Uniswap](#swap-tokens-with-uniswap)
 - [Security](#security)
 - [Speed](#speed)
 - [License](#license)
