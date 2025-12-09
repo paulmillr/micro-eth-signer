@@ -5,9 +5,9 @@ Minimal library for Ethereum transactions, addresses and smart contracts.
 - 🔓 Secure: audited [noble](https://paulmillr.com/noble/) cryptography, no network code, [hedged signatures](#transactions-create-sign)
 - 🔻 Tree-shakeable: unused code is excluded from your builds
 - 🔍 Reliable: 150MB of test vectors from EIPs, ethers and viem
-- ✍️ Core: transactions, addresses, messages
-- 🌍 Network-related: execute Uniswap & Chainlink, fetch tx history
-- 🦺 Advanced: type-safe ABI parsing, RLP, SSZ, KZG, PeerDAS
+- ✍️ Transactions, addresses, messages
+- 🌍 Archive node connector
+- 🦺 Type-safe ABI, RLP, SSZ, KZG, PeerDAS
 - 🪶 28KB (gzipped) for core+deps. Viem 2 is 93KB, Ethers 6 is 137KB
 
 _Check out all web3 utility libraries:_ [ETH](https://github.com/paulmillr/micro-eth-signer), [BTC](https://github.com/paulmillr/scure-btc-signer), [SOL](https://github.com/paulmillr/micro-sol-signer)
@@ -27,7 +27,7 @@ If you don't like NPM, a standalone [eth-signer.js](https://github.com/paulmillr
   - [Transactions: create, sign](#transactions-create-sign)
   - [Addresses: create, checksum](#addresses-create-checksum)
   - [Messages: sign, verify](#messages-sign-verify)
-- Network-related
+- Archive node connector
   - [Init network](#init-network)
   - [Fetch balances and history](#fetch-balances-and-history-from-an-archive-node)
   - [Fetch Chainlink oracle prices](#fetch-chainlink-oracle-prices)
@@ -35,8 +35,8 @@ If you don't like NPM, a standalone [eth-signer.js](https://github.com/paulmillr
   - [Swap tokens with Uniswap](#swap-tokens-with-uniswap)
 - Advanced
   - [Type-safe ABI parsing](#type-safe-abi-parsing)
-  - [Human-readable transaction hints](#human-readable-transaction-hints)
-  - [Human-readable event hints](#human-readable-event-hints)
+  - [Readable transaction hints](#readable-transaction-hints)
+  - [Readable event hints](#readable-event-hints)
   - [RLP & SSZ](#rlp--ssz)
   - [KZG & PeerDAS](#kzg--peerdas)
 - [Security](#security)
@@ -190,7 +190,7 @@ const isValid = verifyTyped(signature, typedData, address);
 const publicKey = recoverPublicKeyTyped(signature, typedData);
 ```
 
-## Network-related
+## Archive node connector
 
 ### Init network
 
@@ -347,7 +347,7 @@ There are following limitations:
 
 Check out [`src/net/ens.ts`](./src/net/ens.ts) for type-safe contract execution example.
 
-### Human-readable transaction hints
+### Readable transaction hints
 
 The transaction sent ERC-20 USDT token between addresses. The library produces a following hint:
 
@@ -414,7 +414,7 @@ deepStrictEqual(decodeData(to, data, value, { customContracts }), {
 });
 ```
 
-### Human-readable event hints
+### Readable event hints
 
 Decoding the event produces the following hint:
 
