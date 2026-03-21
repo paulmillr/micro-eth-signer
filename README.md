@@ -498,9 +498,8 @@ const isValidB = kzg.verifyBlobProof(blob, commitment, proof);
 
 ## Security
 
-**Releases** are transparent and built on GitHub CI.
-Check out [attested checksums of single-file builds](https://github.com/paulmillr/micro-eth-signer/attestations)
-and [provenance logs](https://github.com/paulmillr/micro-eth-signer/actions/workflows/release.yml)
+- **Commits** are signed with PGP keys to prevent forgery. Be sure to verify the commit signatures
+- **Releases** are made transparently through token-less GitHub CI and Trusted Publishing. Be sure to verify the [provenance logs](https://docs.npmjs.com/generating-provenance-statements) for authenticity.
 
 Main points to consider when auditing the library:
 
