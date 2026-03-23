@@ -92,10 +92,18 @@ function strideExtend(src: bigint[], stride: number, outLen: number): bigint[] {
 }
 
 // Official JSON format
+/**
+ * Trusted setup bundle for EIP-4844 KZG commitments.
+ * Matches the JSON files shipped by consensus clients and trusted-setup packages.
+ */
 export type SetupData = {
+  /** G1 powers in Lagrange form used for blob commitments. */
   g1_lagrange: string[];
+  /** G2 powers in monomial form used for proof verification. */
   g2_monomial: string[];
-  g1_monomial?: string[]; // Optional, for PeerDAS only!
+  /** Optional G1 powers in monomial form, needed for PeerDAS helpers. */
+  g1_monomial?: string[];
+  /** Optional FK20 table used for faster cell-proof generation. */
   fk20?: string[];
 };
 
@@ -128,9 +136,16 @@ const Cell = {
 };
 
 /**
- * KZG from [EIP-4844](https://eips.ethereum.org/EIPS/eip-4844).
+ * KZG for {@link https://eips.ethereum.org/EIPS/eip-4844 | EIP-4844} blob commitments.
+ * @param setup - Trusted setup points in the JSON format used by consensus clients.
  * @example
- * const kzg = new KZG(trustedSetupData);
+ * Load a trusted setup and derive a blob commitment from it.
+ * ```ts
+ * import { trustedSetup } from '@paulmillr/trusted-setups/small-kzg.js';
+ * import { KZG } from 'micro-eth-signer/advanced/kzg.js';
+ * const kzg = new KZG(trustedSetup);
+ * kzg.blobToKzgCommitment(new Array(4096).fill(0n));
+ * ```
  */
 export class KZG {
   private readonly POLY_NUM: number;

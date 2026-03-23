@@ -19,19 +19,23 @@
     "micro-packed": "^0.8.0"
   },
   "devDependencies": {
-    "@paulmillr/jsbt": "0.4.5",
+    "@paulmillr/jsbt": "0.5.0",
     "@paulmillr/trusted-setups": "~0.3.0",
     "@types/node": "24.2.1",
     "micro-ftch": "0.4.3",
     "prettier": "3.6.2",
     "snappyjs": "0.7.0",
-    "typescript": "5.9.2",
+    "typescript": "6.0.1-rc",
     "yaml": "2.4.1"
   },
   "scripts": {
     "build": "tsc",
     "build:clean": "rm -f *.{js,d.ts,js.map,d.ts.map}; rm -rf {advanced,core,net}",
     "build:release": "npx --no @paulmillr/jsbt esbuild test/build",
+    "check": "npm run check:readme && npm run check:treeshake && npm run check:jsdoc",
+    "check:readme": "npx --no @paulmillr/jsbt readme package.json",
+    "check:treeshake": "npx --no @paulmillr/jsbt treeshake package.json test/build/out-treeshake",
+    "check:jsdoc": "npx --no @paulmillr/jsbt tsdoc package.json",
     "bench": "cd test/benchmark; npm install; node tx.ts",
     "format": "prettier --write src",
     "test": "node --experimental-strip-types --no-warnings test/index.ts",
@@ -40,6 +44,7 @@
   },
   "exports": {
     ".": "./index.js",
+    "./core/rlp.js": "./core/rlp.js",
     "./net.js": "./net.js",
     "./utils.js": "./utils.js",
     "./advanced/abi.js": "./advanced/abi.js",

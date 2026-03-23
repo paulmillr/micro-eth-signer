@@ -31,12 +31,12 @@ Recommended software:
 const ethNum = (n: number | bigint | undefined) =>
   `0x${!n ? '0' : n.toString(16).replace(/^0+/, '')}`;
 
-const ERC_TRANSFER = events(ERC20).Transfer;
-const WETH_DEPOSIT = events(WETH).Deposit;
-const WETH_WITHDRAW = events(WETH).Withdrawal;
-const ERC721_TRANSFER = events(ERC721).Transfer;
-const ERC1155_SINGLE = events(ERC1155).TransferSingle;
-const ERC1155_BATCH = events(ERC1155).TransferBatch;
+const ERC_TRANSFER = /* @__PURE__ */ (() => events(ERC20).Transfer)();
+const WETH_DEPOSIT = /* @__PURE__ */ (() => events(WETH).Deposit)();
+const WETH_WITHDRAW = /* @__PURE__ */ (() => events(WETH).Withdrawal)();
+const ERC721_TRANSFER = /* @__PURE__ */ (() => events(ERC721).Transfer)();
+const ERC1155_SINGLE = /* @__PURE__ */ (() => events(ERC1155).TransferSingle)();
+const ERC1155_BATCH = /* @__PURE__ */ (() => events(ERC1155).TransferBatch)();
 
 const ERC165 = [
   //     function supportsInterface(bytes4 interfaceID) external view returns (bool);

@@ -25,25 +25,46 @@ API difference:
 
 */
 const BYTES_PER_CHUNK = 32; // Should be equal to digest size of hash
-const EMPTY_CHUNK = new Uint8Array(BYTES_PER_CHUNK);
+const EMPTY_CHUNK = /* @__PURE__ */ new Uint8Array(BYTES_PER_CHUNK);
 
-export const ForkSlots = {
-  Phase0: 0,
-  Altair: 2375680,
-  Bellatrix: 4700013,
-  Capella: 6209536,
-  Deneb: 8626176,
-} as const;
+/**
+ * Slot numbers at which each Ethereum consensus fork activates on mainnet.
+ * @example
+ * Branch consensus handling on the active fork range.
+ * ```ts
+ * const slot = 7_000_000;
+ * const isCapella = slot >= ForkSlots.Capella && slot < ForkSlots.Deneb;
+ * ```
+ */
+export const ForkSlots = /* @__PURE__ */ (() =>
+  ({
+    Phase0: 0, // 2020-12-01
+    Altair: 2375680, // 2021-10-27
+    Bellatrix: 4700013, // 2022-09-06
+    Capella: 6209536, // 2023-04-12
+    Deneb: 8626176, // 2024-03-13
+    Electra: 11649024, // 2025-05-07
+    Osaka: 13164544 // 2025-12-03
+  }) as const)();
 
+/**
+ * SSZ coder with serialization and Merkleization metadata.
+ * Used by the low-level builder helpers such as `container`, `list`, `vector`, and `union`.
+ */
 export type SSZCoder<T> = P.CoderType<T> & {
+  /** Default value used when building higher-level composite coders. */
   default: T;
+  /** Human-readable coder kind, such as `uint64` or `container`. */
   info: { type: string };
-  // merkleRoot calculated differently for composite types (even if they are fixed size)
+  /** `true` when Merkleization differs from plain byte serialization. */
   composite: boolean;
+  /** Number of 32-byte chunks occupied by the fixed part of the value. */
   chunkCount: number;
-  // It is possible to create prover based on this, but we don't have one yet
+  /** Splits the value into 32-byte Merkle chunks. */
   chunks: (value: T) => Bytes[];
+  /** Computes the SSZ Merkle root of the value. */
   merkleRoot: (value: T) => Bytes;
+  /** Internal compatibility check used by stable container helpers. */
   _isStableCompat: (other: SSZCoder<any>) => boolean;
 };
 
@@ -199,14 +220,21 @@ const int = (len: number, small = true) =>
     },
   });
 
-const _0n = BigInt(0);
-export const uint8 = basic('uint8', int(1), 0);
-export const uint16 = basic('uint16', int(2), 0);
-export const uint32 = basic('uint32', int(4), 0);
-export const uint64 = basic('uint64', int(8, false), _0n);
-export const uint128 = basic('uint128', int(16, false), _0n);
-export const uint256 = basic('uint256', int(32, false), _0n);
-export const boolean = basic('boolean', P.bool, false);
+const _0n = /* @__PURE__ */ BigInt(0);
+/** SSZ coder for 8-bit unsigned integers. */
+export const uint8 = /* @__PURE__ */ basic('uint8', /* @__PURE__ */ int(1), 0);
+/** SSZ coder for 16-bit unsigned integers. */
+export const uint16 = /* @__PURE__ */ basic('uint16', /* @__PURE__ */ int(2), 0);
+/** SSZ coder for 32-bit unsigned integers. */
+export const uint32 = /* @__PURE__ */ basic('uint32', /* @__PURE__ */ int(4), 0);
+/** SSZ coder for 64-bit unsigned integers. */
+export const uint64 = /* @__PURE__ */ basic('uint64', /* @__PURE__ */ int(8, false), _0n);
+/** SSZ coder for 128-bit unsigned integers. */
+export const uint128 = /* @__PURE__ */ basic('uint128', /* @__PURE__ */ int(16, false), _0n);
+/** SSZ coder for 256-bit unsigned integers. */
+export const uint256 = /* @__PURE__ */ basic('uint256', /* @__PURE__ */ int(32, false), _0n);
+/** SSZ coder for booleans. */
+export const boolean = /* @__PURE__ */ basic('boolean', P.bool, false);
 
 const array = <T>(len: P.Length, inner: SSZCoder<T>): P.CoderType<T[]> => {
   checkSSZ(inner);
@@ -243,7 +271,17 @@ const array = <T>(len: P.Length, inner: SSZCoder<T>): P.CoderType<T[]> => {
 
 type VectorType<T> = SSZCoder<T[]> & { info: { type: 'vector'; N: number; inner: SSZCoder<T> } };
 /**
- * Vector: fixed size ('len') array of elements 'inner'
+ * Creates an SSZ vector coder.
+ * @param len - Exact element count stored in the vector.
+ * @param inner - Element coder used for every position.
+ * @returns Fixed-size SSZ vector coder.
+ * @throws If the vector length is invalid. {@link Error}
+ * @example
+ * Encode exactly two `uint8` values with a fixed-size SSZ vector.
+ * ```ts
+ * import { uint8, vector } from 'micro-eth-signer/advanced/ssz.js';
+ * vector(2, uint8).encode([1, 2]);
+ * ```
  */
 export const vector = <T>(len: number, inner: SSZCoder<T>): VectorType<T> => {
   if (!Number.isSafeInteger(len) || len <= 0)
@@ -268,7 +306,17 @@ export const vector = <T>(len: number, inner: SSZCoder<T>): VectorType<T> => {
 };
 type ListType<T> = SSZCoder<T[]> & { info: { type: 'list'; N: number; inner: SSZCoder<T> } };
 /**
- * List: dynamic array of 'inner' elements with length limit maxLen
+ * Creates an SSZ list coder.
+ * @param maxLen - Maximum number of elements allowed in the list.
+ * @param inner - Element coder used for every position.
+ * @returns Variable-size SSZ list coder.
+ * @throws If the element coder is invalid or encoded values exceed the configured list length. {@link Error}
+ * @example
+ * Encode a variable-length list with an upper bound of two elements.
+ * ```ts
+ * import { list, uint8 } from 'micro-eth-signer/advanced/ssz.js';
+ * list(2, uint8).encode([1]);
+ * ```
  */
 export const list = <T>(maxLen: number, inner: SSZCoder<T>): ListType<T> => {
   checkSSZ(inner);
@@ -327,7 +375,16 @@ type ContainerCoder<T extends Record<string, SSZCoder<any>>> = SSZCoder<{
 }> & { info: { type: 'container'; fields: T } };
 
 /**
- * Container: Encodes object with multiple fields. P.struct for SSZ.
+ * Creates an SSZ container coder from named fields.
+ * @param fields - Field coders keyed by the serialized field name.
+ * @returns SSZ container coder with Merkle tree support.
+ * @throws If the field set is empty or contains invalid SSZ coders. {@link Error}
+ * @example
+ * Encode a single-field SSZ container object.
+ * ```ts
+ * import { container, uint8 } from 'micro-eth-signer/advanced/ssz.js';
+ * container({ a: uint8 }).encode({ a: 1 });
+ * ```
  */
 export const container = <T extends Record<string, SSZCoder<any>>>(
   fields: T
@@ -383,7 +440,15 @@ const bitsCoder = (len: number): P.Coder<Bytes, boolean[]> => ({
 });
 type BitVectorType = SSZCoder<boolean[]> & { info: { type: 'bitVector'; N: number } };
 /**
- * BitVector: array of booleans with fixed size
+ * Creates an SSZ bitvector coder.
+ * @param len - Exact number of bits stored in the vector.
+ * @returns Fixed-size bitvector coder.
+ * @throws If the bitvector length is invalid. {@link Error}
+ * @example
+ * Encode exactly four boolean flags.
+ * ```ts
+ * bitvector(4).encode([true, false, true, false]);
+ * ```
  */
 export const bitvector = (len: number): BitVectorType => {
   if (!Number.isSafeInteger(len) || len <= 0)
@@ -409,7 +474,15 @@ export const bitvector = (len: number): BitVectorType => {
 };
 type BitListType = SSZCoder<boolean[]> & { info: { type: 'bitList'; N: number } };
 /**
- * BitList: array of booleans with dynamic size (but maxLen limit)
+ * Creates an SSZ bitlist coder.
+ * @param maxLen - Maximum number of bits allowed in the list.
+ * @returns Variable-size bitlist coder.
+ * @throws If the bitlist length or encoded value is invalid. {@link Error}
+ * @example
+ * Encode up to four boolean flags with a terminator bit.
+ * ```ts
+ * bitlist(4).encode([true, false, true]);
+ * ```
  */
 export const bitlist = (maxLen: number): BitListType => {
   if (!Number.isSafeInteger(maxLen) || maxLen <= 0)
@@ -454,8 +527,17 @@ export const bitlist = (maxLen: number): BitListType => {
 };
 
 /**
- * Union type (None is null)
- * */
+ * Creates an SSZ union coder from ordered variants.
+ * @param types - Variant coders in discriminant order.
+ * @returns Union coder that serializes the active variant index and payload.
+ * @throws If the union variants are invalid or the selector/value pair is incompatible. {@link Error}
+ * @example
+ * Encode the second union variant with selector `1`.
+ * ```ts
+ * import { uint8, union } from 'micro-eth-signer/advanced/ssz.js';
+ * union(null, uint8).encode({ selector: 1, value: 7 });
+ * ```
+ */
 export const union = (
   ...types: (SSZCoder<any> | null)[]
 ): SSZCoder<{ selector: number; value: any }> => {
@@ -504,7 +586,14 @@ type ByteListType = SSZCoder<Bytes> & {
   info: { type: 'list'; N: number; inner: typeof byte };
 };
 /**
- * ByteList: same as List(len, SSZ.byte), but returns Uint8Array
+ * Creates an SSZ byte-list coder.
+ * @param maxLen - Maximum number of bytes allowed in the list.
+ * @returns Variable-size byte-list coder.
+ * @example
+ * Encode a variable-length byte payload with a four-byte limit.
+ * ```ts
+ * bytelist(4).encode(new Uint8Array([1, 2]));
+ * ```
  */
 export const bytelist = (maxLen: number): ByteListType => {
   const coder = P.validate(P.bytes(null), (value) => {
@@ -533,7 +622,15 @@ type ByteVectorType = SSZCoder<Bytes> & {
   info: { type: 'vector'; N: number; inner: typeof byte };
 };
 /**
- * ByteVector: same as Vector(len, SSZ.byte), but returns Uint8Array
+ * Creates an SSZ byte-vector coder.
+ * @param len - Exact number of bytes stored in the vector.
+ * @returns Fixed-size byte-vector coder.
+ * @throws If the byte-vector length is invalid. {@link Error}
+ * @example
+ * Encode exactly two bytes.
+ * ```ts
+ * bytevector(2).encode(new Uint8Array([1, 2]));
+ * ```
  */
 export const bytevector = (len: number): ByteVectorType => {
   if (!Number.isSafeInteger(len) || len <= 0)
@@ -560,7 +657,17 @@ type StableContainerCoder<T extends Record<string, SSZCoder<any>>> = SSZCoder<{
   [K in keyof T]?: P.UnwrapCoder<T[K]>;
 }> & { info: { type: 'stableContainer'; N: number; fields: T } };
 /**
- * Same as container, but all values are optional using bitvector as prefix which indicates active fields
+ * Creates an SSZ stable-container coder.
+ * @param N - Maximum number of fields allowed by the container profile.
+ * @param fields - Field coders keyed by field name.
+ * @returns Stable-container coder compatible with SSZ profiles.
+ * @throws If the field set is empty, exceeds `N`, or contains invalid SSZ coders. {@link Error}
+ * @example
+ * Encode a stable container with one optional field present.
+ * ```ts
+ * import { stableContainer, uint8 } from 'micro-eth-signer/advanced/ssz.js';
+ * stableContainer(1, { side: uint8 }).encode({ side: 3 });
+ * ```
  */
 export const stableContainer = <T extends Record<string, SSZCoder<any>>>(
   N: number,
@@ -631,35 +738,33 @@ type ProfileCoder<
 };
 
 /**
- * Profile - fixed subset of stableContainer.
- * - fields and order of fields is exactly same as in underlying container
- * - some fields may be excluded or required in profile (all fields in stable container are always optional)
- * - adding new fields to underlying container won't change profile's constructed on top of it,
- *   because it is required to provide all list of optional fields.
- * - type of field can be changed inside profile (but we should be very explicit about this) to same shape type.
- *
+ * Creates an SSZ profile coder over a stable container.
+ * @param c - Base stable-container coder.
+ * @param optFields - Field names marked optional in the profile.
+ * @param requiredFields - Field names that must stay present in the profile.
+ * @param replaceType - Optional type replacements for profiled fields.
+ * @returns Profile coder constrained to the selected optional fields.
+ * @throws If the stable container, field lists, or replacement types are invalid. {@link Error}
  * @example
- * // class Shape(StableContainer[4]):
- * //     side: Optional[uint16]
- * //     color: Optional[uint8]
- * //     radius: Optional[uint16]
- *
- * // class Square(Profile[Shape]):
- * //     side: uint16
- * //     color: uint8
- *
- * // class Circle(Profile[Shape]):
- * //     color: uint8
- * //     radius: Optional[uint16]
- * // ->
+ * Build related required-field and optional-field views over one stable container.
+ * ```ts
+ * import * as SSZ from 'micro-eth-signer/advanced/ssz.js';
  * const Shape = SSZ.stableContainer(4, {
  *   side: SSZ.uint16,
  *   color: SSZ.uint8,
  *   radius: SSZ.uint16,
  * });
- * const Square = profile(Shape, [], ['side', 'color']);
- * const Circle = profile(Shape, ['radius'], ['color']);
- * const Circle2 = profile(Shape, ['radius'], ['color'], { color: SSZ.byte });
+ * const Square = SSZ.profile(Shape, [], ['side', 'color']);
+ * const Circle = SSZ.profile(Shape, ['radius'], ['color']);
+ * const Circle2 = SSZ.profile(Shape, ['radius'], ['color'], { color: SSZ.byte });
+ * ```
+ * @example
+ * Build a required-field view over a stable container.
+ * ```ts
+ * import { profile, stableContainer, uint8 } from 'micro-eth-signer/advanced/ssz.js';
+ * const Shape = stableContainer(1, { side: uint8 });
+ * profile(Shape, [], ['side']).encode({ side: 3 });
+ * ```
  */
 export const profile = <
   T extends Record<string, SSZCoder<any>>,
@@ -771,9 +876,22 @@ export const profile = <
 };
 
 // Aliases
+/** Alias for `uint8`. */
 export const byte = uint8;
+/** Alias for `boolean`. */
 export const bit = boolean;
+/** Alias for `boolean`. */
 export const bool = boolean;
+/**
+ * Alias for `bytevector`.
+ * @param len - Exact number of bytes stored in the vector.
+ * @returns Fixed-size byte-vector coder.
+ * @example
+ * Use the `bytevector` alias to encode exactly two bytes.
+ * ```ts
+ * bytes(2).encode(new Uint8Array([1, 2]));
+ * ```
+ */
 export const bytes = bytevector;
 
 // TODO: this required for tests, but can be useful for other ETH related stuff.
@@ -788,7 +906,7 @@ const MAX_VOLUNTARY_EXITS = 16;
 const MAX_TRANSACTIONS_PER_PAYLOAD = 1048576;
 const BYTES_PER_LOGS_BLOOM = 256;
 const MAX_EXTRA_DATA_BYTES = 32;
-const DEPOSIT_CONTRACT_TREE_DEPTH = 2 ** 5;
+const DEPOSIT_CONTRACT_TREE_DEPTH = /* @__PURE__ */ (() => 2 ** 5)();
 const SYNC_COMMITTEE_SIZE = 512;
 const MAX_BYTES_PER_TRANSACTION = 1073741824;
 const MAX_BLS_TO_EXECUTION_CHANGES = 16;
@@ -828,151 +946,163 @@ const ValidatorIndex = uint64;
 const WithdrawalIndex = uint64;
 const BlobIndex = uint64;
 const Gwei = uint64;
-const Root = bytevector(32);
-const Hash32 = bytevector(32);
-const Bytes32 = bytevector(32);
-const Version = bytevector(4);
-const DomainType = bytevector(4);
-const ForkDigest = bytevector(4);
-const Domain = bytevector(32);
-const BLSPubkey = bytevector(48);
-const KZGCommitment = bytevector(48);
-const KZGProof = bytevector(48);
-const BLSSignature = bytevector(96);
+const Root = /* @__PURE__ */ bytevector(32);
+const Hash32 = /* @__PURE__ */ bytevector(32);
+const Bytes32 = /* @__PURE__ */ bytevector(32);
+const Version = /* @__PURE__ */ bytevector(4);
+const DomainType = /* @__PURE__ */ bytevector(4);
+const ForkDigest = /* @__PURE__ */ bytevector(4);
+const Domain = /* @__PURE__ */ bytevector(32);
+const BLSPubkey = /* @__PURE__ */ bytevector(48);
+const KZGCommitment = /* @__PURE__ */ bytevector(48);
+const KZGProof = /* @__PURE__ */ bytevector(48);
+const BLSSignature = /* @__PURE__ */ bytevector(96);
 const Ether = uint64;
 const ParticipationFlags = uint8;
-const ExecutionAddress = bytevector(20);
-const PayloadId = bytevector(8);
-const Transaction = bytelist(MAX_BYTES_PER_TRANSACTION);
-const Blob = bytevector(BYTES_PER_FIELD_ELEMENT * FIELD_ELEMENTS_PER_BLOB);
+const ExecutionAddress = /* @__PURE__ */ bytevector(20);
+const PayloadId = /* @__PURE__ */ bytevector(8);
+const Transaction = /* @__PURE__ */ bytelist(MAX_BYTES_PER_TRANSACTION);
+// Tree-shaking: esbuild can keep parent schema builders alive through inline arithmetic args.
+const Blob = /* @__PURE__ */ bytevector(
+  /* @__PURE__ */ (() => BYTES_PER_FIELD_ELEMENT * FIELD_ELEMENTS_PER_BLOB)()
+);
 
-const Checkpoint = container({ epoch: Epoch, root: Root });
-const AttestationData = container({
+const Checkpoint = /* @__PURE__ */ container({ epoch: Epoch, root: Root });
+const AttestationData = /* @__PURE__ */ container({
   slot: Slot,
   index: CommitteeIndex,
   beacon_block_root: Root,
   source: Checkpoint,
   target: Checkpoint,
 });
-const Attestation = container({
-  aggregation_bits: bitlist(MAX_VALIDATORS_PER_COMMITTEE),
+const Attestation = /* @__PURE__ */ container({
+  aggregation_bits: /* @__PURE__ */ bitlist(MAX_VALIDATORS_PER_COMMITTEE),
   data: AttestationData,
   signature: BLSSignature,
 });
-const AggregateAndProof = container({
+const AggregateAndProof = /* @__PURE__ */ container({
   aggregator_index: ValidatorIndex,
   aggregate: Attestation,
   selection_proof: BLSSignature,
 });
-const IndexedAttestation = container({
-  attesting_indices: list(MAX_VALIDATORS_PER_COMMITTEE, ValidatorIndex),
+const IndexedAttestation = /* @__PURE__ */ container({
+  attesting_indices: /* @__PURE__ */ list(MAX_VALIDATORS_PER_COMMITTEE, ValidatorIndex),
   data: AttestationData,
   signature: BLSSignature,
 });
-const AttesterSlashing = container({
+const AttesterSlashing = /* @__PURE__ */ container({
   attestation_1: IndexedAttestation,
   attestation_2: IndexedAttestation,
 });
-const BLSToExecutionChange = container({
+const BLSToExecutionChange = /* @__PURE__ */ container({
   validator_index: ValidatorIndex,
   from_bls_pubkey: BLSPubkey,
   to_execution_address: ExecutionAddress,
 });
-const Withdrawal = container({
+const Withdrawal = /* @__PURE__ */ container({
   index: WithdrawalIndex,
   validator_index: ValidatorIndex,
   address: ExecutionAddress,
   amount: Gwei,
 });
-const ExecutionPayload = container({
+const ExecutionPayload = /* @__PURE__ */ container({
   parent_hash: Hash32,
   fee_recipient: ExecutionAddress,
   state_root: Bytes32,
   receipts_root: Bytes32,
-  logs_bloom: bytevector(BYTES_PER_LOGS_BLOOM),
+  logs_bloom: /* @__PURE__ */ bytevector(BYTES_PER_LOGS_BLOOM),
   prev_randao: Bytes32,
   block_number: uint64,
   gas_limit: uint64,
   gas_used: uint64,
   timestamp: uint64,
-  extra_data: bytelist(MAX_EXTRA_DATA_BYTES),
+  extra_data: /* @__PURE__ */ bytelist(MAX_EXTRA_DATA_BYTES),
   base_fee_per_gas: uint256,
   block_hash: Hash32,
-  transactions: list(MAX_TRANSACTIONS_PER_PAYLOAD, Transaction),
-  withdrawals: list(MAX_WITHDRAWALS_PER_PAYLOAD, Withdrawal),
+  transactions: /* @__PURE__ */ list(MAX_TRANSACTIONS_PER_PAYLOAD, Transaction),
+  withdrawals: /* @__PURE__ */ list(MAX_WITHDRAWALS_PER_PAYLOAD, Withdrawal),
   blob_gas_used: uint64,
   excess_blob_gas: uint64,
 });
 MAX_WITHDRAWALS_PER_PAYLOAD;
-const SigningData = container({ object_root: Root, domain: Domain });
-const BeaconBlockHeader = container({
+const SigningData = /* @__PURE__ */ container({ object_root: Root, domain: Domain });
+const BeaconBlockHeader = /* @__PURE__ */ container({
   slot: Slot,
   proposer_index: ValidatorIndex,
   parent_root: Root,
   state_root: Root,
   body_root: Root,
 });
-const SignedBeaconBlockHeader = container({ message: BeaconBlockHeader, signature: BLSSignature });
-const ProposerSlashing = container({
+const SignedBeaconBlockHeader = /* @__PURE__ */ container({
+  message: BeaconBlockHeader,
+  signature: BLSSignature,
+});
+const ProposerSlashing = /* @__PURE__ */ container({
   signed_header_1: SignedBeaconBlockHeader,
   signed_header_2: SignedBeaconBlockHeader,
 });
-const DepositData = container({
+const DepositData = /* @__PURE__ */ container({
   pubkey: BLSPubkey,
   withdrawal_credentials: Bytes32,
   amount: Gwei,
   signature: BLSSignature,
 });
-const Deposit = container({
-  proof: vector(DEPOSIT_CONTRACT_TREE_DEPTH + 1, Bytes32),
+const Deposit = /* @__PURE__ */ container({
+  proof: /* @__PURE__ */ vector(/* @__PURE__ */ (() => DEPOSIT_CONTRACT_TREE_DEPTH + 1)(), Bytes32),
   data: DepositData,
 });
-const VoluntaryExit = container({ epoch: Epoch, validator_index: ValidatorIndex });
-const SyncAggregate = container({
-  sync_committee_bits: bitvector(SYNC_COMMITTEE_SIZE),
+const VoluntaryExit = /* @__PURE__ */ container({ epoch: Epoch, validator_index: ValidatorIndex });
+const SyncAggregate = /* @__PURE__ */ container({
+  sync_committee_bits: /* @__PURE__ */ bitvector(SYNC_COMMITTEE_SIZE),
   sync_committee_signature: BLSSignature,
 });
-const Eth1Data = container({
+const Eth1Data = /* @__PURE__ */ container({
   deposit_root: Root,
   deposit_count: uint64,
   block_hash: Hash32,
 });
-const SignedVoluntaryExit = container({ message: VoluntaryExit, signature: BLSSignature });
-const SignedBLSToExecutionChange = container({
+const SignedVoluntaryExit = /* @__PURE__ */ container({
+  message: VoluntaryExit,
+  signature: BLSSignature,
+});
+const SignedBLSToExecutionChange = /* @__PURE__ */ container({
   message: BLSToExecutionChange,
   signature: BLSSignature,
 });
-const BeaconBlockBody = container({
+const BeaconBlockBody = /* @__PURE__ */ container({
   randao_reveal: BLSSignature,
   eth1_data: Eth1Data,
   graffiti: Bytes32,
-  proposer_slashings: list(MAX_PROPOSER_SLASHINGS, ProposerSlashing),
-  attester_slashings: list(MAX_ATTESTER_SLASHINGS, AttesterSlashing),
-  attestations: list(MAX_ATTESTATIONS, Attestation),
-  deposits: list(MAX_DEPOSITS, Deposit),
-  voluntary_exits: list(MAX_VOLUNTARY_EXITS, SignedVoluntaryExit),
+  proposer_slashings: /* @__PURE__ */ list(MAX_PROPOSER_SLASHINGS, ProposerSlashing),
+  attester_slashings: /* @__PURE__ */ list(MAX_ATTESTER_SLASHINGS, AttesterSlashing),
+  attestations: /* @__PURE__ */ list(MAX_ATTESTATIONS, Attestation),
+  deposits: /* @__PURE__ */ list(MAX_DEPOSITS, Deposit),
+  voluntary_exits: /* @__PURE__ */ list(MAX_VOLUNTARY_EXITS, SignedVoluntaryExit),
   sync_aggregate: SyncAggregate,
   execution_payload: ExecutionPayload,
-  bls_to_execution_changes: list(MAX_BLS_TO_EXECUTION_CHANGES, SignedBLSToExecutionChange),
-  blob_kzg_commitments: list(MAX_BLOB_COMMITMENTS_PER_BLOCK, KZGCommitment),
+  bls_to_execution_changes: /* @__PURE__ */ list(
+    MAX_BLS_TO_EXECUTION_CHANGES,
+    SignedBLSToExecutionChange
+  ),
+  blob_kzg_commitments: /* @__PURE__ */ list(MAX_BLOB_COMMITMENTS_PER_BLOCK, KZGCommitment),
 });
-const BeaconBlock = container({
+const BeaconBlock = /* @__PURE__ */ container({
   slot: Slot,
   proposer_index: ValidatorIndex,
   parent_root: Root,
   state_root: Root,
   body: BeaconBlockBody,
 });
-const SyncCommittee = container({
-  pubkeys: vector(SYNC_COMMITTEE_SIZE, BLSPubkey),
+const SyncCommittee = /* @__PURE__ */ container({
+  pubkeys: /* @__PURE__ */ vector(SYNC_COMMITTEE_SIZE, BLSPubkey),
   aggregate_pubkey: BLSPubkey,
 });
-const Fork = container({
+const Fork = /* @__PURE__ */ container({
   previous_version: Version,
   current_version: Version,
   epoch: Epoch,
 });
-const Validator = container({
+const Validator = /* @__PURE__ */ container({
   pubkey: BLSPubkey,
   withdrawal_credentials: Bytes32,
   effective_balance: Gwei,
@@ -982,18 +1112,18 @@ const Validator = container({
   exit_epoch: Epoch,
   withdrawable_epoch: Epoch,
 });
-const ExecutionPayloadHeader = container({
+const ExecutionPayloadHeader = /* @__PURE__ */ container({
   parent_hash: Hash32,
   fee_recipient: ExecutionAddress,
   state_root: Bytes32,
   receipts_root: Bytes32,
-  logs_bloom: bytevector(BYTES_PER_LOGS_BLOOM),
+  logs_bloom: /* @__PURE__ */ bytevector(BYTES_PER_LOGS_BLOOM),
   prev_randao: Bytes32,
   block_number: uint64,
   gas_limit: uint64,
   gas_used: uint64,
   timestamp: uint64,
-  extra_data: bytelist(MAX_EXTRA_DATA_BYTES),
+  extra_data: /* @__PURE__ */ bytelist(MAX_EXTRA_DATA_BYTES),
   base_fee_per_gas: uint256,
   block_hash: Hash32,
   transactions_root: Root,
@@ -1001,168 +1131,199 @@ const ExecutionPayloadHeader = container({
   blob_gas_used: uint64,
   excess_blob_gas: uint64,
 });
-const HistoricalSummary = container({
+const HistoricalSummary = /* @__PURE__ */ container({
   block_summary_root: Root,
   state_summary_root: Root,
 });
-const BeaconState = container({
+const BeaconState = /* @__PURE__ */ container({
   genesis_time: uint64,
   genesis_validators_root: Root,
   slot: Slot,
   fork: Fork,
   latest_block_header: BeaconBlockHeader,
-  block_roots: vector(SLOTS_PER_HISTORICAL_ROOT, Root),
-  state_roots: vector(SLOTS_PER_HISTORICAL_ROOT, Root),
-  historical_roots: list(HISTORICAL_ROOTS_LIMIT, Root),
+  block_roots: /* @__PURE__ */ vector(SLOTS_PER_HISTORICAL_ROOT, Root),
+  state_roots: /* @__PURE__ */ vector(SLOTS_PER_HISTORICAL_ROOT, Root),
+  historical_roots: /* @__PURE__ */ list(HISTORICAL_ROOTS_LIMIT, Root),
   eth1_data: Eth1Data,
-  eth1_data_votes: list(EPOCHS_PER_ETH1_VOTING_PERIOD * SLOTS_PER_EPOCH, Eth1Data),
+  eth1_data_votes: /* @__PURE__ */ list(
+    /* @__PURE__ */ (() => EPOCHS_PER_ETH1_VOTING_PERIOD * SLOTS_PER_EPOCH)(),
+    Eth1Data
+  ),
   eth1_deposit_index: uint64,
-  validators: list(VALIDATOR_REGISTRY_LIMIT, Validator),
-  balances: list(VALIDATOR_REGISTRY_LIMIT, Gwei),
-  randao_mixes: vector(EPOCHS_PER_HISTORICAL_VECTOR, Bytes32),
-  slashings: vector(EPOCHS_PER_SLASHINGS_VECTOR, Gwei),
-  previous_epoch_participation: list(VALIDATOR_REGISTRY_LIMIT, ParticipationFlags),
-  current_epoch_participation: list(VALIDATOR_REGISTRY_LIMIT, ParticipationFlags),
-  justification_bits: bitvector(JUSTIFICATION_BITS_LENGTH),
+  validators: /* @__PURE__ */ list(VALIDATOR_REGISTRY_LIMIT, Validator),
+  balances: /* @__PURE__ */ list(VALIDATOR_REGISTRY_LIMIT, Gwei),
+  randao_mixes: /* @__PURE__ */ vector(EPOCHS_PER_HISTORICAL_VECTOR, Bytes32),
+  slashings: /* @__PURE__ */ vector(EPOCHS_PER_SLASHINGS_VECTOR, Gwei),
+  previous_epoch_participation: /* @__PURE__ */ list(VALIDATOR_REGISTRY_LIMIT, ParticipationFlags),
+  current_epoch_participation: /* @__PURE__ */ list(VALIDATOR_REGISTRY_LIMIT, ParticipationFlags),
+  justification_bits: /* @__PURE__ */ bitvector(JUSTIFICATION_BITS_LENGTH),
   previous_justified_checkpoint: Checkpoint,
   current_justified_checkpoint: Checkpoint,
   finalized_checkpoint: Checkpoint,
-  inactivity_scores: list(VALIDATOR_REGISTRY_LIMIT, uint64),
+  inactivity_scores: /* @__PURE__ */ list(VALIDATOR_REGISTRY_LIMIT, uint64),
   current_sync_committee: SyncCommittee,
   next_sync_committee: SyncCommittee,
   latest_execution_payload_header: ExecutionPayloadHeader,
   next_withdrawal_index: WithdrawalIndex,
   next_withdrawal_validator_index: ValidatorIndex,
-  historical_summaries: list(HISTORICAL_ROOTS_LIMIT, HistoricalSummary),
+  historical_summaries: /* @__PURE__ */ list(HISTORICAL_ROOTS_LIMIT, HistoricalSummary),
 });
-const BlobIdentifier = container({
+const BlobIdentifier = /* @__PURE__ */ container({
   block_root: Root,
   index: BlobIndex,
 });
-const BlobSidecar = container({
+const BlobSidecar = /* @__PURE__ */ container({
   index: BlobIndex,
   blob: Blob,
   kzg_commitment: KZGCommitment,
   kzg_proof: KZGProof,
   signed_block_header: SignedBeaconBlockHeader,
-  kzg_commitment_inclusion_proof: vector(KZG_COMMITMENT_INCLUSION_PROOF_DEPTH, Bytes32),
+  kzg_commitment_inclusion_proof: /* @__PURE__ */ vector(
+    KZG_COMMITMENT_INCLUSION_PROOF_DEPTH,
+    Bytes32
+  ),
 });
-const SyncCommitteeContribution = container({
+const SyncCommitteeContribution = /* @__PURE__ */ container({
   slot: Slot,
   beacon_block_root: Root,
   subcommittee_index: uint64,
-  aggregation_bits: bitvector(SYNC_COMMITTEE_SIZE / SYNC_COMMITTEE_SUBNET_COUNT),
+  aggregation_bits: /* @__PURE__ */ bitvector(
+    /* @__PURE__ */ (() => SYNC_COMMITTEE_SIZE / SYNC_COMMITTEE_SUBNET_COUNT)()
+  ),
   signature: BLSSignature,
 });
-const ContributionAndProof = container({
+const ContributionAndProof = /* @__PURE__ */ container({
   aggregator_index: ValidatorIndex,
   contribution: SyncCommitteeContribution,
   selection_proof: BLSSignature,
 });
-const DepositMessage = container({
+const DepositMessage = /* @__PURE__ */ container({
   pubkey: BLSPubkey,
   withdrawal_credentials: Bytes32,
   amount: Gwei,
 });
-const Eth1Block = container({
+const Eth1Block = /* @__PURE__ */ container({
   timestamp: uint64,
   deposit_root: Root,
   deposit_count: uint64,
 });
-const ForkData = container({ current_version: Version, genesis_validators_root: Root });
-const HistoricalBatch = container({
-  block_roots: vector(SLOTS_PER_HISTORICAL_ROOT, Root),
-  state_roots: vector(SLOTS_PER_HISTORICAL_ROOT, Root),
+const ForkData = /* @__PURE__ */ container({
+  current_version: Version,
+  genesis_validators_root: Root,
 });
-const PendingAttestation = container({
-  aggregation_bits: bitlist(MAX_VALIDATORS_PER_COMMITTEE),
+const HistoricalBatch = /* @__PURE__ */ container({
+  block_roots: /* @__PURE__ */ vector(SLOTS_PER_HISTORICAL_ROOT, Root),
+  state_roots: /* @__PURE__ */ vector(SLOTS_PER_HISTORICAL_ROOT, Root),
+});
+const PendingAttestation = /* @__PURE__ */ container({
+  aggregation_bits: /* @__PURE__ */ bitlist(MAX_VALIDATORS_PER_COMMITTEE),
   data: AttestationData,
   inclusion_delay: Slot,
   proposer_index: ValidatorIndex,
 });
-const PowBlock = container({
+const PowBlock = /* @__PURE__ */ container({
   block_hash: Hash32,
   parent_hash: Hash32,
   total_difficulty: uint256,
 });
-const SignedAggregateAndProof = container({ message: AggregateAndProof, signature: BLSSignature });
-const SignedBeaconBlock = container({ message: BeaconBlock, signature: BLSSignature });
-const SignedContributionAndProof = container({
+const SignedAggregateAndProof = /* @__PURE__ */ container({
+  message: AggregateAndProof,
+  signature: BLSSignature,
+});
+const SignedBeaconBlock = /* @__PURE__ */ container({
+  message: BeaconBlock,
+  signature: BLSSignature,
+});
+const SignedContributionAndProof = /* @__PURE__ */ container({
   message: ContributionAndProof,
   signature: BLSSignature,
 });
-const SyncAggregatorSelectionData = container({ slot: Slot, subcommittee_index: uint64 });
-const SyncCommitteeMessage = container({
+const SyncAggregatorSelectionData = /* @__PURE__ */ container({
+  slot: Slot,
+  subcommittee_index: uint64,
+});
+const SyncCommitteeMessage = /* @__PURE__ */ container({
   slot: Slot,
   beacon_block_root: Root,
   validator_index: ValidatorIndex,
   signature: BLSSignature,
 });
 
-const LightClientHeader = container({
+const LightClientHeader = /* @__PURE__ */ container({
   beacon: BeaconBlockHeader,
   execution: ExecutionPayloadHeader,
-  execution_branch: vector(BLOCK_BODY_EXECUTION_PAYLOAD_DEPTH, Bytes32),
+  execution_branch: /* @__PURE__ */ vector(BLOCK_BODY_EXECUTION_PAYLOAD_DEPTH, Bytes32),
 });
-const LightClientBootstrap = container({
+const LightClientBootstrap = /* @__PURE__ */ container({
   header: LightClientHeader,
   current_sync_committee: SyncCommittee,
-  current_sync_committee_branch: vector(NEXT_SYNC_COMMITTEE_DEPTH, Bytes32),
+  current_sync_committee_branch: /* @__PURE__ */ vector(NEXT_SYNC_COMMITTEE_DEPTH, Bytes32),
 });
-const LightClientUpdate = container({
+const LightClientUpdate = /* @__PURE__ */ container({
   attested_header: LightClientHeader,
   next_sync_committee: SyncCommittee,
-  next_sync_committee_branch: vector(NEXT_SYNC_COMMITTEE_DEPTH, Bytes32),
+  next_sync_committee_branch: /* @__PURE__ */ vector(NEXT_SYNC_COMMITTEE_DEPTH, Bytes32),
   finalized_header: LightClientHeader,
-  finality_branch: vector(FINALIZED_ROOT_DEPTH, Bytes32),
+  finality_branch: /* @__PURE__ */ vector(FINALIZED_ROOT_DEPTH, Bytes32),
   sync_aggregate: SyncAggregate,
   signature_slot: Slot,
 });
-const LightClientFinalityUpdate = container({
+const LightClientFinalityUpdate = /* @__PURE__ */ container({
   attested_header: LightClientHeader,
   finalized_header: LightClientHeader,
-  finality_branch: vector(FINALIZED_ROOT_DEPTH, Bytes32),
+  finality_branch: /* @__PURE__ */ vector(FINALIZED_ROOT_DEPTH, Bytes32),
   sync_aggregate: SyncAggregate,
   signature_slot: Slot,
 });
-const LightClientOptimisticUpdate = container({
+const LightClientOptimisticUpdate = /* @__PURE__ */ container({
   attested_header: LightClientHeader,
   sync_aggregate: SyncAggregate,
   signature_slot: Slot,
 });
 // Electra
-const DepositRequest = container({
+const DepositRequest = /* @__PURE__ */ container({
   pubkey: BLSPubkey,
   withdrawal_credentials: Bytes32,
   amount: Gwei,
   signature: BLSSignature,
   index: uint64,
 });
-const WithdrawalRequest = container({
+const WithdrawalRequest = /* @__PURE__ */ container({
   source_address: ExecutionAddress,
   validator_pubkey: BLSPubkey,
   amount: Gwei,
 });
-const ConsolidationRequest = container({
+const ConsolidationRequest = /* @__PURE__ */ container({
   source_address: ExecutionAddress,
   source_pubkey: BLSPubkey,
   target_pubkey: BLSPubkey,
 });
-const PendingBalanceDeposit = container({
+const PendingBalanceDeposit = /* @__PURE__ */ container({
   index: ValidatorIndex,
   amount: Gwei,
 });
-const PendingPartialWithdrawal = container({
+const PendingPartialWithdrawal = /* @__PURE__ */ container({
   index: ValidatorIndex,
   amount: Gwei,
   withdrawable_epoch: Epoch,
 });
-const PendingConsolidation = container({
+const PendingConsolidation = /* @__PURE__ */ container({
   source_index: ValidatorIndex,
   target_index: ValidatorIndex,
 });
 
-export const ETH2_TYPES = {
+/**
+ * Low-level Ethereum consensus SSZ field coders.
+ * @example
+ * Encode a checkpoint via the grouped ETH2 field registry.
+ * ```ts
+ * import { sha256 } from '@noble/hashes/sha2.js';
+ * import { ETH2_TYPES } from 'micro-eth-signer/advanced/ssz.js';
+ * const root = sha256(new TextEncoder().encode('checkpoint-root'));
+ * ETH2_TYPES.Checkpoint.encode({ epoch: 0n, root });
+ * ```
+ */
+export const ETH2_TYPES = /* @__PURE__ */ (() => ({
   Slot,
   Epoch,
   CommitteeIndex,
@@ -1242,7 +1403,7 @@ export const ETH2_TYPES = {
   PendingBalanceDeposit,
   PendingPartialWithdrawal,
   PendingConsolidation,
-};
+}))();
 
 // EIP-7688
 const MAX_ATTESTATION_FIELDS = 8;
@@ -1252,60 +1413,71 @@ const MAX_BEACON_BLOCK_BODY_FIELDS = 64;
 const MAX_BEACON_STATE_FIELDS = 128;
 const MAX_EXECUTION_REQUESTS_FIELDS = 16;
 
-const StableAttestation = stableContainer(MAX_ATTESTATION_FIELDS, {
-  aggregation_bits: bitlist(MAX_VALIDATORS_PER_COMMITTEE * MAX_COMMITTEES_PER_SLOT),
+const StableAttestation = /* @__PURE__ */ stableContainer(MAX_ATTESTATION_FIELDS, {
+  aggregation_bits: /* @__PURE__ */ bitlist(
+    /* @__PURE__ */ (() => MAX_VALIDATORS_PER_COMMITTEE * MAX_COMMITTEES_PER_SLOT)()
+  ),
   data: AttestationData,
   signature: BLSSignature,
-  committee_bits: bitvector(MAX_COMMITTEES_PER_SLOT),
+  committee_bits: /* @__PURE__ */ bitvector(MAX_COMMITTEES_PER_SLOT),
 });
-const StableIndexedAttestation = stableContainer(MAX_INDEXED_ATTESTATION_FIELDS, {
-  attesting_indices: list(MAX_VALIDATORS_PER_COMMITTEE * MAX_COMMITTEES_PER_SLOT, ValidatorIndex),
+const StableIndexedAttestation = /* @__PURE__ */ stableContainer(MAX_INDEXED_ATTESTATION_FIELDS, {
+  attesting_indices: /* @__PURE__ */ list(
+    /* @__PURE__ */ (() => MAX_VALIDATORS_PER_COMMITTEE * MAX_COMMITTEES_PER_SLOT)(),
+    ValidatorIndex
+  ),
   data: AttestationData,
   signature: BLSSignature,
 });
-const StableAttesterSlashing = container({
+const StableAttesterSlashing = /* @__PURE__ */ container({
   attestation_1: StableIndexedAttestation,
   attestation_2: StableIndexedAttestation,
 });
-const StableExecutionRequests = stableContainer(MAX_EXECUTION_REQUESTS_FIELDS, {
-  deposits: list(MAX_DEPOSIT_REQUESTS_PER_PAYLOAD, DepositRequest), // [New in Electra:EIP6110]
-  withdrawals: list(MAX_WITHDRAWAL_REQUESTS_PER_PAYLOAD, WithdrawalRequest), // [New in Electra:EIP7002:EIP7251]
-  consolidations: list(MAX_CONSOLIDATION_REQUESTS_PER_PAYLOAD, ConsolidationRequest), // [New in Electra:EIP7251]
+const StableExecutionRequests = /* @__PURE__ */ stableContainer(MAX_EXECUTION_REQUESTS_FIELDS, {
+  deposits: /* @__PURE__ */ list(MAX_DEPOSIT_REQUESTS_PER_PAYLOAD, DepositRequest), // [New in Electra:EIP6110]
+  withdrawals: /* @__PURE__ */ list(MAX_WITHDRAWAL_REQUESTS_PER_PAYLOAD, WithdrawalRequest), // [New in Electra:EIP7002:EIP7251]
+  consolidations: /* @__PURE__ */ list(
+    MAX_CONSOLIDATION_REQUESTS_PER_PAYLOAD,
+    ConsolidationRequest
+  ), // [New in Electra:EIP7251]
 });
-const StableExecutionPayload = stableContainer(MAX_EXECUTION_PAYLOAD_FIELDS, {
+const StableExecutionPayload = /* @__PURE__ */ stableContainer(MAX_EXECUTION_PAYLOAD_FIELDS, {
   parent_hash: Hash32,
   fee_recipient: ExecutionAddress,
   state_root: Bytes32,
   receipts_root: Bytes32,
-  logs_bloom: bytevector(BYTES_PER_LOGS_BLOOM),
+  logs_bloom: /* @__PURE__ */ bytevector(BYTES_PER_LOGS_BLOOM),
   prev_randao: Bytes32,
   block_number: uint64,
   gas_limit: uint64,
   gas_used: uint64,
   timestamp: uint64,
-  extra_data: bytelist(MAX_EXTRA_DATA_BYTES),
+  extra_data: /* @__PURE__ */ bytelist(MAX_EXTRA_DATA_BYTES),
   base_fee_per_gas: uint256,
   block_hash: Hash32,
-  transactions: list(MAX_TRANSACTIONS_PER_PAYLOAD, Transaction),
-  withdrawals: list(MAX_WITHDRAWALS_PER_PAYLOAD, Withdrawal), // [New in Capella]
+  transactions: /* @__PURE__ */ list(MAX_TRANSACTIONS_PER_PAYLOAD, Transaction),
+  withdrawals: /* @__PURE__ */ list(MAX_WITHDRAWALS_PER_PAYLOAD, Withdrawal), // [New in Capella]
   blob_gas_used: uint64,
   excess_blob_gas: uint64,
-  deposit_requests: list(MAX_DEPOSIT_REQUESTS_PER_PAYLOAD, DepositRequest), // [New in Electra:EIP6110]
-  withdrawal_requests: list(MAX_WITHDRAWAL_REQUESTS_PER_PAYLOAD, WithdrawalRequest), // [New in Electra:EIP7002:EIP7251]
-  consolidation_requests: list(MAX_CONSOLIDATION_REQUESTS_PER_PAYLOAD, ConsolidationRequest), // [New in Electra:EIP7251]
+  deposit_requests: /* @__PURE__ */ list(MAX_DEPOSIT_REQUESTS_PER_PAYLOAD, DepositRequest), // [New in Electra:EIP6110]
+  withdrawal_requests: /* @__PURE__ */ list(MAX_WITHDRAWAL_REQUESTS_PER_PAYLOAD, WithdrawalRequest), // [New in Electra:EIP7002:EIP7251]
+  consolidation_requests: /* @__PURE__ */ list(
+    MAX_CONSOLIDATION_REQUESTS_PER_PAYLOAD,
+    ConsolidationRequest
+  ), // [New in Electra:EIP7251]
 });
-const StableExecutionPayloadHeader = stableContainer(MAX_EXECUTION_PAYLOAD_FIELDS, {
+const StableExecutionPayloadHeader = /* @__PURE__ */ stableContainer(MAX_EXECUTION_PAYLOAD_FIELDS, {
   parent_hash: Hash32,
   fee_recipient: ExecutionAddress,
   state_root: Bytes32,
   receipts_root: Bytes32,
-  logs_bloom: bytevector(BYTES_PER_LOGS_BLOOM),
+  logs_bloom: /* @__PURE__ */ bytevector(BYTES_PER_LOGS_BLOOM),
   prev_randao: Bytes32,
   block_number: uint64,
   gas_limit: uint64,
   gas_used: uint64,
   timestamp: uint64,
-  extra_data: bytelist(MAX_EXTRA_DATA_BYTES),
+  extra_data: /* @__PURE__ */ bytelist(MAX_EXTRA_DATA_BYTES),
   base_fee_per_gas: uint256,
   block_hash: Hash32,
   transactions_root: Root,
@@ -1316,62 +1488,75 @@ const StableExecutionPayloadHeader = stableContainer(MAX_EXECUTION_PAYLOAD_FIELD
   withdrawal_requests_root: Root, // [New in Electra:EIP7002:EIP7251]
   consolidation_requests_root: Root, // [New in Electra:EIP7251]
 });
-const StableBeaconBlockBody = stableContainer(MAX_BEACON_BLOCK_BODY_FIELDS, {
+const StableBeaconBlockBody = /* @__PURE__ */ stableContainer(MAX_BEACON_BLOCK_BODY_FIELDS, {
   randao_reveal: BLSSignature,
   eth1_data: Eth1Data,
   graffiti: Bytes32,
-  proposer_slashings: list(MAX_PROPOSER_SLASHINGS, ProposerSlashing),
-  attester_slashings: list(MAX_ATTESTER_SLASHINGS_ELECTRA, StableAttesterSlashing), // [Modified in Electra:EIP7549]
-  attestations: list(MAX_ATTESTATIONS_ELECTRA, StableAttestation), // [Modified in Electra:EIP7549]
-  deposits: list(MAX_DEPOSITS, Deposit),
-  voluntary_exits: list(MAX_VOLUNTARY_EXITS, SignedVoluntaryExit),
+  proposer_slashings: /* @__PURE__ */ list(MAX_PROPOSER_SLASHINGS, ProposerSlashing),
+  attester_slashings: /* @__PURE__ */ list(MAX_ATTESTER_SLASHINGS_ELECTRA, StableAttesterSlashing), // [Modified in Electra:EIP7549]
+  attestations: /* @__PURE__ */ list(MAX_ATTESTATIONS_ELECTRA, StableAttestation), // [Modified in Electra:EIP7549]
+  deposits: /* @__PURE__ */ list(MAX_DEPOSITS, Deposit),
+  voluntary_exits: /* @__PURE__ */ list(MAX_VOLUNTARY_EXITS, SignedVoluntaryExit),
   sync_aggregate: SyncAggregate,
   execution_payload: StableExecutionPayload,
-  bls_to_execution_changes: list(MAX_BLS_TO_EXECUTION_CHANGES, SignedBLSToExecutionChange),
-  blob_kzg_commitments: list(MAX_BLOB_COMMITMENTS_PER_BLOCK, KZGCommitment),
+  bls_to_execution_changes: /* @__PURE__ */ list(
+    MAX_BLS_TO_EXECUTION_CHANGES,
+    SignedBLSToExecutionChange
+  ),
+  blob_kzg_commitments: /* @__PURE__ */ list(MAX_BLOB_COMMITMENTS_PER_BLOCK, KZGCommitment),
   execution_requests: StableExecutionRequests,
 });
-const StableBeaconState = stableContainer(MAX_BEACON_STATE_FIELDS, {
+const StableBeaconState = /* @__PURE__ */ stableContainer(MAX_BEACON_STATE_FIELDS, {
   genesis_time: uint64,
   genesis_validators_root: Root,
   slot: Slot,
   fork: Fork,
   latest_block_header: BeaconBlockHeader,
-  block_roots: vector(SLOTS_PER_HISTORICAL_ROOT, Root),
-  state_roots: vector(SLOTS_PER_HISTORICAL_ROOT, Root),
-  historical_roots: list(HISTORICAL_ROOTS_LIMIT, Root),
+  block_roots: /* @__PURE__ */ vector(SLOTS_PER_HISTORICAL_ROOT, Root),
+  state_roots: /* @__PURE__ */ vector(SLOTS_PER_HISTORICAL_ROOT, Root),
+  historical_roots: /* @__PURE__ */ list(HISTORICAL_ROOTS_LIMIT, Root),
   eth1_data: Eth1Data,
-  eth1_data_votes: list(EPOCHS_PER_ETH1_VOTING_PERIOD * SLOTS_PER_EPOCH, Eth1Data),
+  eth1_data_votes: /* @__PURE__ */ list(
+    /* @__PURE__ */ (() => EPOCHS_PER_ETH1_VOTING_PERIOD * SLOTS_PER_EPOCH)(),
+    Eth1Data
+  ),
   eth1_deposit_index: uint64,
-  validators: list(VALIDATOR_REGISTRY_LIMIT, Validator),
-  balances: list(VALIDATOR_REGISTRY_LIMIT, Gwei),
-  randao_mixes: vector(EPOCHS_PER_HISTORICAL_VECTOR, Bytes32),
-  slashings: vector(EPOCHS_PER_SLASHINGS_VECTOR, Gwei),
-  previous_epoch_participation: list(VALIDATOR_REGISTRY_LIMIT, ParticipationFlags),
-  current_epoch_participation: list(VALIDATOR_REGISTRY_LIMIT, ParticipationFlags),
-  justification_bits: bitvector(JUSTIFICATION_BITS_LENGTH),
+  validators: /* @__PURE__ */ list(VALIDATOR_REGISTRY_LIMIT, Validator),
+  balances: /* @__PURE__ */ list(VALIDATOR_REGISTRY_LIMIT, Gwei),
+  randao_mixes: /* @__PURE__ */ vector(EPOCHS_PER_HISTORICAL_VECTOR, Bytes32),
+  slashings: /* @__PURE__ */ vector(EPOCHS_PER_SLASHINGS_VECTOR, Gwei),
+  previous_epoch_participation: /* @__PURE__ */ list(VALIDATOR_REGISTRY_LIMIT, ParticipationFlags),
+  current_epoch_participation: /* @__PURE__ */ list(VALIDATOR_REGISTRY_LIMIT, ParticipationFlags),
+  justification_bits: /* @__PURE__ */ bitvector(JUSTIFICATION_BITS_LENGTH),
   previous_justified_checkpoint: Checkpoint,
   current_justified_checkpoint: Checkpoint,
   finalized_checkpoint: Checkpoint,
-  inactivity_scores: list(VALIDATOR_REGISTRY_LIMIT, uint64),
+  inactivity_scores: /* @__PURE__ */ list(VALIDATOR_REGISTRY_LIMIT, uint64),
   current_sync_committee: SyncCommittee,
   next_sync_committee: SyncCommittee,
   latest_execution_payload_header: StableExecutionPayloadHeader,
   next_withdrawal_index: WithdrawalIndex,
   next_withdrawal_validator_index: ValidatorIndex,
-  historical_summaries: list(HISTORICAL_ROOTS_LIMIT, HistoricalSummary),
+  historical_summaries: /* @__PURE__ */ list(HISTORICAL_ROOTS_LIMIT, HistoricalSummary),
   deposit_requests_start_index: uint64, // [New in Electra:EIP6110]
   deposit_balance_to_consume: Gwei, // [New in Electra:EIP7251]
   exit_balance_to_consume: Gwei, // [New in Electra:EIP7251]
   earliest_exit_epoch: Epoch, // [New in Electra:EIP7251]
   consolidation_balance_to_consume: Gwei, // [New in Electra:EIP7251]
   earliest_consolidation_epoch: Epoch, // [New in Electra:EIP7251]
-  pending_balance_deposits: list(PENDING_BALANCE_DEPOSITS_LIMIT, PendingBalanceDeposit), // [New in Electra:EIP7251]
-  pending_partial_withdrawals: list(PENDING_PARTIAL_WITHDRAWALS_LIMIT, PendingPartialWithdrawal), // [New in Electra:EIP7251]
-  pending_consolidations: list(PENDING_CONSOLIDATIONS_LIMIT, PendingConsolidation), // [New in Electra:EIP7251]
+  pending_balance_deposits: /* @__PURE__ */ list(
+    PENDING_BALANCE_DEPOSITS_LIMIT,
+    PendingBalanceDeposit
+  ), // [New in Electra:EIP7251]
+  pending_partial_withdrawals: /* @__PURE__ */ list(
+    PENDING_PARTIAL_WITHDRAWALS_LIMIT,
+    PendingPartialWithdrawal
+  ), // [New in Electra:EIP7251]
+  pending_consolidations: /* @__PURE__ */ list(PENDING_CONSOLIDATIONS_LIMIT, PendingConsolidation), // [New in Electra:EIP7251]
 });
 
-export const ETH2_CONSENSUS = {
+/** Ethereum consensus-message SSZ coders. */
+export const ETH2_CONSENSUS = /* @__PURE__ */ (() => ({
   StableAttestation,
   StableIndexedAttestation,
   StableAttesterSlashing,
@@ -1380,21 +1565,21 @@ export const ETH2_CONSENSUS = {
   StableExecutionPayloadHeader,
   StableBeaconBlockBody,
   StableBeaconState,
-};
+}))();
 
 // Tests (electra profiles): https://github.com/ethereum/consensus-specs/pull/3844#issuecomment-2239285376
 // NOTE: these are different from EIP-7688 by some reasons, but since nothing is merged/completed in eth side, we just trying
 // to pass these tests for now.
-const IndexedAttestationElectra = profile(
+const IndexedAttestationElectra = /* @__PURE__ */ profile(
   StableIndexedAttestation,
   [],
   ['attesting_indices', 'data', 'signature']
 );
-const AttesterSlashingElectra = container({
+const AttesterSlashingElectra = /* @__PURE__ */ container({
   attestation_1: IndexedAttestationElectra,
   attestation_2: IndexedAttestationElectra,
 });
-const ExecutionPayloadHeaderElectra = profile(
+const ExecutionPayloadHeaderElectra = /* @__PURE__ */ profile(
   StableExecutionPayloadHeader,
   [],
   [
@@ -1417,17 +1602,17 @@ const ExecutionPayloadHeaderElectra = profile(
     'excess_blob_gas',
   ]
 );
-const ExecutionRequests = profile(
+const ExecutionRequests = /* @__PURE__ */ profile(
   StableExecutionRequests,
   [],
   ['deposits', 'withdrawals', 'consolidations']
 );
-const AttestationElectra = profile(
+const AttestationElectra = /* @__PURE__ */ profile(
   StableAttestation,
   [],
   ['aggregation_bits', 'data', 'signature', 'committee_bits']
 );
-const ExecutionPayloadElectra = profile(
+const ExecutionPayloadElectra = /* @__PURE__ */ profile(
   StableExecutionPayload,
   [],
   [
@@ -1450,7 +1635,8 @@ const ExecutionPayloadElectra = profile(
     'excess_blob_gas',
   ]
 );
-export const ETH2_PROFILES = {
+/** Ethereum consensus profile coders. */
+export const ETH2_PROFILES = /* @__PURE__ */ (() => ({
   electra: {
     Attestation: AttestationElectra,
     AttesterSlashing: AttesterSlashingElectra,
@@ -1458,7 +1644,7 @@ export const ETH2_PROFILES = {
     ExecutionRequests,
     ExecutionPayloadHeader: ExecutionPayloadHeaderElectra,
     ExecutionPayload: ExecutionPayloadElectra,
-    BeaconBlockBody: profile(
+    BeaconBlockBody: /* @__PURE__ */ profile(
       StableBeaconBlockBody,
       [],
       [
@@ -1477,13 +1663,16 @@ export const ETH2_PROFILES = {
         'execution_requests',
       ],
       {
-        attester_slashings: list(MAX_ATTESTER_SLASHINGS_ELECTRA, AttesterSlashingElectra),
-        attestations: list(MAX_ATTESTATIONS_ELECTRA, AttestationElectra),
+        attester_slashings: /* @__PURE__ */ list(
+          MAX_ATTESTER_SLASHINGS_ELECTRA,
+          AttesterSlashingElectra
+        ),
+        attestations: /* @__PURE__ */ list(MAX_ATTESTATIONS_ELECTRA, AttestationElectra),
         execution_payload: ExecutionPayloadElectra,
         execution_requests: ExecutionRequests,
       }
     ),
-    BeaconState: profile(
+    BeaconState: /* @__PURE__ */ profile(
       StableBeaconState,
       [],
       [
@@ -1530,257 +1719,328 @@ export const ETH2_PROFILES = {
       }
     ),
   },
-};
+}))();
 
 /** Capella Types */
-export const CapellaExecutionPayloadHeader = container({
-  parent_hash: ETH2_TYPES.Hash32,
-  fee_recipient: ETH2_TYPES.ExecutionAddress,
-  state_root: ETH2_TYPES.Bytes32,
-  receipts_root: ETH2_TYPES.Bytes32,
-  logs_bloom: bytevector(BYTES_PER_LOGS_BLOOM),
-  prev_randao: ETH2_TYPES.Bytes32,
-  block_number: uint64,
-  gas_limit: uint64,
-  gas_used: uint64,
-  timestamp: uint64,
-  extra_data: bytelist(MAX_EXTRA_DATA_BYTES),
-  base_fee_per_gas: uint256,
-  block_hash: ETH2_TYPES.Hash32,
-  transactions_root: ETH2_TYPES.Root,
-  withdrawals_root: ETH2_TYPES.Root,
-});
+/** SSZ coder for the Capella execution payload header. */
+export const CapellaExecutionPayloadHeader = /* @__PURE__ */ (() =>
+  container({
+    parent_hash: ETH2_TYPES.Hash32,
+    fee_recipient: ETH2_TYPES.ExecutionAddress,
+    state_root: ETH2_TYPES.Bytes32,
+    receipts_root: ETH2_TYPES.Bytes32,
+    logs_bloom: /* @__PURE__ */ bytevector(BYTES_PER_LOGS_BLOOM),
+    prev_randao: ETH2_TYPES.Bytes32,
+    block_number: uint64,
+    gas_limit: uint64,
+    gas_used: uint64,
+    timestamp: uint64,
+    extra_data: /* @__PURE__ */ bytelist(MAX_EXTRA_DATA_BYTES),
+    base_fee_per_gas: uint256,
+    block_hash: ETH2_TYPES.Hash32,
+    transactions_root: ETH2_TYPES.Root,
+    withdrawals_root: ETH2_TYPES.Root,
+  }))();
 
-const CapellaBeaconBlockBody = container({
-  randao_reveal: ETH2_TYPES.BLSSignature,
-  eth1_data: ETH2_TYPES.Eth1Data,
-  graffiti: ETH2_TYPES.Bytes32,
-  proposer_slashings: list(MAX_PROPOSER_SLASHINGS, ETH2_TYPES.ProposerSlashing),
-  attester_slashings: list(MAX_ATTESTER_SLASHINGS, ETH2_TYPES.AttesterSlashing),
-  attestations: list(MAX_ATTESTATIONS, ETH2_TYPES.Attestation),
-  deposits: list(MAX_DEPOSITS, ETH2_TYPES.Deposit),
-  voluntary_exits: list(MAX_VOLUNTARY_EXITS, ETH2_TYPES.SignedVoluntaryExit),
-  sync_aggregate: ETH2_TYPES.SyncAggregate,
-  execution_payload: CapellaExecutionPayloadHeader,
-  bls_to_execution_changes: list(
-    MAX_BLS_TO_EXECUTION_CHANGES,
-    ETH2_TYPES.SignedBLSToExecutionChange
-  ),
-});
-export const CapellaBeaconBlock = container({
-  slot: ETH2_TYPES.Slot,
-  proposer_index: ETH2_TYPES.ValidatorIndex,
-  parent_root: ETH2_TYPES.Root,
-  state_root: ETH2_TYPES.Root,
-  body: CapellaBeaconBlockBody,
-});
+const CapellaBeaconBlockBody = /* @__PURE__ */ (() =>
+  container({
+    randao_reveal: ETH2_TYPES.BLSSignature,
+    eth1_data: ETH2_TYPES.Eth1Data,
+    graffiti: ETH2_TYPES.Bytes32,
+    proposer_slashings: /* @__PURE__ */ list(MAX_PROPOSER_SLASHINGS, ETH2_TYPES.ProposerSlashing),
+    attester_slashings: /* @__PURE__ */ list(MAX_ATTESTER_SLASHINGS, ETH2_TYPES.AttesterSlashing),
+    attestations: /* @__PURE__ */ list(MAX_ATTESTATIONS, ETH2_TYPES.Attestation),
+    deposits: /* @__PURE__ */ list(MAX_DEPOSITS, ETH2_TYPES.Deposit),
+    voluntary_exits: /* @__PURE__ */ list(MAX_VOLUNTARY_EXITS, ETH2_TYPES.SignedVoluntaryExit),
+    sync_aggregate: ETH2_TYPES.SyncAggregate,
+    execution_payload: CapellaExecutionPayloadHeader,
+    bls_to_execution_changes: /* @__PURE__ */ list(
+      MAX_BLS_TO_EXECUTION_CHANGES,
+      ETH2_TYPES.SignedBLSToExecutionChange
+    ),
+  }))();
+/** SSZ coder for a Capella beacon block. */
+export const CapellaBeaconBlock = /* @__PURE__ */ (() =>
+  container({
+    slot: ETH2_TYPES.Slot,
+    proposer_index: ETH2_TYPES.ValidatorIndex,
+    parent_root: ETH2_TYPES.Root,
+    state_root: ETH2_TYPES.Root,
+    body: CapellaBeaconBlockBody,
+  }))();
 
-export const CapellaSignedBeaconBlock = container({
-  message: CapellaBeaconBlock,
-  signature: ETH2_TYPES.BLSSignature,
-});
+/** SSZ coder for a signed Capella beacon block. */
+export const CapellaSignedBeaconBlock = /* @__PURE__ */ (() =>
+  container({
+    message: CapellaBeaconBlock,
+    signature: ETH2_TYPES.BLSSignature,
+  }))();
 
-export const CapellaBeaconState = container({
-  genesis_time: uint64,
-  genesis_validators_root: ETH2_TYPES.Root,
-  slot: ETH2_TYPES.Slot,
-  fork: ETH2_TYPES.Fork,
-  latest_block_header: ETH2_TYPES.BeaconBlockHeader,
-  block_roots: vector(SLOTS_PER_HISTORICAL_ROOT, ETH2_TYPES.Root),
-  state_roots: vector(SLOTS_PER_HISTORICAL_ROOT, ETH2_TYPES.Root),
-  historical_roots: list(HISTORICAL_ROOTS_LIMIT, ETH2_TYPES.Root),
-  eth1_data: ETH2_TYPES.Eth1Data,
-  eth1_data_votes: list(EPOCHS_PER_ETH1_VOTING_PERIOD * SLOTS_PER_EPOCH, ETH2_TYPES.Eth1Data),
-  eth1_deposit_index: uint64,
-  validators: list(VALIDATOR_REGISTRY_LIMIT, ETH2_TYPES.Validator),
-  balances: list(VALIDATOR_REGISTRY_LIMIT, ETH2_TYPES.Gwei),
-  randao_mixes: vector(EPOCHS_PER_HISTORICAL_VECTOR, ETH2_TYPES.Bytes32),
-  slashings: vector(EPOCHS_PER_SLASHINGS_VECTOR, ETH2_TYPES.Gwei),
-  previous_epoch_participation: list(VALIDATOR_REGISTRY_LIMIT, ETH2_TYPES.ParticipationFlags),
-  current_epoch_participation: list(VALIDATOR_REGISTRY_LIMIT, ETH2_TYPES.ParticipationFlags),
-  justification_bits: bitvector(JUSTIFICATION_BITS_LENGTH),
-  previous_justified_checkpoint: ETH2_TYPES.Checkpoint,
-  current_justified_checkpoint: ETH2_TYPES.Checkpoint,
-  finalized_checkpoint: ETH2_TYPES.Checkpoint,
-  inactivity_scores: list(VALIDATOR_REGISTRY_LIMIT, uint64),
-  current_sync_committee: ETH2_TYPES.SyncCommittee,
-  next_sync_committee: ETH2_TYPES.SyncCommittee,
-  latest_execution_payload_header: CapellaExecutionPayloadHeader,
-  next_withdrawal_index: uint64,
-  next_withdrawal_validator_index: uint64,
-  historical_summaries: list(HISTORICAL_ROOTS_LIMIT, ETH2_TYPES.HistoricalSummary),
-});
+/** SSZ coder for a Capella beacon state. */
+export const CapellaBeaconState = /* @__PURE__ */ (() =>
+  container({
+    genesis_time: uint64,
+    genesis_validators_root: ETH2_TYPES.Root,
+    slot: ETH2_TYPES.Slot,
+    fork: ETH2_TYPES.Fork,
+    latest_block_header: ETH2_TYPES.BeaconBlockHeader,
+    block_roots: /* @__PURE__ */ vector(SLOTS_PER_HISTORICAL_ROOT, ETH2_TYPES.Root),
+    state_roots: /* @__PURE__ */ vector(SLOTS_PER_HISTORICAL_ROOT, ETH2_TYPES.Root),
+    historical_roots: /* @__PURE__ */ list(HISTORICAL_ROOTS_LIMIT, ETH2_TYPES.Root),
+    eth1_data: ETH2_TYPES.Eth1Data,
+    eth1_data_votes: /* @__PURE__ */ list(
+      /* @__PURE__ */ (() => EPOCHS_PER_ETH1_VOTING_PERIOD * SLOTS_PER_EPOCH)(),
+      ETH2_TYPES.Eth1Data
+    ),
+    eth1_deposit_index: uint64,
+    validators: /* @__PURE__ */ list(VALIDATOR_REGISTRY_LIMIT, ETH2_TYPES.Validator),
+    balances: /* @__PURE__ */ list(VALIDATOR_REGISTRY_LIMIT, ETH2_TYPES.Gwei),
+    randao_mixes: /* @__PURE__ */ vector(EPOCHS_PER_HISTORICAL_VECTOR, ETH2_TYPES.Bytes32),
+    slashings: /* @__PURE__ */ vector(EPOCHS_PER_SLASHINGS_VECTOR, ETH2_TYPES.Gwei),
+    previous_epoch_participation: /* @__PURE__ */ list(
+      VALIDATOR_REGISTRY_LIMIT,
+      ETH2_TYPES.ParticipationFlags
+    ),
+    current_epoch_participation: /* @__PURE__ */ list(
+      VALIDATOR_REGISTRY_LIMIT,
+      ETH2_TYPES.ParticipationFlags
+    ),
+    justification_bits: /* @__PURE__ */ bitvector(JUSTIFICATION_BITS_LENGTH),
+    previous_justified_checkpoint: ETH2_TYPES.Checkpoint,
+    current_justified_checkpoint: ETH2_TYPES.Checkpoint,
+    finalized_checkpoint: ETH2_TYPES.Checkpoint,
+    inactivity_scores: /* @__PURE__ */ list(VALIDATOR_REGISTRY_LIMIT, uint64),
+    current_sync_committee: ETH2_TYPES.SyncCommittee,
+    next_sync_committee: ETH2_TYPES.SyncCommittee,
+    latest_execution_payload_header: CapellaExecutionPayloadHeader,
+    next_withdrawal_index: uint64,
+    next_withdrawal_validator_index: uint64,
+    historical_summaries: /* @__PURE__ */ list(
+      HISTORICAL_ROOTS_LIMIT,
+      ETH2_TYPES.HistoricalSummary
+    ),
+  }))();
 
 /** Bellatrix Types */
-export const BellatrixExecutionPayloadHeader = container({
-  parent_hash: ETH2_TYPES.Hash32,
-  fee_recipient: ETH2_TYPES.ExecutionAddress,
-  state_root: ETH2_TYPES.Bytes32,
-  receipts_root: ETH2_TYPES.Bytes32,
-  logs_bloom: bytevector(BYTES_PER_LOGS_BLOOM),
-  prev_randao: ETH2_TYPES.Bytes32,
-  block_number: uint64,
-  gas_limit: uint64,
-  gas_used: uint64,
-  timestamp: uint64,
-  extra_data: bytelist(MAX_EXTRA_DATA_BYTES),
-  base_fee_per_gas: uint256,
-  block_hash: ETH2_TYPES.Hash32,
-  transactions_root: ETH2_TYPES.Root,
-});
+/** SSZ coder for the Bellatrix execution payload header. */
+export const BellatrixExecutionPayloadHeader = /* @__PURE__ */ (() =>
+  container({
+    parent_hash: ETH2_TYPES.Hash32,
+    fee_recipient: ETH2_TYPES.ExecutionAddress,
+    state_root: ETH2_TYPES.Bytes32,
+    receipts_root: ETH2_TYPES.Bytes32,
+    logs_bloom: /* @__PURE__ */ bytevector(BYTES_PER_LOGS_BLOOM),
+    prev_randao: ETH2_TYPES.Bytes32,
+    block_number: uint64,
+    gas_limit: uint64,
+    gas_used: uint64,
+    timestamp: uint64,
+    extra_data: /* @__PURE__ */ bytelist(MAX_EXTRA_DATA_BYTES),
+    base_fee_per_gas: uint256,
+    block_hash: ETH2_TYPES.Hash32,
+    transactions_root: ETH2_TYPES.Root,
+  }))();
 
-const BellatrixBeaconBlockBody = container({
-  randao_reveal: ETH2_TYPES.BLSSignature,
-  eth1_data: ETH2_TYPES.Eth1Data,
-  graffiti: ETH2_TYPES.Bytes32,
-  proposer_slashings: list(MAX_PROPOSER_SLASHINGS, ETH2_TYPES.ProposerSlashing),
-  attester_slashings: list(MAX_ATTESTER_SLASHINGS, ETH2_TYPES.AttesterSlashing),
-  attestations: list(MAX_ATTESTATIONS, ETH2_TYPES.Attestation),
-  deposits: list(MAX_DEPOSITS, ETH2_TYPES.Deposit),
-  voluntary_exits: list(MAX_VOLUNTARY_EXITS, ETH2_TYPES.SignedVoluntaryExit),
-  sync_aggregate: ETH2_TYPES.SyncAggregate,
-  execution_payload: BellatrixExecutionPayloadHeader,
-  bls_to_execution_changes: list(
-    MAX_BLS_TO_EXECUTION_CHANGES,
-    ETH2_TYPES.SignedBLSToExecutionChange
-  ),
-});
-export const BellatrixBeaconBlock = container({
-  slot: ETH2_TYPES.Slot,
-  proposer_index: ETH2_TYPES.ValidatorIndex,
-  parent_root: ETH2_TYPES.Root,
-  state_root: ETH2_TYPES.Root,
-  body: BellatrixBeaconBlockBody,
-});
+const BellatrixBeaconBlockBody = /* @__PURE__ */ (() =>
+  container({
+    randao_reveal: ETH2_TYPES.BLSSignature,
+    eth1_data: ETH2_TYPES.Eth1Data,
+    graffiti: ETH2_TYPES.Bytes32,
+    proposer_slashings: /* @__PURE__ */ list(MAX_PROPOSER_SLASHINGS, ETH2_TYPES.ProposerSlashing),
+    attester_slashings: /* @__PURE__ */ list(MAX_ATTESTER_SLASHINGS, ETH2_TYPES.AttesterSlashing),
+    attestations: /* @__PURE__ */ list(MAX_ATTESTATIONS, ETH2_TYPES.Attestation),
+    deposits: /* @__PURE__ */ list(MAX_DEPOSITS, ETH2_TYPES.Deposit),
+    voluntary_exits: /* @__PURE__ */ list(MAX_VOLUNTARY_EXITS, ETH2_TYPES.SignedVoluntaryExit),
+    sync_aggregate: ETH2_TYPES.SyncAggregate,
+    execution_payload: BellatrixExecutionPayloadHeader,
+    bls_to_execution_changes: /* @__PURE__ */ list(
+      MAX_BLS_TO_EXECUTION_CHANGES,
+      ETH2_TYPES.SignedBLSToExecutionChange
+    ),
+  }))();
+/** SSZ coder for a Bellatrix beacon block. */
+export const BellatrixBeaconBlock = /* @__PURE__ */ (() =>
+  container({
+    slot: ETH2_TYPES.Slot,
+    proposer_index: ETH2_TYPES.ValidatorIndex,
+    parent_root: ETH2_TYPES.Root,
+    state_root: ETH2_TYPES.Root,
+    body: BellatrixBeaconBlockBody,
+  }))();
 
-export const BellatrixSignedBeaconBlock = container({
-  message: BellatrixBeaconBlock,
-  signature: ETH2_TYPES.BLSSignature,
-});
+/** SSZ coder for a signed Bellatrix beacon block. */
+export const BellatrixSignedBeaconBlock = /* @__PURE__ */ (() =>
+  container({
+    message: BellatrixBeaconBlock,
+    signature: ETH2_TYPES.BLSSignature,
+  }))();
 
-export const BellatrixBeaconState = container({
-  genesis_time: uint64,
-  genesis_validators_root: ETH2_TYPES.Root,
-  slot: ETH2_TYPES.Slot,
-  fork: ETH2_TYPES.Fork,
-  latest_block_header: ETH2_TYPES.BeaconBlockHeader,
-  block_roots: vector(SLOTS_PER_HISTORICAL_ROOT, ETH2_TYPES.Root),
-  state_roots: vector(SLOTS_PER_HISTORICAL_ROOT, ETH2_TYPES.Root),
-  historical_roots: list(HISTORICAL_ROOTS_LIMIT, ETH2_TYPES.Root),
-  eth1_data: ETH2_TYPES.Eth1Data,
-  eth1_data_votes: list(EPOCHS_PER_ETH1_VOTING_PERIOD * SLOTS_PER_EPOCH, ETH2_TYPES.Eth1Data),
-  eth1_deposit_index: uint64,
-  validators: list(VALIDATOR_REGISTRY_LIMIT, ETH2_TYPES.Validator),
-  balances: list(VALIDATOR_REGISTRY_LIMIT, ETH2_TYPES.Gwei),
-  randao_mixes: vector(EPOCHS_PER_HISTORICAL_VECTOR, ETH2_TYPES.Bytes32),
-  slashings: vector(EPOCHS_PER_SLASHINGS_VECTOR, ETH2_TYPES.Gwei),
-  previous_epoch_participation: list(VALIDATOR_REGISTRY_LIMIT, ETH2_TYPES.ParticipationFlags),
-  current_epoch_participation: list(VALIDATOR_REGISTRY_LIMIT, ETH2_TYPES.ParticipationFlags),
-  justification_bits: bitvector(JUSTIFICATION_BITS_LENGTH),
-  previous_justified_checkpoint: ETH2_TYPES.Checkpoint,
-  current_justified_checkpoint: ETH2_TYPES.Checkpoint,
-  finalized_checkpoint: ETH2_TYPES.Checkpoint,
-  inactivity_scores: list(VALIDATOR_REGISTRY_LIMIT, uint64),
-  current_sync_committee: ETH2_TYPES.SyncCommittee,
-  next_sync_committee: ETH2_TYPES.SyncCommittee,
-  latest_execution_payload_header: BellatrixExecutionPayloadHeader,
-});
+/** SSZ coder for a Bellatrix beacon state. */
+export const BellatrixBeaconState = /* @__PURE__ */ (() =>
+  container({
+    genesis_time: uint64,
+    genesis_validators_root: ETH2_TYPES.Root,
+    slot: ETH2_TYPES.Slot,
+    fork: ETH2_TYPES.Fork,
+    latest_block_header: ETH2_TYPES.BeaconBlockHeader,
+    block_roots: /* @__PURE__ */ vector(SLOTS_PER_HISTORICAL_ROOT, ETH2_TYPES.Root),
+    state_roots: /* @__PURE__ */ vector(SLOTS_PER_HISTORICAL_ROOT, ETH2_TYPES.Root),
+    historical_roots: /* @__PURE__ */ list(HISTORICAL_ROOTS_LIMIT, ETH2_TYPES.Root),
+    eth1_data: ETH2_TYPES.Eth1Data,
+    eth1_data_votes: /* @__PURE__ */ list(
+      /* @__PURE__ */ (() => EPOCHS_PER_ETH1_VOTING_PERIOD * SLOTS_PER_EPOCH)(),
+      ETH2_TYPES.Eth1Data
+    ),
+    eth1_deposit_index: uint64,
+    validators: /* @__PURE__ */ list(VALIDATOR_REGISTRY_LIMIT, ETH2_TYPES.Validator),
+    balances: /* @__PURE__ */ list(VALIDATOR_REGISTRY_LIMIT, ETH2_TYPES.Gwei),
+    randao_mixes: /* @__PURE__ */ vector(EPOCHS_PER_HISTORICAL_VECTOR, ETH2_TYPES.Bytes32),
+    slashings: /* @__PURE__ */ vector(EPOCHS_PER_SLASHINGS_VECTOR, ETH2_TYPES.Gwei),
+    previous_epoch_participation: /* @__PURE__ */ list(
+      VALIDATOR_REGISTRY_LIMIT,
+      ETH2_TYPES.ParticipationFlags
+    ),
+    current_epoch_participation: /* @__PURE__ */ list(
+      VALIDATOR_REGISTRY_LIMIT,
+      ETH2_TYPES.ParticipationFlags
+    ),
+    justification_bits: /* @__PURE__ */ bitvector(JUSTIFICATION_BITS_LENGTH),
+    previous_justified_checkpoint: ETH2_TYPES.Checkpoint,
+    current_justified_checkpoint: ETH2_TYPES.Checkpoint,
+    finalized_checkpoint: ETH2_TYPES.Checkpoint,
+    inactivity_scores: /* @__PURE__ */ list(VALIDATOR_REGISTRY_LIMIT, uint64),
+    current_sync_committee: ETH2_TYPES.SyncCommittee,
+    next_sync_committee: ETH2_TYPES.SyncCommittee,
+    latest_execution_payload_header: BellatrixExecutionPayloadHeader,
+  }))();
 
 /** Altair Types */
-const AltairBeaconBlockBody = container({
-  randao_reveal: ETH2_TYPES.BLSSignature,
-  eth1_data: ETH2_TYPES.Eth1Data,
-  graffiti: ETH2_TYPES.Bytes32,
-  proposer_slashings: list(MAX_PROPOSER_SLASHINGS, ETH2_TYPES.ProposerSlashing),
-  attester_slashings: list(MAX_ATTESTER_SLASHINGS, ETH2_TYPES.AttesterSlashing),
-  attestations: list(MAX_ATTESTATIONS, ETH2_TYPES.Attestation),
-  deposits: list(MAX_DEPOSITS, ETH2_TYPES.Deposit),
-  voluntary_exits: list(MAX_VOLUNTARY_EXITS, ETH2_TYPES.SignedVoluntaryExit),
-  sync_aggregate: ETH2_TYPES.SyncAggregate,
-});
-export const AltairBeaconBlock = container({
-  slot: ETH2_TYPES.Slot,
-  proposer_index: ETH2_TYPES.ValidatorIndex,
-  parent_root: ETH2_TYPES.Root,
-  state_root: ETH2_TYPES.Root,
-  body: AltairBeaconBlockBody,
-});
+const AltairBeaconBlockBody = /* @__PURE__ */ (() =>
+  container({
+    randao_reveal: ETH2_TYPES.BLSSignature,
+    eth1_data: ETH2_TYPES.Eth1Data,
+    graffiti: ETH2_TYPES.Bytes32,
+    proposer_slashings: /* @__PURE__ */ list(MAX_PROPOSER_SLASHINGS, ETH2_TYPES.ProposerSlashing),
+    attester_slashings: /* @__PURE__ */ list(MAX_ATTESTER_SLASHINGS, ETH2_TYPES.AttesterSlashing),
+    attestations: /* @__PURE__ */ list(MAX_ATTESTATIONS, ETH2_TYPES.Attestation),
+    deposits: /* @__PURE__ */ list(MAX_DEPOSITS, ETH2_TYPES.Deposit),
+    voluntary_exits: /* @__PURE__ */ list(MAX_VOLUNTARY_EXITS, ETH2_TYPES.SignedVoluntaryExit),
+    sync_aggregate: ETH2_TYPES.SyncAggregate,
+  }))();
+/** SSZ coder for an Altair beacon block. */
+export const AltairBeaconBlock = /* @__PURE__ */ (() =>
+  container({
+    slot: ETH2_TYPES.Slot,
+    proposer_index: ETH2_TYPES.ValidatorIndex,
+    parent_root: ETH2_TYPES.Root,
+    state_root: ETH2_TYPES.Root,
+    body: AltairBeaconBlockBody,
+  }))();
 
-export const AltairSignedBeaconBlock = container({
-  message: AltairBeaconBlock,
-  signature: ETH2_TYPES.BLSSignature,
-});
+/** SSZ coder for a signed Altair beacon block. */
+export const AltairSignedBeaconBlock = /* @__PURE__ */ (() =>
+  container({
+    message: AltairBeaconBlock,
+    signature: ETH2_TYPES.BLSSignature,
+  }))();
 
-export const AltairBeaconState = container({
-  genesis_time: uint64,
-  genesis_validators_root: ETH2_TYPES.Root,
-  slot: ETH2_TYPES.Slot,
-  fork: ETH2_TYPES.Fork,
-  latest_block_header: ETH2_TYPES.BeaconBlockHeader,
-  block_roots: vector(SLOTS_PER_HISTORICAL_ROOT, ETH2_TYPES.Root),
-  state_roots: vector(SLOTS_PER_HISTORICAL_ROOT, ETH2_TYPES.Root),
-  historical_roots: list(HISTORICAL_ROOTS_LIMIT, ETH2_TYPES.Root),
-  eth1_data: ETH2_TYPES.Eth1Data,
-  eth1_data_votes: list(EPOCHS_PER_ETH1_VOTING_PERIOD * SLOTS_PER_EPOCH, ETH2_TYPES.Eth1Data),
-  eth1_deposit_index: uint64,
-  validators: list(VALIDATOR_REGISTRY_LIMIT, ETH2_TYPES.Validator),
-  balances: list(VALIDATOR_REGISTRY_LIMIT, ETH2_TYPES.Gwei),
-  randao_mixes: vector(EPOCHS_PER_HISTORICAL_VECTOR, ETH2_TYPES.Bytes32),
-  slashings: vector(EPOCHS_PER_SLASHINGS_VECTOR, ETH2_TYPES.Gwei),
-  previous_epoch_participation: list(VALIDATOR_REGISTRY_LIMIT, ETH2_TYPES.ParticipationFlags),
-  current_epoch_participation: list(VALIDATOR_REGISTRY_LIMIT, ETH2_TYPES.ParticipationFlags),
-  justification_bits: bitvector(JUSTIFICATION_BITS_LENGTH),
-  previous_justified_checkpoint: ETH2_TYPES.Checkpoint,
-  current_justified_checkpoint: ETH2_TYPES.Checkpoint,
-  finalized_checkpoint: ETH2_TYPES.Checkpoint,
-  inactivity_scores: list(VALIDATOR_REGISTRY_LIMIT, uint64),
-  current_sync_committee: ETH2_TYPES.SyncCommittee,
-  next_sync_committee: ETH2_TYPES.SyncCommittee,
-});
+/** SSZ coder for an Altair beacon state. */
+export const AltairBeaconState = /* @__PURE__ */ (() =>
+  container({
+    genesis_time: uint64,
+    genesis_validators_root: ETH2_TYPES.Root,
+    slot: ETH2_TYPES.Slot,
+    fork: ETH2_TYPES.Fork,
+    latest_block_header: ETH2_TYPES.BeaconBlockHeader,
+    block_roots: /* @__PURE__ */ vector(SLOTS_PER_HISTORICAL_ROOT, ETH2_TYPES.Root),
+    state_roots: /* @__PURE__ */ vector(SLOTS_PER_HISTORICAL_ROOT, ETH2_TYPES.Root),
+    historical_roots: /* @__PURE__ */ list(HISTORICAL_ROOTS_LIMIT, ETH2_TYPES.Root),
+    eth1_data: ETH2_TYPES.Eth1Data,
+    eth1_data_votes: /* @__PURE__ */ list(
+      /* @__PURE__ */ (() => EPOCHS_PER_ETH1_VOTING_PERIOD * SLOTS_PER_EPOCH)(),
+      ETH2_TYPES.Eth1Data
+    ),
+    eth1_deposit_index: uint64,
+    validators: /* @__PURE__ */ list(VALIDATOR_REGISTRY_LIMIT, ETH2_TYPES.Validator),
+    balances: /* @__PURE__ */ list(VALIDATOR_REGISTRY_LIMIT, ETH2_TYPES.Gwei),
+    randao_mixes: /* @__PURE__ */ vector(EPOCHS_PER_HISTORICAL_VECTOR, ETH2_TYPES.Bytes32),
+    slashings: /* @__PURE__ */ vector(EPOCHS_PER_SLASHINGS_VECTOR, ETH2_TYPES.Gwei),
+    previous_epoch_participation: /* @__PURE__ */ list(
+      VALIDATOR_REGISTRY_LIMIT,
+      ETH2_TYPES.ParticipationFlags
+    ),
+    current_epoch_participation: /* @__PURE__ */ list(
+      VALIDATOR_REGISTRY_LIMIT,
+      ETH2_TYPES.ParticipationFlags
+    ),
+    justification_bits: /* @__PURE__ */ bitvector(JUSTIFICATION_BITS_LENGTH),
+    previous_justified_checkpoint: ETH2_TYPES.Checkpoint,
+    current_justified_checkpoint: ETH2_TYPES.Checkpoint,
+    finalized_checkpoint: ETH2_TYPES.Checkpoint,
+    inactivity_scores: /* @__PURE__ */ list(VALIDATOR_REGISTRY_LIMIT, uint64),
+    current_sync_committee: ETH2_TYPES.SyncCommittee,
+    next_sync_committee: ETH2_TYPES.SyncCommittee,
+  }))();
 
 /** Phase0 Types */
-const Phase0BeaconBlockBody = container({
-  randao_reveal: ETH2_TYPES.BLSSignature,
-  eth1_data: ETH2_TYPES.Eth1Data,
-  graffiti: ETH2_TYPES.Bytes32,
-  proposer_slashings: list(MAX_PROPOSER_SLASHINGS, ETH2_TYPES.ProposerSlashing),
-  attester_slashings: list(MAX_ATTESTER_SLASHINGS, ETH2_TYPES.AttesterSlashing),
-  attestations: list(MAX_ATTESTATIONS, ETH2_TYPES.Attestation),
-  deposits: list(MAX_DEPOSITS, ETH2_TYPES.Deposit),
-  voluntary_exits: list(MAX_VOLUNTARY_EXITS, ETH2_TYPES.SignedVoluntaryExit),
-});
-export const Phase0BeaconBlock = container({
-  slot: ETH2_TYPES.Slot,
-  proposer_index: ETH2_TYPES.ValidatorIndex,
-  parent_root: ETH2_TYPES.Root,
-  state_root: ETH2_TYPES.Root,
-  body: Phase0BeaconBlockBody,
-});
+const Phase0BeaconBlockBody = /* @__PURE__ */ (() =>
+  container({
+    randao_reveal: ETH2_TYPES.BLSSignature,
+    eth1_data: ETH2_TYPES.Eth1Data,
+    graffiti: ETH2_TYPES.Bytes32,
+    proposer_slashings: /* @__PURE__ */ list(MAX_PROPOSER_SLASHINGS, ETH2_TYPES.ProposerSlashing),
+    attester_slashings: /* @__PURE__ */ list(MAX_ATTESTER_SLASHINGS, ETH2_TYPES.AttesterSlashing),
+    attestations: /* @__PURE__ */ list(MAX_ATTESTATIONS, ETH2_TYPES.Attestation),
+    deposits: /* @__PURE__ */ list(MAX_DEPOSITS, ETH2_TYPES.Deposit),
+    voluntary_exits: /* @__PURE__ */ list(MAX_VOLUNTARY_EXITS, ETH2_TYPES.SignedVoluntaryExit),
+  }))();
+/** SSZ coder for a Phase0 beacon block. */
+export const Phase0BeaconBlock = /* @__PURE__ */ (() =>
+  container({
+    slot: ETH2_TYPES.Slot,
+    proposer_index: ETH2_TYPES.ValidatorIndex,
+    parent_root: ETH2_TYPES.Root,
+    state_root: ETH2_TYPES.Root,
+    body: Phase0BeaconBlockBody,
+  }))();
 
-export const Phase0SignedBeaconBlock = container({
-  message: Phase0BeaconBlock,
-  signature: ETH2_TYPES.BLSSignature,
-});
-export const Phase0BeaconState = container({
-  genesis_time: uint64,
-  genesis_validators_root: ETH2_TYPES.Root,
-  slot: ETH2_TYPES.Slot,
-  fork: ETH2_TYPES.Fork,
-  latest_block_header: ETH2_TYPES.BeaconBlockHeader,
-  block_roots: vector(SLOTS_PER_HISTORICAL_ROOT, ETH2_TYPES.Root),
-  state_roots: vector(SLOTS_PER_HISTORICAL_ROOT, ETH2_TYPES.Root),
-  historical_roots: list(HISTORICAL_ROOTS_LIMIT, ETH2_TYPES.Root),
-  eth1_data: ETH2_TYPES.Eth1Data,
-  eth1_data_votes: list(EPOCHS_PER_ETH1_VOTING_PERIOD * SLOTS_PER_EPOCH, ETH2_TYPES.Eth1Data),
-  eth1_deposit_index: uint64,
-  validators: list(VALIDATOR_REGISTRY_LIMIT, ETH2_TYPES.Validator),
-  balances: list(VALIDATOR_REGISTRY_LIMIT, ETH2_TYPES.Gwei),
-  randao_mixes: vector(EPOCHS_PER_HISTORICAL_VECTOR, ETH2_TYPES.Bytes32),
-  slashings: vector(EPOCHS_PER_SLASHINGS_VECTOR, ETH2_TYPES.Gwei),
-  previous_epoch_participation: list(VALIDATOR_REGISTRY_LIMIT, ETH2_TYPES.ParticipationFlags),
-  current_epoch_participation: list(VALIDATOR_REGISTRY_LIMIT, ETH2_TYPES.ParticipationFlags),
-  justification_bits: bitvector(JUSTIFICATION_BITS_LENGTH),
-  previous_justified_checkpoint: ETH2_TYPES.Checkpoint,
-  current_justified_checkpoint: ETH2_TYPES.Checkpoint,
-  finalized_checkpoint: ETH2_TYPES.Checkpoint,
-});
+/** SSZ coder for a signed Phase0 beacon block. */
+export const Phase0SignedBeaconBlock = /* @__PURE__ */ (() =>
+  container({
+    message: Phase0BeaconBlock,
+    signature: ETH2_TYPES.BLSSignature,
+  }))();
+/** SSZ coder for a Phase0 beacon state. */
+export const Phase0BeaconState = /* @__PURE__ */ (() =>
+  container({
+    genesis_time: uint64,
+    genesis_validators_root: ETH2_TYPES.Root,
+    slot: ETH2_TYPES.Slot,
+    fork: ETH2_TYPES.Fork,
+    latest_block_header: ETH2_TYPES.BeaconBlockHeader,
+    block_roots: /* @__PURE__ */ vector(SLOTS_PER_HISTORICAL_ROOT, ETH2_TYPES.Root),
+    state_roots: /* @__PURE__ */ vector(SLOTS_PER_HISTORICAL_ROOT, ETH2_TYPES.Root),
+    historical_roots: /* @__PURE__ */ list(HISTORICAL_ROOTS_LIMIT, ETH2_TYPES.Root),
+    eth1_data: ETH2_TYPES.Eth1Data,
+    eth1_data_votes: /* @__PURE__ */ list(
+      /* @__PURE__ */ (() => EPOCHS_PER_ETH1_VOTING_PERIOD * SLOTS_PER_EPOCH)(),
+      ETH2_TYPES.Eth1Data
+    ),
+    eth1_deposit_index: uint64,
+    validators: /* @__PURE__ */ list(VALIDATOR_REGISTRY_LIMIT, ETH2_TYPES.Validator),
+    balances: /* @__PURE__ */ list(VALIDATOR_REGISTRY_LIMIT, ETH2_TYPES.Gwei),
+    randao_mixes: /* @__PURE__ */ vector(EPOCHS_PER_HISTORICAL_VECTOR, ETH2_TYPES.Bytes32),
+    slashings: /* @__PURE__ */ vector(EPOCHS_PER_SLASHINGS_VECTOR, ETH2_TYPES.Gwei),
+    previous_epoch_participation: /* @__PURE__ */ list(
+      VALIDATOR_REGISTRY_LIMIT,
+      ETH2_TYPES.ParticipationFlags
+    ),
+    current_epoch_participation: /* @__PURE__ */ list(
+      VALIDATOR_REGISTRY_LIMIT,
+      ETH2_TYPES.ParticipationFlags
+    ),
+    justification_bits: /* @__PURE__ */ bitvector(JUSTIFICATION_BITS_LENGTH),
+    previous_justified_checkpoint: ETH2_TYPES.Checkpoint,
+    current_justified_checkpoint: ETH2_TYPES.Checkpoint,
+    finalized_checkpoint: ETH2_TYPES.Checkpoint,
+  }))();

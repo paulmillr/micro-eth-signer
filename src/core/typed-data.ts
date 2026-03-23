@@ -70,7 +70,7 @@ function getSigner<T>(version: number, msgFn: (message: T) => Uint8Array): Typed
 // );
 
 // EIP-191: 0x19 <0x45 (E)> <thereum Signed Message:\n" + len(message)> <data to sign>
-export const eip191Signer: TypedSigner<string | Uint8Array> = getSigner(
+export const eip191Signer: TypedSigner<string | Uint8Array> = /* @__PURE__ */ getSigner(
   0x45,
   (msg: string | Uint8Array) => {
     if (typeof msg === 'string') msg = utf8ToBytes(msg);

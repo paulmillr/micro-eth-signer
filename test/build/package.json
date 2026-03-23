@@ -6,6 +6,6 @@
   "type": "module",
   "devDependencies": {
     "micro-eth-signer": "file:../..",
-    "esbuild": "0.24.2"
+    "esbuild": "0.25.0"
   }
 }

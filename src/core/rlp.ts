@@ -3,6 +3,7 @@ import * as P from 'micro-packed';
 import { isBytes, type Bytes } from '../utils.ts';
 
 // Spec-compliant RLP in 100 lines of code.
+/** Public input accepted by the RLP encoder. */
 export type RLPInput = string | number | Bytes | bigint | RLPInput[] | null;
 // length: first 3 bit !== 111 ? 6 bit length : 3bit lenlen
 const RLPLength = P.wrap({
@@ -30,11 +31,31 @@ const RLPLength = P.wrap({
 });
 
 // Recursive struct definition
+/** Internal tagged RLP tree used by the coder implementation. */
 export type InternalRLP =
-  | { TAG: 'byte'; data: number }
   | {
+      /** Single-byte item encoded without an RLP length prefix. */
+      TAG: 'byte';
+      /** Byte value in the `0..127` short-form range. */
+      data: number;
+    }
+  | {
+      /** Multi-byte string or nested list item. */
       TAG: 'complex';
-      data: { TAG: 'string'; data: Uint8Array } | { TAG: 'list'; data: InternalRLP[] };
+      /** Tagged payload for one string or list item. */
+      data:
+        | {
+            /** Byte-string payload. */
+            TAG: 'string';
+            /** Raw string bytes. */
+            data: Uint8Array;
+          }
+        | {
+            /** Nested list payload. */
+            TAG: 'list';
+            /** Nested RLP items. */
+            data: InternalRLP[];
+          };
     };
 
 const rlpInner = P.tag(P.map(P.bits(1), { byte: 0, complex: 1 }), {

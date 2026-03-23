@@ -8,7 +8,7 @@ import { RLP } from './rlp.ts';
 
 // Transaction parsers
 
-const _0n = BigInt(0);
+const _0n = /* @__PURE__ */ BigInt(0);
 
 export type AnyCoder = Record<string, P.Coder<any, any>>;
 export type AnyCoderStream = Record<string, P.CoderType<any>>;
@@ -29,6 +29,7 @@ const createTxMap = <T extends AnyCoderStream>(versions: T): P.CoderType<Version
   const typeMap = Object.fromEntries(ent.map(([type, coder], ver) => [type, { type, ver, coder }]));
   // '0' => {type, ver, coder}
   const verMap = Object.fromEntries(ent.map(([type, coder], ver) => [ver, { type, ver, coder }]));
+  // @ts-ignore
   return P.wrap({
     encodeStream(w: P.Writer, value: VersionType<T>) {
       const t = value.type as string;
@@ -89,7 +90,7 @@ type YRS = Partial<{ chainId: bigint; yParity: number; r: bigint; s: bigint }>;
 // Case: unsigned tx for cold wallet for different chains, like mainnet & testnet.
 //   - otherwise v = yParity + 2*chainId + 35
 //   - allows to keep legacy logic here, instead of copying to Transaction
-export const legacySig = {
+export const legacySig = /* @__PURE__ */ (() => ({
   encode: (data: VRS) => {
     const { v, r, s } = data;
     if (v === undefined) return { chainId: undefined };
@@ -130,7 +131,7 @@ export const legacySig = {
         : BigInt(yParity) + BigInt(27);
     return { v, r, s };
   },
-} as P.Coder<VRS, YRS>;
+}))() as P.Coder<VRS, YRS>;
 
 const U64BE = P.coders.reverse(P.bigint(8, false, false, false));
 const U256BE = P.coders.reverse(P.bigint(32, false, false, false));
@@ -171,23 +172,19 @@ const struct = <
   },
 });
 
-// U256BE in geth. But it is either 0 or 1. TODO: is this good enough?
-const yParityCoder = P.coders.reverse(
-  P.validate(P.int(1, false, false, false), (elm) => {
-    assertYParityValid(elm);
-    return elm;
-  })
-);
+// treeshake: authorization-only bundles should not keep extra tx coder locals alive.
+const mkYParityCoder = /* @__PURE__ */ () =>
+  P.coders.reverse(
+    P.validate(P.int(1, false, false, false), (elm) => {
+      assertYParityValid(elm);
+      return elm;
+    })
+  );
 type CoderOutput<F> = F extends P.Coder<any, infer T> ? T : never;
 
-const accessListItem: P.Coder<
-  (Bytes | Bytes[])[],
-  {
-    address: string;
-    storageKeys: string[];
-  }
-> = struct({ address: addrCoder, storageKeys: array(Bytes32) });
-export type AccessList = CoderOutput<typeof accessListItem>[];
+const mkAccessListItem = /* @__PURE__ */ () =>
+  struct({ address: addrCoder, storageKeys: array(Bytes32) });
+export type AccessList = CoderOutput<ReturnType<typeof mkAccessListItem>>[];
 
 export const authorizationRequest: P.Coder<
   Bytes[],
@@ -196,37 +193,26 @@ export const authorizationRequest: P.Coder<
     address: string;
     nonce: bigint;
   }
-> = struct({
+> = /* @__PURE__ */ struct({
   chainId: U256BE,
   address: addrCoder,
   nonce: U64BE,
 });
 // [chain_id, address, nonce, y_parity, r, s]
-const authorizationItem: P.Coder<
-  Bytes[],
-  {
-    chainId: bigint;
-    address: string;
-    nonce: bigint;
-    yParity: number;
-    r: bigint;
-    s: bigint;
-  }
-> = struct({
-  chainId: U256BE,
-  address: addrCoder,
-  nonce: U64BE,
-  yParity: yParityCoder,
-  r: U256BE,
-  s: U256BE,
-});
-export type AuthorizationItem = CoderOutput<typeof authorizationItem>;
+const mkAuthorizationItem = /* @__PURE__ */ () =>
+  struct({
+    chainId: U256BE,
+    address: addrCoder,
+    nonce: U64BE,
+    yParity: mkYParityCoder(),
+    r: U256BE,
+    s: U256BE,
+  });
+export type AuthorizationItem = CoderOutput<ReturnType<typeof mkAuthorizationItem>>;
 export type AuthorizationRequest = CoderOutput<typeof authorizationRequest>;
 
-/**
- * Field types, matching geth. Either u64 or u256.
- */
-const coders = {
+/** Field types, matching geth. Either u64 or u256. */
+const coders = /* @__PURE__ */ (() => ({
   chainId: U256BE, // Can fit into u64 (curr max is 0x57a238f93bf), but geth uses bigint
   nonce: U64BE,
   gasPrice: U256BE,
@@ -236,15 +222,15 @@ const coders = {
   to: addrCoder,
   value: U256BE, // "Decimal" coder can be used, but it's harder to work with
   data: ethHex,
-  accessList: array(accessListItem),
+  accessList: array(mkAccessListItem()),
   maxFeePerBlobGas: U256BE,
   blobVersionedHashes: array(Bytes32),
-  yParity: yParityCoder,
+  yParity: mkYParityCoder(),
   v: U256BE,
   r: U256BE,
   s: U256BE,
-  authorizationList: array(authorizationItem),
-};
+  authorizationList: array(mkAuthorizationItem()),
+}))();
 type Coders = typeof coders;
 type CoderName = keyof Coders;
 const signatureFields = new Set(['v', 'yParity', 'r', 's'] as const);
@@ -270,6 +256,7 @@ export function removeSig(raw: TxCoder<any>): TxCoder<any> {
 /**
  * Defines RLP transaction with fields taken from `coders`.
  * @example
+ * // Build a coder for a minimal nonce/gas/value transaction shape.
  *   const tx = txStruct(['nonce', 'gasPrice', 'value'] as const, ['v', 'r', 's'] as const)
  *   tx.nonce.decode(...);
  */
@@ -332,14 +319,15 @@ const legacyInternal: FieldCoder<OptFields<{
   r: bigint;
   s: bigint;
   v: bigint;
-}>> = txStruct([
-  'nonce', 'gasPrice', 'gasLimit', 'to', 'value', 'data'] as const,
-  ['v', 'r', 's'] as const);
+}>> = /* @__PURE__ */ txStruct(
+  ['nonce', 'gasPrice', 'gasLimit', 'to', 'value', 'data'] as const,
+  ['v', 'r', 's'] as const
+);
 
 type LegacyInternal = P.UnwrapCoder<typeof legacyInternal>;
 type Legacy = Omit<LegacyInternal, 'v'> & { chainId?: bigint; yParity?: number };
 
-const legacy = (() => {
+const legacy = /* @__PURE__ */ (() => {
   const res = P.apply(legacyInternal, {
     decode: (data: Legacy) => Object.assign({}, data, legacySig.decode(data)),
     encode: (data: LegacyInternal) => {
@@ -362,21 +350,21 @@ const legacy = (() => {
 })();
 
 // prettier-ignore
-const eip2930 = txStruct([
+const eip2930 = /* @__PURE__ */ txStruct([
   'chainId', 'nonce', 'gasPrice', 'gasLimit', 'to', 'value', 'data', 'accessList'] as const,
   ['yParity', 'r', 's'] as const);
 
 // prettier-ignore
-const eip1559 = txStruct([
+const eip1559 = /* @__PURE__ */ txStruct([
   'chainId', 'nonce', 'maxPriorityFeePerGas', 'maxFeePerGas', 'gasLimit', 'to', 'value', 'data', 'accessList'] as const,
   ['yParity', 'r', 's'] as const);
 // prettier-ignore
-const eip4844 = txStruct([
+const eip4844 = /* @__PURE__ */ txStruct([
   'chainId', 'nonce', 'maxPriorityFeePerGas', 'maxFeePerGas', 'gasLimit', 'to', 'value', 'data', 'accessList',
   'maxFeePerBlobGas', 'blobVersionedHashes'] as const,
   ['yParity', 'r', 's'] as const);
 // prettier-ignore
-const eip7702 = txStruct([
+const eip7702 = /* @__PURE__ */ txStruct([
   'chainId', 'nonce', 'maxPriorityFeePerGas', 'maxFeePerGas', 'gasLimit', 'to', 'value', 'data', 'accessList',
   'authorizationList'] as const,
   ['yParity', 'r', 's'] as const);
@@ -389,26 +377,27 @@ export const TxVersions = {
   eip7702, // 0x04
 };
 
-export const RawTx = P.apply(createTxMap(TxVersions), {
-  // NOTE: we apply checksum to addresses here, since chainId is not available inside coders
-  // By construction 'to' field is decoded before anything about chainId is known
-  encode: (data) => {
-    data.data.to = addr.addChecksum(data.data.to, true);
-    if (data.type !== 'legacy' && data.data.accessList) {
-      for (const item of data.data.accessList) {
-        item.address = addr.addChecksum(item.address);
+export const RawTx = /* @__PURE__ */ (() =>
+  P.apply(createTxMap(TxVersions), {
+    // NOTE: we apply checksum to addresses here, since chainId is not available inside coders
+    // By construction 'to' field is decoded before anything about chainId is known
+    encode: (data) => {
+      data.data.to = addr.addChecksum(data.data.to, true);
+      if (data.type !== 'legacy' && data.data.accessList) {
+        for (const item of data.data.accessList) {
+          item.address = addr.addChecksum(item.address);
+        }
       }
-    }
-    if (data.type === 'eip7702' && data.data.authorizationList) {
-      for (const item of data.data.authorizationList) {
-        item.address = addr.addChecksum(item.address);
+      if (data.type === 'eip7702' && data.data.authorizationList) {
+        for (const item of data.data.authorizationList) {
+          item.address = addr.addChecksum(item.address);
+        }
       }
-    }
-    return data;
-  },
-  // Nothing to check here, is validated in validator
-  decode: (data) => data,
-});
+      return data;
+    },
+    // Nothing to check here, is validated in validator
+    decode: (data) => data,
+  }))();
 
 /**
  * Unchecked TX for debugging. Returns raw Uint8Array-s.
@@ -417,7 +406,8 @@ export const RawTx = P.apply(createTxMap(TxVersions), {
 export const RlpTx: P.CoderType<{
   type: string;
   data: import('./rlp.ts').RLPInput;
-}> = createTxMap(Object.fromEntries(Object.keys(TxVersions).map((k) => [k, RLP])));
+}> = /* @__PURE__ */ (() =>
+  createTxMap(Object.fromEntries(Object.keys(TxVersions).map((k) => [k, RLP]))))();
 
 // Field-related utils
 export type TxType = keyof typeof TxVersions;

@@ -64,7 +64,8 @@ console.log(random.privateKey, random.address);
 ### Transactions: create, sign
 
 ```ts
-import { Transaction, weigwei, weieth } from 'micro-eth-signer';
+import { addr, Transaction, weigwei, weieth } from 'micro-eth-signer';
+const random = addr.random();
 const tx = Transaction.prepare({
   to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
   value: weieth.decode('1.1'), // 1.1eth in wei
@@ -77,12 +78,12 @@ console.log('signed tx', signedTx, signedTx.toHex());
 console.log('fee', signedTx.fee);
 
 // Hedged signatures, with extra noise / security
-const tx2 = tx.signBy(random.privateKey, { extraEntropy: true }); // default, same as above
-const tx3 = tx.signBy(random.privateKey, { extraEntropy: false }); // disable
+const tx2 = tx.signBy(random.privateKey, true); // default, same as above
+const tx3 = tx.signBy(random.privateKey, false); // disable
 
 // Send whole account balance. See Security section for caveats
 const CURRENT_BALANCE = '1.7182050000017'; // in eth
-const txSendingWholeBalance = unsignedTx.setWholeAmount(weieth.decode(CURRENT_BALANCE));
+const txSendingWholeBalance = tx.setWholeAmount(weieth.decode(CURRENT_BALANCE));
 ```
 
 We support legacy, EIP2930, EIP1559, EIP4844 and EIP7702 transactions.
@@ -134,7 +135,8 @@ console.log('Is valid:', isValid);
 #### EIP-712
 
 ```ts
-import { signTyped, verifyTyped, recoverPublicKeyTyped, EIP712Domain, TypedData } from 'micro-eth-signer';
+import { addr, ethHex, recoverPublicKeyTyped, signTyped, verifyTyped } from 'micro-eth-signer';
+import type { EIP712Domain, TypedData } from 'micro-eth-signer';
 
 const types = {
   Person: [
@@ -152,9 +154,9 @@ const types = {
 const domain: EIP712Domain = {
   name: 'Ether Mail',
   version: '1',
-  chainId: 1,
+  chainId: 1n,
   verifyingContract: '0xCcCCccccCCCCcCCCCCCcCcCccCcCCCcCcccccccC',
-  salt: '0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
+  salt: ethHex.decode('0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef'),
 };
 
 // Define the message
@@ -184,14 +186,18 @@ const signature = signTyped(typedData, privateKey);
 console.log('Signature:', signature);
 
 // Verify the signature
-const address = '0xYourEthereumAddress';
+const address = addr.fromPrivateKey(privateKey);
 const isValid = verifyTyped(signature, typedData, address);
+console.log('Is valid:', isValid);
 
 // Recover the public key
 const publicKey = recoverPublicKeyTyped(signature, typedData);
+console.log('Recovered:', publicKey);
 ```
 
 ## Archive node connector
+
+> `npm install micro-ftch`
 
 ### Init network
 
@@ -228,6 +234,10 @@ const prov2 = new Web3Provider(
 > Uses `trace_filter` & requires [Erigon](https://erigon.tech), others are too slow.
 
 ```ts
+import { jsonrpc } from 'micro-ftch';
+import { Web3Provider } from 'micro-eth-signer/net.js';
+
+const prov = new Web3Provider(jsonrpc(fetch, 'http://localhost:8545'));
 const addr = '0xd8da6bf26964af9d7eed9e03e53415d37aa96045';
 const block = await prov.blockInfo(await prov.height());
 console.log('current block', block.number, block.timestamp, block.baseFeePerGas);
@@ -253,7 +263,10 @@ console.log('info for addr', addr, await prov.unspent(addr));
 ### Fetch Chainlink oracle prices
 
 ```ts
-import { Chainlink } from 'micro-eth-signer/net.js';
+import { jsonrpc } from 'micro-ftch';
+import { Chainlink, Web3Provider } from 'micro-eth-signer/net.js';
+
+const prov = new Web3Provider(jsonrpc(fetch, 'http://localhost:8545'));
 const link = new Chainlink(prov);
 const btc = await link.coinPrice('BTC');
 const bat = await link.tokenPrice('BAT');
@@ -263,7 +276,10 @@ console.log({ btc, bat }); // BTC 19188.68870991, BAT 0.39728989 in USD
 ### Resolve ENS address
 
 ```ts
-import { ENS } from 'micro-eth-signer/net.js';
+import { jsonrpc } from 'micro-ftch';
+import { ENS, Web3Provider } from 'micro-eth-signer/net.js';
+
+const prov = new Web3Provider(jsonrpc(fetch, 'http://localhost:8545'));
 const ens = new ENS(prov);
 const vitalikAddr = await ens.nameToAddress('vitalik.eth');
 ```
@@ -276,9 +292,12 @@ _Uniswap Founder_
 
 Swap 12.12 USDT to BAT with uniswap V3 defaults of 0.5% slippage, 30 min expiration.
 
-```ts
+```js
+import { jsonrpc } from 'micro-ftch';
 import { tokenFromSymbol } from 'micro-eth-signer/advanced/abi.js';
-import { UniswapV3 } from 'micro-eth-signer/net.js'; // or UniswapV2
+import { UniswapV3, Web3Provider } from 'micro-eth-signer/net.js'; // or UniswapV2
+
+const prov = new Web3Provider(jsonrpc(fetch, 'http://localhost:8545'));
 
 const USDT = tokenFromSymbol('USDT');
 const BAT = tokenFromSymbol('BAT');
@@ -286,6 +305,7 @@ const u3 = new UniswapV3(prov); // or new UniswapV2(provider)
 const fromAddress = '0xd8da6bf26964af9d7eed9e03e53415d37aa96045';
 const toAddress = '0xd8da6bf26964af9d7eed9e03e53415d37aa96045';
 const swap = await u3.swap(USDT, BAT, '12.12', { slippagePercent: 0.5, ttl: 30 * 60 });
+if (!swap) throw new Error('No swap route found');
 const swapData = await swap.tx(fromAddress, toAddress);
 console.log(swapData.amount, swapData.expectedAmount, swapData.allowance);
 ```
@@ -311,22 +331,23 @@ const PAIR_CONTRACT = [
 ] as const;
 
 const contract = createContract(PAIR_CONTRACT);
-// Would create following typescript type:
-{
-  getReserves: {
-    encodeInput: () => Uint8Array;
-    decodeOutput: (b: Uint8Array) => {
-      reserve0: bigint;
-      reserve1: bigint;
-      blockTimestampLast: bigint;
-    };
-  }
-}
+type Contract = typeof contract;
+// Contract type:
+// {
+//   getReserves: {
+//     encodeInput: () => Uint8Array;
+//     decodeOutput: (b: Uint8Array) => {
+//       reserve0: bigint;
+//       reserve1: bigint;
+//       blockTimestampLast: bigint;
+//     };
+//   };
+// }
 ```
 
 We're parsing values as:
 
-```js
+```text
 // no inputs
 {} -> encodeInput();
 // single input
@@ -355,6 +376,7 @@ The transaction sent ERC-20 USDT token between addresses. The library produces a
 > Transfer 22588 USDT to 0xdac17f958d2ee523a2206206994597c13d831ec7
 
 ```ts
+import { deepStrictEqual } from 'node:assert';
 import { decodeTx } from 'micro-eth-signer/advanced/abi.js';
 
 const tx =
@@ -374,6 +396,7 @@ deepStrictEqual(decodeTx(tx), {
 Or if you have already decoded tx:
 
 ```ts
+import { deepStrictEqual } from 'node:assert';
 import { decodeData } from 'micro-eth-signer/advanced/abi.js';
 
 const to = '0x7a250d5630b4cf539739df2c5dacb4c659f2488d';
@@ -381,7 +404,7 @@ const data =
   '7ff36ab5000000000000000000000000000000000000000000000000ab54a98ceb1f0ad30000000000000000000000000000000000000000000000000000000000000080000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa96045000000000000000000000000000000000000000000000000000000006fd9c6ea0000000000000000000000000000000000000000000000000000000000000002000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2000000000000000000000000106d3c66d22d2dd0446df23d7f5960752994d600';
 const value = 100000000000000000n;
 
-deepStrictEqual(decodeData(to, data, value, { customContracts }), {
+deepStrictEqual(decodeData(to, data, value), {
   name: 'swapExactETHForTokens',
   signature: 'swapExactETHForTokens(uint256,address[],address,uint256)',
   value: {
@@ -398,7 +421,7 @@ deepStrictEqual(decodeData(to, data, value, { customContracts }), {
 // With custom tokens/contracts
 const customContracts = {
   '0x106d3c66d22d2dd0446df23d7f5960752994d600': { abi: 'ERC20', symbol: 'LABRA', decimals: 9 },
-};
+} as const;
 deepStrictEqual(decodeData(to, data, value, { customContracts }), {
   name: 'swapExactETHForTokens',
   signature: 'swapExactETHForTokens(uint256,address[],address,uint256)',
@@ -444,13 +467,13 @@ SSZ includes [EIP-7495](https://eips.ethereum.org/EIPS/eip-7495) stable containe
 
 ```ts
 import { RLP } from 'micro-eth-signer/core/rlp.js';
-// More RLP examples in test/rlp.test.js
+// More RLP examples in test/rlp.test.ts
 RLP.decode(RLP.encode('dog'));
 ```
 
 ```ts
 import * as ssz from 'micro-eth-signer/advanced/ssz.js';
-// More SSZ examples in test/ssz.test.js
+// More SSZ examples in test/ssz.test.ts
 ```
 
 ### KZG & PeerDAS
@@ -458,10 +481,13 @@ import * as ssz from 'micro-eth-signer/advanced/ssz.js';
 Allows to create & verify KZG EIP-4844 proofs.
 Supports PeerDAS from EIP-7594.
 
+> `npm install @paulmillr/trusted-setups`
+
 ```ts
 import { KZG } from 'micro-eth-signer/advanced/kzg.js';
 // 400kb, 4-sec init
 import { trustedSetup } from '@paulmillr/trusted-setups/small-kzg.js';
+
 // 800kb, instant init
 // import { trustedSetup } from '@paulmillr/trusted-setups/fast-kzg.js';
 // PeerDAS EIP-7594
@@ -474,26 +500,21 @@ import { trustedSetup } from '@paulmillr/trusted-setups/small-kzg.js';
 const kzg = new KZG(trustedSetup);
 
 // Example blob and scalar
-const blob = '0x1234567890abcdef'; // Add actual blob data
-const z = '0x1'; // Add actual scalar
+const blob = new Array(4096).fill(0n);
+const commitment = kzg.blobToKzgCommitment(blob);
+const z = 1n;
 
 // Compute and verify proof
 const [proof, y] = kzg.computeProof(blob, z);
+console.log('Commitment:', commitment);
 console.log('Proof:', proof);
 console.log('Y:', y);
-const commitment = '0x1234567890abcdef'; // Add actual commitment
-const z = '0x1'; // Add actual scalar
-// const y = '0x2'; // Add actual y value
-const proof = '0x3'; // Add actual proof
 const isValid = kzg.verifyProof(commitment, z, y, proof);
 console.log('Is valid:', isValid);
 
-// Compute and verify blob proof
-const blob = '0x1234567890abcdef'; // Add actual blob data
-const commitment = '0x1'; // Add actual commitment
-const proof = kzg.computeBlobProof(blob, commitment);
-console.log('Blob proof:', proof);
-const isValidB = kzg.verifyBlobProof(blob, commitment, proof);
+const blobProof = kzg.computeBlobProof(blob, commitment);
+console.log('Blob proof:', blobProof);
+console.log('Blob proof valid:', kzg.verifyBlobProof(blob, commitment, blobProof));
 ```
 
 ## Security
@@ -534,8 +555,15 @@ However, it's recommended to fetch recommended priority fee from a node.
 There is a method `setWholeAmount` which allows to send whole account balance:
 
 ```ts
+import { Transaction, weigwei, weieth } from 'micro-eth-signer';
+const tx = Transaction.prepare({
+  to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
+  value: weieth.decode('1.1'),
+  maxFeePerGas: weigwei.decode('100'),
+  nonce: 0n,
+});
 const CURRENT_BALANCE = '1.7182050000017'; // in eth
-const txSendingWholeBalance = unsignedTx.setWholeAmount(weieth.decode(CURRENT_BALANCE));
+const txSendingWholeBalance = tx.setWholeAmount(weieth.decode(CURRENT_BALANCE));
 ```
 
 It does two things:
