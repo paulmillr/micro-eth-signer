@@ -5,7 +5,7 @@
   "main": "input.js",
   "type": "module",
   "devDependencies": {
-    "micro-eth-signer": "file:../..",
-    "esbuild": "0.25.0"
+    "esbuild": "0.27.4",
+    "micro-eth-signer": "file:../.."
   }
 }
