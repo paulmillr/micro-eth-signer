@@ -14,9 +14,9 @@
     "!_type_test.*"
   ],
   "dependencies": {
-    "@noble/curves": "^2.0.0",
-    "@noble/hashes": "^2.0.0",
-    "micro-packed": "^0.8.0"
+    "@noble/curves": "^2.2.0",
+    "@noble/hashes": "^2.2.0",
+    "micro-packed": "^0.9.0"
   },
   "devDependencies": {
     "@paulmillr/jsbt": "0.5.0",
@@ -33,12 +33,11 @@
     "build:clean": "rm -f *.{js,d.ts,js.map,d.ts.map}; rm -rf {advanced,core,net}",
     "build:release": "npx --no @paulmillr/jsbt esbuild test/build",
     "check": "npm run check:readme && npm run check:treeshake && npm run check:jsdoc",
-    "check:readme": "npx --no @paulmillr/jsbt readme package.json",
     "check:treeshake": "npx --no @paulmillr/jsbt treeshake package.json test/build/out-treeshake",
-    "check:jsdoc": "npx --no @paulmillr/jsbt tsdoc package.json",
+    "check:importtime": "npx --no @paulmillr/jsbt importtime package.json",
     "bench": "cd test/benchmark; npm install; node tx.ts",
     "format": "prettier --write src",
-    "test": "node --experimental-strip-types --no-warnings test/index.ts",
+    "test": "node test/index.ts",
     "test:bun": "bun test/index.ts",
     "test:deno": "deno --allow-env --allow-read test/index.ts"
   },

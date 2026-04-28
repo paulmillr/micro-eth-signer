@@ -1,6 +1,6 @@
 import { hexToBytes } from '@noble/curves/utils.js';
 import { utils as butils, bench as mark } from '@paulmillr/jsbt/bench.js';
-import { trustedSetup as s_fast } from '@paulmillr/trusted-setups/fast-peerdas.js';
+import { trustedSetup as s_fast } from '@paulmillr/trusted-setups/small-peerdas.js';
 import ckzg from 'c-kzg';
 import * as kzg from '../../src/advanced/kzg.ts';
 import { VECTORS } from '../peerdas.test.ts';
@@ -14,8 +14,8 @@ export async function main() {
   // NOTE: can do only once!
   let meth;
   // NOTE: FK20 setup is always done here, super fast (2s)
-  await mark('init(ckzg)', () => ckzg.loadTrustedSetup(PRECOMPUTE), 1);
-  await mark('init(noble)', () => (meth = new kzg.KZG(s_fast)), 1);
+  await mark('init(ckzg)', () => ckzg.loadTrustedSetup(PRECOMPUTE), { mode: 'runOnce'});
+  await mark('init(noble)', () => (meth = new kzg.KZG(s_fast)), { mode: 'runOnce'});
   // Compute cells
   {
     console.log('computeCells:');
@@ -30,7 +30,7 @@ export async function main() {
     const t = VECTORS.compute_cells_and_kzg_proofs.valid[0];
     const blobBytes = hexToBytes(strip0x(t.input.blob));
     // NOTE: first one triggers FK20 setup (38s!)
-    await mark('- noble (first)', () => meth.computeCellsAndProofs(t.input.blob), 1);
+    await mark('- noble (first)', () => meth.computeCellsAndProofs(t.input.blob), { mode: 'runOnce'});
     await mark('- ckzg', () => ckzg.computeCellsAndKzgProofs(blobBytes));
     await mark('- noble', () => meth.computeCellsAndProofs(t.input.blob));
   }
