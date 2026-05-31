@@ -1,15 +1,15 @@
-import { createDecimal } from '../utils.ts';
+import { createDecimal, deepFreeze, type TArg } from '../utils.ts';
 import { addHints } from './abi-common.ts';
 import { type HintOpt } from './abi-decoder.ts';
 
 // prettier-ignore
-const _ABI = [
+const _ABI = /* @__PURE__ */ deepFreeze([
   {type:"function",name:"getExpectedRate",inputs:[{name:"src",type:"address"},{name:"dest",type:"address"},{name:"srcQty",type:"uint256"}],outputs:[{name:"expectedRate",type:"uint256"},{name:"worstRate",type:"uint256"}]},{type:"function",name:"getExpectedRateAfterFee",inputs:[{name:"src",type:"address"},{name:"dest",type:"address"},{name:"srcQty",type:"uint256"},{name:"platformFeeBps",type:"uint256"},{name:"hint",type:"bytes"}],outputs:[{name:"expectedRate",type:"uint256"}]},{type:"function",name:"trade",inputs:[{name:"src",type:"address"},{name:"srcAmount",type:"uint256"},{name:"dest",type:"address"},{name:"destAddress",type:"address"},{name:"maxDestAmount",type:"uint256"},{name:"minConversionRate",type:"uint256"},{name:"platformWallet",type:"address"}],outputs:[{type:"uint256"}]},{type:"function",name:"tradeWithHint",inputs:[{name:"src",type:"address"},{name:"srcAmount",type:"uint256"},{name:"dest",type:"address"},{name:"destAddress",type:"address"},{name:"maxDestAmount",type:"uint256"},{name:"minConversionRate",type:"uint256"},{name:"walletId",type:"address"},{name:"hint",type:"bytes"}],outputs:[{type:"uint256"}]},{type:"function",name:"tradeWithHintAndFee",inputs:[{name:"src",type:"address"},{name:"srcAmount",type:"uint256"},{name:"dest",type:"address"},{name:"destAddress",type:"address"},{name:"maxDestAmount",type:"uint256"},{name:"minConversionRate",type:"uint256"},{name:"platformWallet",type:"address"},{name:"platformFeeBps",type:"uint256"},{name:"hint",type:"bytes"}],outputs:[{name:"destAmount",type:"uint256"}]}
-] as const;
+] as const);
 
 const _10n = /* @__PURE__ */ BigInt(10);
 const hints = {
-  tradeWithHintAndFee(v: any, opt: HintOpt) {
+  tradeWithHintAndFee(v: any, opt: TArg<HintOpt>) {
     if (!opt.contracts) throw Error('Not enough info');
     const tokenInfo = (c: string) =>
       c === '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'
@@ -18,7 +18,18 @@ const hints = {
     const formatToken = (amount: bigint, info: any) =>
       `${createDecimal(info.decimals).encode(amount)} ${info.symbol}`;
     const [srcInfo, destInfo] = [tokenInfo(v.src), tokenInfo(v.dest)];
-    if (!srcInfo || !destInfo) throw Error('Not enough info');
+    // Custom contract metadata may omit one field; hints need both, while zero decimals is valid.
+    if (
+      !srcInfo ||
+      !destInfo ||
+      srcInfo.decimals === undefined ||
+      destInfo.decimals === undefined ||
+      !srcInfo.symbol ||
+      !destInfo.symbol
+    ) {
+      throw Error('Not enough info');
+    }
+    // minConversionRate only bounds the output from below, so the displayed destAmount is the minimum guaranteed fill.
     const destAmount =
       ((v.srcAmount as bigint) *
         (v.minConversionRate as bigint) *
@@ -35,7 +46,7 @@ const hints = {
   },
 };
 
-const ABI = /* @__PURE__ */ addHints(_ABI, hints);
+const ABI = /* @__PURE__ */ deepFreeze(/* @__PURE__ */ addHints(_ABI, hints));
 
 export default ABI;
 export const KYBER_NETWORK_PROXY_CONTRACT = '0x9aab3f75489902f3a48495025729a0af77d4b11e';

@@ -8,6 +8,8 @@ import {
   strip0x,
   zip,
   type IWeb3Provider,
+  type TArg,
+  type TRet,
   type Web3CallArgs,
 } from '../utils.ts';
 import {
@@ -18,6 +20,7 @@ import {
   type ArrLike,
   type Component,
   type IsEmptyArray,
+  type MapTuple,
   type NamedComponent,
   type Writable,
 } from './abi-mapper.ts';
@@ -115,6 +118,7 @@ function fnSignature(o: FnArg): string {
   if (o.type === 'function' || o.type === 'event')
     return `${o.name || 'function'}(${(o.inputs || []).map((i) => fnSignature(i)).join(',')})`;
   if (o.type.startsWith('tuple')) {
+    // Keep selector generation aligned with the mapper policy: empty tuples are disabled.
     if (!o.components || !o.components.length) throw new Error('ABI.fnSignature wrong tuple');
     return `(${o.components.map((i) => fnSignature(i)).join(',')})${o.type.slice(5)}`;
   }
@@ -140,17 +144,17 @@ export function createContract<T extends ArrLike<FnArg>>(
   abi: T,
   net: IWeb3Provider,
   contract?: string
-): ContractType<Writable<T>, IWeb3Provider>;
+): TRet<ContractType<Writable<T>, IWeb3Provider>>;
 export function createContract<T extends ArrLike<FnArg>>(
   abi: T,
   net?: undefined,
   contract?: string
-): ContractType<Writable<T>, undefined>;
+): TRet<ContractType<Writable<T>, undefined>>;
 export function createContract<T extends ArrLike<FnArg>>(
   abi: T,
   net?: IWeb3Provider,
   contract?: string
-): ContractType<Writable<T>, undefined> {
+): TRet<ContractType<Writable<T>, undefined>> {
   // Find non-uniq function names so we can handle overloads
   let nameCnt: Record<string, number> = {};
   for (let fn of abi) {
@@ -167,7 +171,7 @@ export function createContract<T extends ArrLike<FnArg>>(
     const sh = fnSigHash(fn);
     const inputs = fn.inputs && fn.inputs.length ? mapArgs(fn.inputs) : undefined;
     const outputs = fn.outputs ? mapArgs(fn.outputs) : undefined;
-    const decodeOutput = (b: Uint8Array) => outputs && outputs.decode(b);
+    const decodeOutput = (b: TArg<Uint8Array>) => outputs && outputs.decode(b);
     const encodeInput = (v: unknown) =>
       concatBytes(hexToBytes(sh), inputs ? inputs.encode(v as any) : Uint8Array.of());
     res[name] = { decodeOutput, encodeInput };
@@ -196,23 +200,26 @@ type ConstructorType = Component<'constructor'> & {
 };
 type ConsArgs<T extends ConstructorType> =
   IsEmptyArray<T['inputs']> extends true ? undefined : ArgsType<T['inputs']>;
-
-export function deployContract<T extends ArrLike<FnArg>>(
-  abi: T,
-  bytecodeHex: string,
-  ...args: GetCons<T> extends never
+type DeployArgs<T extends ArrLike<FnArg>> =
+  GetCons<T> extends never
     ? [args: unknown]
     : ConsArgs<GetCons<T>> extends undefined
       ? []
-      : [args: ConsArgs<GetCons<T>>]
+      : [args: ConsArgs<GetCons<T>>];
+
+export function deployContract<T extends ArrLike<FnArg>, A extends TArg<DeployArgs<T>> & unknown[]>(
+  abi: T,
+  bytecodeHex: string,
+  ...args: A
 ): string {
   const bytecode = ethHex.decode(bytecodeHex);
   let consCall;
   for (let fn of abi) {
     if (fn.type !== 'constructor') continue;
     const inputs = fn.inputs && fn.inputs.length ? mapArgs(fn.inputs) : undefined;
-    if (inputs === undefined && args !== undefined && args.length)
-      throw new Error('arguments to constructor without any');
+    // Dynamic ABI typing may force callers to pass `undefined` for constructorless contracts.
+    const emptyArgs = !args.length || (args.length === 1 && args[0] === undefined);
+    if (inputs === undefined && !emptyArgs) throw new Error('arguments to constructor without any');
     consCall = inputs ? inputs.encode(args[0] as any) : Uint8Array.of();
   }
   if (!consCall) throw new Error('constructor not found');
@@ -226,10 +233,12 @@ export type EventType = NamedComponent<'event'> & {
 export type ContractEventTypeFilter<T> = { [K in keyof T]: T[K] extends EventType ? T[K] : never };
 
 export type TopicsValue<T> = { [K in keyof T]: T[K] | null };
+export type EventArgsType<T extends ReadonlyArray<any> | undefined> =
+  IsEmptyArray<T> extends true ? {} : T extends ReadonlyArray<any> ? MapTuple<T> : {};
 
 export type EventMethod<T extends EventType> = {
-  decode: (topics: string[], data: string) => ArgsType<T['inputs']>;
-  topics: (values: TopicsValue<ArgsType<T['inputs']>>) => (string | null)[];
+  decode: (topics: string[], data: string) => EventArgsType<T['inputs']>;
+  topics: (values: TopicsValue<EventArgsType<T['inputs']>>) => (string | null)[];
 };
 
 export type ContractEventType<T extends Array<FnArg>, F = ContractEventTypeFilter<T>> =
@@ -240,7 +249,7 @@ export type ContractEventType<T extends Array<FnArg>, F = ContractEventTypeFilte
     : never;
 
 // TODO: try to simplify further
-export function events<T extends ArrLike<FnArg>>(abi: T): ContractEventType<Writable<T>> {
+export function events<T extends ArrLike<FnArg>>(abi: T): TRet<ContractEventType<Writable<T>>> {
   let res: Record<string, any> = {};
   for (let elm of abi) {
     // Only named events supported
@@ -267,6 +276,7 @@ export function events<T extends ArrLike<FnArg>>(abi: T): ContractEventType<Writ
         }
         if (topics.length !== indexed.length) throw new Error('Wrong topics length');
         let parsed = parser ? parser.decode(data) : hasNames ? {} : [];
+        // Indexed dynamic / tuple / array fields are logged only as keccak256 hashes, so decode can return only the raw topic hex for those values.
         const indexedParsed = indexed.map((p, i) =>
           p ? p.decode(hexToBytes(strip0x(topics[i]))) : topics[i]
         );
@@ -297,11 +307,21 @@ export function events<T extends ArrLike<FnArg>>(abi: T): ContractEventType<Writ
             topic = bytesToHex(keccak_256(typeof value === 'string' ? utf8ToBytes(value) : value));
           else {
             let m: any, parts: Uint8Array[];
-            if ((m = ARRAY_RE.exec(input.type)))
-              parts = value.map((j: any) => mapComponent({ type: m[1] }).encode(j));
-            else if (input.type === 'tuple' && input.components)
-              parts = input.components.map((j) => (mapArgs([j]) as any).encode(value[j.name!]));
-            else throw new Error('Unknown unsized type');
+            if ((m = ARRAY_RE.exec(input.type))) {
+              // This hashing path bypasses mapComponent's array wrapper, so fixed arrays must still enforce their ABI length here.
+              if (m[3] !== undefined && value.length !== Number.parseInt(m[3]))
+                throw new Error('Wrong topics args');
+              // Tuple arrays need components preserved after peeling the array suffix.
+              const inner = mapComponent({ ...input, type: m[1] } as any);
+              parts = value.map((j: any) => inner.encode(j));
+            } else if (input.type === 'tuple' && input.components) {
+              let tupleHasNames = true;
+              for (const j of input.components) if (!j.name) tupleHasNames = false;
+              // Mixed tuple components use positional values, matching mapComponent's tuple carrier.
+              parts = input.components.map((j, n) =>
+                (mapArgs([j]) as any).encode(tupleHasNames ? value[j.name!] : value[n])
+              );
+            } else throw new Error('Unknown unsized type');
             topic = bytesToHex(keccak_256(concatBytes(...parts)));
           }
           res.push(add0x(topic));
@@ -360,7 +380,6 @@ export class Decoder {
   evContracts: Record<string, Record<string, EventSignatureDecoder>> = {};
   evSighashes: Record<string, EventSignatureDecoder[]> = {};
   add(contract: string, abi: ContractABI): void {
-    const ev: any = events(abi);
     contract = strip0x(contract).toLowerCase();
     if (!this.contracts[contract]) this.contracts[contract] = {};
     if (!this.evContracts[contract]) this.evContracts[contract] = {};
@@ -380,10 +399,12 @@ export class Decoder {
       } else if (fn.type === 'event') {
         if (fn.anonymous || !fn.name) continue;
         const selector = evSigHash(fn);
+        // Event names can be overloaded, so bind the decoder to this ABI item instead of a name-keyed map.
+        const decoder = (events([fn]) as any)[fn.name]?.decode;
         const value = {
           name: fn.name,
           signature: fnSignature(fn),
-          decoder: ev[fn.name]?.decode,
+          decoder,
           hint: fn.hint,
         };
         this.evContracts[contract][selector] = value;
@@ -411,6 +432,8 @@ export class Decoder {
     const data = _data.slice(4);
     if (this.contracts[contract] && this.contracts[contract][sh]) {
       let { name, signature, packer, hint, hook } = this.contracts[contract][sh];
+      // Zero-arg functions have no packer, but calldata after the selector is still invalid.
+      if (!packer && data.length) throw new Error('Unexpected trailing calldata');
       const value = packer ? packer.decode(data) : undefined;
       let res: SignatureInfo = { name, signature, value };
       // NOTE: hint && hook fn is used only on exact match of contract!
@@ -424,6 +447,7 @@ export class Decoder {
     let res: SignatureInfo[] = [];
     for (let { name, signature, packer } of this.sighashes[sh]) {
       try {
+        if (!packer && data.length) continue;
         res.push({ name, signature, value: packer ? packer.decode(data) : undefined });
       } catch (err) {}
     }

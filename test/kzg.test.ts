@@ -81,6 +81,14 @@ function run(kzg) {
         if (!output) throws(() => kzg.blobToKzgCommitment(input.blob));
         else deepStrictEqual(kzg.blobToKzgCommitment(input.blob), output);
       }
+      const shortBigint = [0n];
+      const shortBigintBefore = shortBigint.slice();
+      throws(() => kzg.blobToKzgCommitment(shortBigint), /Wrong blob length/);
+      deepStrictEqual(shortBigint, shortBigintBefore);
+      const shortString = ['0000000000000000000000000000000000000000000000000000000000000000'];
+      const shortStringBefore = shortString.slice();
+      throws(() => kzg.blobToKzgCommitment(shortString), /Wrong blob length/);
+      deepStrictEqual(shortString, shortStringBefore);
     });
     should('computeBlobProof', () => {
       for (const { input, output } of VIEM['compute-blob-kzg-proof']()) {

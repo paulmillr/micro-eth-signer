@@ -102,6 +102,32 @@ describe('uniswap', () => {
     deepStrictEqual(tx0.value, 100000000000000000n);
     const LAYER = '0x0ff6ffcfda92c53f615a4a75d982f399c989366b';
     const USDT = '0xdac17f958d2ee523a2206206994597c13d831ec7';
+    throws(
+      () =>
+        uniswap2.txData(
+          vitalik,
+          LAYER,
+          USDT,
+          { path: [LABRA, WETH, USDT], amountIn: 1n, amountOut: 1n },
+          1n,
+          undefined,
+          { deadline: TS, slippagePercent: 10 }
+        ),
+      /Input token does not match path/
+    );
+    throws(
+      () =>
+        uniswap2.txData(
+          vitalik,
+          LAYER,
+          USDT,
+          { path: [LAYER, WETH, LABRA], amountIn: 1n, amountOut: 1n },
+          1n,
+          undefined,
+          { deadline: TS, slippagePercent: 10 }
+        ),
+      /Output token does not match path/
+    );
     const tx1 = uniswap2.txData(
       vitalik,
       LAYER,
@@ -184,6 +210,44 @@ describe('uniswap', () => {
       '414bf389000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc200000000000000000000000095ad61b0a150d79219dcf64e1e6cc01f0b64c4ce0000000000000000000000000000000000000000000000000000000000002710000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa96045000000000000000000000000000000000000000000000000000000006fd9c6ea0000000000000000000000000000000000000000000000055aa54d38e5267eec000000000000000000000000000000000000000000000000ab54a98ceb1f0ad20000000000000000000000000000000000000000000000000000000000000000'
     );
     deepStrictEqual(tx0.value, 98765432109876543212n);
+    throws(
+      () =>
+        uniswap3.txData(
+          vitalik,
+          'eth',
+          SHIB,
+          {
+            fee: uniswap3.Fee.HIGH,
+            amountOut: 13717421001371742101n,
+          },
+          98765432109876543212n,
+          undefined,
+          { deadline: TS, slippagePercent: 10, fee: { fee: 1, to: 'eth' } }
+        ),
+      /invalid fee recepient addresss/
+    );
+    const oldNow = Date.now;
+    Date.now = () => 2000000000000;
+    try {
+      const txTtl = uniswap3.txData(
+        vitalik,
+        'eth',
+        SHIB,
+        {
+          fee: uniswap3.Fee.HIGH,
+          amountOut: 13717421001371742101n,
+        },
+        98765432109876543212n,
+        undefined,
+        { ttl: 123, slippagePercent: 10 }
+      );
+      deepStrictEqual(
+        bytesToHex(txTtl.data),
+        '414bf389000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc200000000000000000000000095ad61b0a150d79219dcf64e1e6cc01f0b64c4ce0000000000000000000000000000000000000000000000000000000000002710000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa96045000000000000000000000000000000000000000000000000000000007735947b0000000000000000000000000000000000000000000000055aa54d38e5267eec000000000000000000000000000000000000000000000000ab54a98ceb1f0ad20000000000000000000000000000000000000000000000000000000000000000'
+      );
+    } finally {
+      Date.now = oldNow;
+    }
     // token -> eth
     const PRQ = '0x362bc847a3a9637d3af6624eec853618a43ed7d2';
     const tx1 = uniswap3.txData(
@@ -211,6 +275,28 @@ describe('uniswap', () => {
     );
     deepStrictEqual(tx1.value, 0n);
     deepStrictEqual(tx1.allowance, { token: PRQ, amount: 98765432109876543212n });
+    throws(
+      () =>
+        uniswap3.txData(
+          vitalik,
+          'eth',
+          USDT,
+          {
+            path: concatBytes(
+              hexToBytes(strip0x(USDT)),
+              hexToBytes('0001f4'),
+              hexToBytes(strip0x(USDC)),
+              hexToBytes('0001f4'),
+              hexToBytes(strip0x(WETH))
+            ),
+            amountOut: 1n,
+          },
+          1n,
+          undefined,
+          { deadline: TS, slippagePercent: 10 }
+        ),
+      /input token does not match path/
+    );
     const tx2 = uniswap3.txData(
       vitalik,
       'eth',
@@ -235,6 +321,28 @@ describe('uniswap', () => {
       'ac9650d800000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000001c00000000000000000000000000000000000000000000000000000000000000144f28c0498000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa96045000000000000000000000000000000000000000000000000000000006fd9c6ea000000000000000000000000000000000000000000000000ab54a98ceb1f0ad30000000000000000000000000000000000000000000000055aa54d38e5267eea0000000000000000000000000000000000000000000000000000000000000042dac17f958d2ee523a2206206994597c13d831ec70001f4a0b86991c6218b36c1d19d4a2e9eb0ce3606eb480001f4c02aaa39b223fe8d0a0e5c4f27ead9083c756cc200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000412210e8a00000000000000000000000000000000000000000000000000000000'
     );
     deepStrictEqual(tx2.value, 98765432109876543210n);
+    throws(
+      () =>
+        uniswap3.txData(
+          vitalik,
+          'eth',
+          USDT,
+          {
+            path: concatBytes(
+              hexToBytes(strip0x(WETH)),
+              hexToBytes('0001f4'),
+              hexToBytes(strip0x(USDC)),
+              hexToBytes('0001f4'),
+              hexToBytes(strip0x(USDT))
+            ),
+            amountIn: 1n,
+          },
+          undefined,
+          1n,
+          { deadline: TS, slippagePercent: 10 }
+        ),
+      /output token does not match path/
+    );
   });
 });
 

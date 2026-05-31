@@ -1,6 +1,7 @@
 import type { ContractABI, HintFn, HookFn } from './abi-decoder.ts';
+import type { TArg } from '../utils.ts';
 
-export function addHint<T extends ContractABI>(abi: ContractABI, name: string, fn: HintFn): T {
+export function addHint<T extends ContractABI>(abi: T, name: string, fn: TArg<HintFn>): T {
   const res = [];
   for (const elm of abi) {
     if (elm.name === name) res.push({ ...elm, hint: fn });
@@ -9,17 +10,18 @@ export function addHint<T extends ContractABI>(abi: ContractABI, name: string, f
   return res as unknown as T;
 }
 
-export function addHints<T extends ContractABI>(abi: T, map: Record<string, HintFn>): T {
+export function addHints<T extends ContractABI>(abi: T, map: TArg<Record<string, HintFn>>): T {
   const res = [];
   for (const elm of abi) {
-    if (['event', 'function'].includes(elm.type) && elm.name && map[elm.name]) {
+    // ABI names can be `toString`; only explicit hint-map entries should affect output.
+    if (['event', 'function'].includes(elm.type) && elm.name && Object.hasOwn(map, elm.name)) {
       res.push({ ...elm, hint: map[elm.name!] });
     } else res.push(elm);
   }
   return res as unknown as T;
 }
 
-export function addHook<T extends ContractABI>(abi: T, name: string, fn: HookFn): T {
+export function addHook<T extends ContractABI>(abi: T, name: string, fn: TArg<HookFn>): T {
   const res = [];
   for (const elm of abi) {
     if (elm.type === 'function' && elm.name === name) res.push({ ...elm, hook: fn });

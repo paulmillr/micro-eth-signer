@@ -1,13 +1,20 @@
 import { describe, should } from '@paulmillr/jsbt/test.js';
 import { trustedSetup as s_fast } from '@paulmillr/trusted-setups/fast-peerdas.js';
 import { trustedSetup as s_small } from '@paulmillr/trusted-setups/small-peerdas.js';
+import { Field } from '@noble/curves/abstract/modular.js';
+import { bls12_381 as bls } from '@noble/curves/bls12-381.js';
+import { bytesToHex, concatBytes } from '@noble/hashes/utils.js';
 import { deepStrictEqual, throws } from 'node:assert';
 import { readdirSync, readFileSync } from 'node:fs';
 import * as yaml from 'yaml';
 import { KZG } from '../src/advanced/kzg.ts';
+import { add0x } from '../src/utils.ts';
 import { __dirname } from './util.ts';
 
 const yamlOpt = {};
+const FE_PER_CELL = 64;
+const { Fr: blsFr } = bls.fields;
+const Fr = Field(blsFr.ORDER, { isLE: blsFr.isLE });
 
 function parseFunctionVectors(path) {
   const res = {};
@@ -23,6 +30,30 @@ function parseFunctionVectors(path) {
   return res;
 }
 export const VECTORS = parseFunctionVectors('vectors/peerdas/kzg');
+
+should('Cell.encode rejects non-canonical field elements', () => {
+  const src = readFileSync(`${__dirname}/../src/advanced/kzg.ts`, 'utf8');
+  const m = src.match(/encode\(fields: bigint\[\]\): string \{([\s\S]*?)\n  \},/);
+  if (!m) throw new Error('failed to locate Cell.encode body');
+  // Keep Cell private in the module API while still regression-testing its field invariant.
+  const encode = new Function(
+    'FE_PER_CELL',
+    'Fr',
+    'add0x',
+    'bytesToHex',
+    'concatBytes',
+    `return function encode(fields) {${m[1]}\n};`
+  )(FE_PER_CELL, Fr, add0x, bytesToHex, concatBytes) as (fields: bigint[]) => string;
+  const canonical = Array.from({ length: FE_PER_CELL }, (_, i) => BigInt(i));
+  const before = canonical.slice();
+  deepStrictEqual(
+    encode(canonical),
+    add0x(bytesToHex(concatBytes(...canonical.map((i) => Fr.toBytes(i)))))
+  );
+  deepStrictEqual(canonical, before);
+  const invalid = Array.from({ length: FE_PER_CELL }, () => Fr.ORDER);
+  throws(() => encode(invalid), /invalid field element/);
+});
 
 function run(kzg) {
   should('computeCells', () => {

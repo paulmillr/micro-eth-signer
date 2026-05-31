@@ -3,16 +3,21 @@ import { describe, should } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual, throws } from 'node:assert';
 import { inspect } from 'node:util';
 import { deployContract } from '../src/advanced/abi-decoder.ts';
-import { RawTx, RlpTx, __tests } from '../src/core/tx-internal.ts';
+import { RawTx, RlpTx, __tests, validateFields } from '../src/core/tx-internal.ts';
 import { Transaction, addr, authorization } from '../src/index.ts';
 import {
   add0x,
   amounts,
   createDecimal,
+  cloneDeep,
+  deepFreeze,
   ethHex,
   formatters,
+  initSig,
+  omit,
   weieth,
-  weigwei
+  weigwei,
+  zip,
 } from '../src/utils.ts';
 import { getEthersVectors, getViemVectors } from './util.ts';
 import { default as EIP155_VECTORS } from './vectors/eips/eip155.json' with { type: 'json' };
@@ -271,12 +276,119 @@ describe('Transactions', () => {
       const signed = authorization.sign(auth, privateKey);
       deepStrictEqual(authorization.getAuthority(signed), addr.fromPrivateKey(privateKey));
     });
+    should('reject invalid set-code tx shape', () => {
+      const tx = {
+        type: 'eip7702' as const,
+        to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
+        nonce: 0n,
+        value: 0n,
+        gasLimit: 46000n,
+        maxFeePerGas: weigwei.decode('2'),
+        authorizationList: [
+          {
+            address: '0x0000000000000000000000000000000000000000',
+            chainId: 1n,
+            nonce: 0n,
+            r: 1n,
+            s: 1n,
+            yParity: 0,
+          },
+        ],
+      };
+      Transaction.prepare(tx);
+      const txWithoutGasLimit: any = { ...tx };
+      delete txWithoutGasLimit.gasLimit;
+      deepStrictEqual(Transaction.prepare(txWithoutGasLimit).raw.gasLimit, 46000n);
+      throws(
+        () => Transaction.prepare({ ...tx, gasLimit: 21000n }),
+        (err: any) => {
+          deepStrictEqual(err.errors, [
+            { field: 'gasLimit', error: 'intrinsic gas too low: 21000 < 46000' },
+          ]);
+          return true;
+        }
+      );
+      Transaction.prepare(
+        {
+          ...tx,
+          authorizationList: [{ ...tx.authorizationList[0], nonce: amounts.maxUint64 - 1n }],
+        },
+        false
+      );
+      Transaction.prepare({
+        ...tx,
+        authorizationList: [{ ...tx.authorizationList[0], chainId: amounts.maxUint256 }],
+      });
+      const txWithoutAuthorizationList: any = { ...tx };
+      delete txWithoutAuthorizationList.authorizationList;
+      throws(
+        () => Transaction.prepare(txWithoutAuthorizationList, false),
+        (err: any) => {
+          deepStrictEqual(err.errors, [
+            {
+              field: 'authorizationList',
+              error: 'field "authorizationList" must be present for tx type=eip7702',
+            },
+          ]);
+          return true;
+        }
+      );
+      throws(
+        () => Transaction.prepare({ ...tx, authorizationList: [] }, false),
+        (err: any) => {
+          deepStrictEqual(err.errors, [
+            { field: 'authorizationList', error: 'must contain at least one authorization' },
+          ]);
+          return true;
+        }
+      );
+      throws(
+        () => Transaction.prepare({ ...tx, to: '0x', data: '00' }, false),
+        (err: any) => {
+          deepStrictEqual(err.errors, [
+            { field: 'to', error: 'eip7702 transaction destination must not be empty' },
+          ]);
+          return true;
+        }
+      );
+      deepStrictEqual(
+        Transaction.prepare({
+          type: 'eip1559',
+          to: '0x',
+          data: '00',
+          nonce: 0n,
+          value: 0n,
+          maxFeePerGas: weigwei.decode('2'),
+        }).raw.gasLimit,
+        21006n
+      );
+      throws(
+        () =>
+          Transaction.prepare({
+            type: 'eip1559',
+            to: '0x',
+            data: '00',
+            nonce: 0n,
+            value: 0n,
+            gasLimit: 21004n,
+            maxFeePerGas: weigwei.decode('2'),
+          }),
+        (err: any) => {
+          deepStrictEqual(err.errors, [
+            { field: 'gasLimit', error: 'intrinsic gas too low: 21004 < 21006' },
+          ]);
+          return true;
+        }
+      );
+    });
   });
   describe('Utils', () => {
     should('legacySig', () => {
       const { legacySig } = __tests;
 
       // DECODE
+      throws(() => legacySig.decode([] as any), 'legacySig array');
+      throws(() => legacySig.decode(new Uint8Array([]) as any), 'legacySig u8a');
       deepStrictEqual(legacySig.decode({ yParity: 0, r: 1n, s: 1n }), { v: 27n, r: 1n, s: 1n });
       throws(() => legacySig.decode({ yParity: 0 }));
       deepStrictEqual(legacySig.decode({ yParity: 0, chainId: 1n, r: 1n, s: 1n }), {
@@ -289,6 +401,10 @@ describe('Transactions', () => {
       throws(() => legacySig.decode({ yParity: 0, chainId: 1n, r: 1n }));
       throws(() => legacySig.decode({ yParity: 0, chainId: 1n, s: 1n }));
       throws(() => legacySig.decode({ yParity: 0, chainId: 1n, r: 0n, s: 0n }));
+      throws(
+        () => legacySig.decode({ yParity: '0', chainId: 1n, r: 1n, s: 1n }),
+        /wrong yParity type=string/
+      );
       deepStrictEqual(legacySig.decode({ chainId: 1n }), { v: 1n, r: 0n, s: 0n });
       deepStrictEqual(legacySig.decode({ yParity: 1, r: 1n, s: 1n }), { v: 28n, r: 1n, s: 1n });
       throws(() => legacySig.decode({ yParity: 1 }));
@@ -331,6 +447,36 @@ describe('Transactions', () => {
       });
     });
 
+    should('utils: initSig rejects non-Ethereum recovery bits', () => {
+      const sig = { r: 1n, s: 1n };
+      deepStrictEqual([initSig(sig, 0).recovery, initSig(sig, 1).recovery], [0, 1]);
+      throws(() => initSig(sig, 2), /recovery bit/);
+      throws(() => initSig(sig, 3), /recovery bit/);
+    });
+    should('utils: cloneDeep preserves null and own keys', () => {
+      const value = Object.assign(Object.create({ inherited: { value: 1 } }), {
+        own: { value: 2 },
+        nil: null,
+      });
+      const cloned = cloneDeep(value);
+      deepStrictEqual(cloned, { own: { value: 2 }, nil: null });
+      deepStrictEqual(Object.hasOwn(cloned, 'inherited'), false);
+      deepStrictEqual(cloned.own === value.own, false);
+    });
+    should('utils: omit rejects non-plain object carriers', () => {
+      deepStrictEqual(omit({ a: 1, b: 2 }, 'b'), { a: 1 });
+      throws(() => omit(null as any, 'x'), /plain object/);
+      throws(() => omit([1, 2] as any, '1'), /plain object/);
+      throws(() => omit(new Uint8Array([1, 2]) as any, '0'), /plain object/);
+    });
+    should('utils: zip rejects length mismatches', () => {
+      deepStrictEqual(zip([1, 2], ['a', 'b']), [
+        [1, 'a'],
+        [2, 'b'],
+      ]);
+      throws(() => zip([1, 2], ['a']), /zip: length mismatch/);
+      throws(() => zip([1], ['a', 'b']), /zip: length mismatch/);
+    });
     should('utils: perCentDecimal', () => {
       const { perCentDecimal } = formatters;
 
@@ -347,6 +493,36 @@ describe('Transactions', () => {
       t(18, 0.03456799, 0.01);
       t(18, 0.0123456, 0.01);
       t(256, 0.0123456, 0.01);
+      throws(() => perCentDecimal(0, 1), /perCentDecimal: wrong precision/);
+      throws(() => perCentDecimal(-1, 1), /perCentDecimal: wrong precision/);
+      throws(() => perCentDecimal(18, 0), /perCentDecimal: wrong price/);
+      throws(() => perCentDecimal(18, -1), /perCentDecimal: wrong price/);
+    });
+    should('utils: formatBigint omits decimal point when precision is zero', () => {
+      deepStrictEqual(formatters.formatBigint(1_000_000_000n, 1_000_000_000n, 0, true), '1');
+      deepStrictEqual(formatters.formatBigint(123_456_789n, 1_000_000_000n, 0, true), '~0');
+    });
+    should('utils: fromWei labels gwei-scaled values as gwei', () => {
+      deepStrictEqual(formatters.fromWei(1_000_000_000n), '1gwei');
+      deepStrictEqual(formatters.fromWei(1_500_000_000n), '1.5gwei');
+    });
+    should('utils: deepFreeze', () => {
+      const value: any = { a: { b: [1, { c: 2 }] } };
+      value.self = value;
+      deepStrictEqual(deepFreeze(value), value);
+      deepStrictEqual(
+        {
+          root: Object.isFrozen(value),
+          a: Object.isFrozen(value.a),
+          b: Object.isFrozen(value.a.b),
+          c: Object.isFrozen(value.a.b[1]),
+        },
+        { root: true, a: true, b: true, c: true }
+      );
+      throws(() => value.a.b.push(3), TypeError);
+      throws(() => (value.a.b[1].c = 4), TypeError);
+      deepStrictEqual(value.a.b, [1, { c: 2 }]);
+      deepStrictEqual(value.self, value);
     });
   });
 
@@ -357,6 +533,34 @@ describe('Transactions', () => {
       const encoded = ethHex.encode(RawTx.encode(decoded));
       deepStrictEqual(encoded, hex, 'RawTx.encoded');
     };
+    should('encodes validated null-prototype data', () => {
+      const data = Object.assign(Object.create(null), {
+        chainId: 1n,
+        nonce: 1n,
+        maxPriorityFeePerGas: 1n,
+        maxFeePerGas: 2n,
+        gasLimit: 21000n,
+        to: '0x1111111111111111111111111111111111111111',
+        value: 0n,
+        data: '0x',
+        accessList: [],
+      });
+      validateFields('eip1559', data, false);
+      deepStrictEqual(RawTx.decode(RawTx.encode({ type: 'eip1559', data })), {
+        type: 'eip1559',
+        data: {
+          chainId: 1n,
+          nonce: 1n,
+          maxPriorityFeePerGas: 1n,
+          maxFeePerGas: 2n,
+          gasLimit: 21000n,
+          to: '0x1111111111111111111111111111111111111111',
+          value: 0n,
+          data: '0x',
+          accessList: [],
+        },
+      });
+    });
     should('vectors', () => {
       for (const i of TX_VECTORS) t(i.hex);
     });
@@ -685,12 +889,52 @@ describe('Transactions', () => {
         maxFeePerGas: weigwei.decode('2'),
       });
       const priv = '6b911fd37cdf5c81d4c0adb1ab7fa822ed253ab0ad9aa18d77257c88b29b718e';
+      const explicitUndefinedType = Transaction.prepare({
+        type: undefined,
+        to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
+        nonce: 0n,
+        value: 1n,
+        maxFeePerGas: weigwei.decode('2'),
+      });
+      deepStrictEqual(explicitUndefinedType.type, raw.type);
+      deepStrictEqual(explicitUndefinedType.raw, raw.raw);
+      deepStrictEqual(explicitUndefinedType.clone().raw, raw.raw);
+      const looseTx = Transaction.prepare(
+        {
+          to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
+          nonce: amounts.maxUint64 - 1n,
+          value: 1n,
+          maxFeePerGas: weigwei.decode('2'),
+        },
+        false
+      );
+      const looseClone = looseTx.clone();
+      deepStrictEqual(looseClone.raw, looseTx.raw);
+      deepStrictEqual(looseClone.toHex(false), looseTx.toHex(false));
+      const looseSigned = looseTx.signBy(priv, false);
+      const looseUnsigned = looseSigned.removeSignature();
+      deepStrictEqual(looseUnsigned.raw, looseTx.raw);
+      deepStrictEqual(looseUnsigned.toHex(false), looseTx.toHex(false));
       const tx = raw.signBy(priv, false);
       const txH = raw.signBy(priv, true);
       deepStrictEqual(
         tx.toHex(true),
         '0x02f86a0180843b9aca00847735940082520894df90dea0e0bf5ca6d2a7f0cb86874ba6714f463e0180c080a09448b25a696cb0f66945be1844711a5f6979c6cbf060e4f7b5a53e0dceeb3bdca004c61d9b91ecea687f78aa7e65108438e9b12a4fe90b1f70b0956134dfaba18f'
       );
+      const secp256k1N = BigInt(
+        '0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141'
+      );
+      const highS = new Transaction(
+        tx.type,
+        {
+          ...tx.raw,
+          s: secp256k1N - tx.raw.s!,
+          yParity: tx.raw.yParity === 0 ? 1 : 0,
+        },
+        false
+      );
+      deepStrictEqual(highS.verifySignature(), false);
+      throws(() => raw.verifySignature(), /expected signed transaction/);
       deepStrictEqual(txH.verifySignature(), true);
       const tx2 = Transaction.prepare({
         type: 'eip2930',
@@ -748,6 +992,60 @@ describe('Transactions', () => {
         accessList: [],
         data: '',
       });
+      const mutableRaw = {
+        to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
+        nonce: 0n,
+        value: 1n,
+        maxFeePerGas: 2n,
+        maxPriorityFeePerGas: 1n,
+        gasLimit: 21000n,
+        chainId: 1n,
+        accessList: [] as any[],
+        data: '',
+      };
+      const stableTx = new Transaction('eip1559', mutableRaw, false);
+      const stableHex = stableTx.toHex(false);
+      mutableRaw.maxFeePerGas = 9n;
+      mutableRaw.accessList.push({
+        address: '0x0000000000000000000000000000000000000000',
+        storageKeys: [],
+      });
+      Object.assign(mutableRaw, { r: 1n, s: 1n, yParity: 0 });
+      deepStrictEqual(stableTx.toHex(false), stableHex);
+      deepStrictEqual(stableTx.isSigned, false);
+      deepStrictEqual(stableTx.raw, {
+        to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
+        nonce: 0n,
+        value: 1n,
+        maxFeePerGas: 2n,
+        maxPriorityFeePerGas: 1n,
+        gasLimit: 21000n,
+        chainId: 1n,
+        accessList: [],
+        data: '',
+      });
+      deepStrictEqual(
+        new Transaction(
+          'legacy',
+          {
+            to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
+            nonce: 0n,
+            value: 1n,
+            gasPrice: 1n,
+            gasLimit: 21000n,
+            data: '',
+          },
+          false
+        ).raw,
+        {
+          to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
+          nonce: 0n,
+          value: 1n,
+          gasPrice: 1n,
+          gasLimit: 21000n,
+          data: '',
+        }
+      );
       throws(
         () =>
           new Transaction('eip1559', {
@@ -849,10 +1147,282 @@ describe('Transactions', () => {
       throws(() => Transaction.prepare({ ...tx, to: '1'.repeat(41) }), 'to=1*41');
       throws(() => Transaction.prepare({ ...tx, to: '1'.repeat(42) }), 'to=1*42');
       Transaction.prepare({ ...tx, to: '0x' + '1'.repeat(40) });
+      throws(
+        () => Transaction.prepare({ ...tx, foo: 1n } as any, false),
+        (err: any) => {
+          deepStrictEqual(err.errors, [
+            { field: 'foo', error: 'unknown field "foo" for tx type=eip1559' },
+          ]);
+          return true;
+        }
+      );
 
+      throws(() => validateFields('legacy', [] as any, false), 'tx fields array');
+      throws(() => validateFields('legacy', new Uint8Array([]) as any, false), 'tx fields u8a');
       throws(() => Transaction.prepare({ ...tx, nonce: 1 }), 'nonce=1');
       Transaction.prepare({ ...tx, nonce: 1n });
       throws(() => Transaction.prepare({ ...tx, nonce: '1' }), 'nonce="1"');
+      Transaction.prepare({ ...tx, nonce: amounts.maxUint64 - 1n }, false);
+      Transaction.prepare({ ...tx, chainId: amounts.maxUint256 });
+      for (const chainId of [-1n, amounts.maxUint256 + 1n]) {
+        throws(
+          () => Transaction.prepare({ ...tx, chainId }, false),
+          (err: any) => {
+            deepStrictEqual(err.errors, [
+              {
+                field: 'chainId',
+                error: `Writer(): value out of unsigned bounds. Expected 0 <= ${chainId} < ${
+                  amounts.maxUint256 + 1n
+                }`,
+              },
+            ]);
+            return true;
+          }
+        );
+      }
+      Transaction.prepare({
+        type: 'legacy',
+        to: tx.to,
+        nonce: 0n,
+        value: 1n,
+        gasPrice: 1n,
+        chainId: amounts.maxUint256,
+      });
+      new Transaction(
+        'legacy',
+        {
+          nonce: 0n,
+          gasPrice: 1n,
+          gasLimit: 21000n,
+          to: tx.to,
+          value: 1n,
+          data: '',
+          chainId: undefined,
+        },
+        false
+      );
+      const signedLegacyChainId = amounts.maxChainId;
+      const signedLegacy = {
+        nonce: 0n,
+        gasPrice: 1n,
+        gasLimit: 21000n,
+        to: tx.to,
+        value: 1n,
+        data: '',
+        chainId: signedLegacyChainId,
+        yParity: 1,
+        r: 1n,
+        s: 1n,
+      };
+      validateFields('legacy', signedLegacy);
+      throws(
+        () => validateFields('legacy', { ...signedLegacy, chainId: signedLegacyChainId + 1n }),
+        (err: any) => {
+          deepStrictEqual(err.errors, [
+            {
+              field: 'chainId',
+              error: `must be >= 1 and <= ${signedLegacyChainId}, not ${signedLegacyChainId + 1n}`,
+            },
+          ]);
+          return true;
+        }
+      );
+      Transaction.prepare({ ...tx, gasLimit: 1n, maxFeePerGas: amounts.maxUint64 + 1n }, false);
+      throws(
+        () => Transaction.prepare({ ...tx, gasLimit: 2n, maxFeePerGas: amounts.maxUint256 }, false),
+        (err: any) => {
+          deepStrictEqual(err.errors, [
+            { field: 'maxFeePerGas', error: 'gasLimit * maxFeePerGas overflows uint256' },
+          ]);
+          return true;
+        }
+      );
+      Transaction.prepare(
+        {
+          ...tx,
+          maxFeePerGas: amounts.maxUint64 + 1n,
+          maxPriorityFeePerGas: amounts.maxUint64 + 1n,
+        },
+        false
+      );
+      throws(
+        () => Transaction.prepare({ ...tx, maxFeePerGas: 2n, maxPriorityFeePerGas: 3n }, false),
+        (err: any) => {
+          deepStrictEqual(err.errors, [
+            { field: 'maxPriorityFeePerGas', error: 'cannot be bigger than maxFeePerGas=2' },
+          ]);
+          return true;
+        }
+      );
+      throws(
+        () => Transaction.prepare({ ...tx, data: '01', gasLimit: 21000n }),
+        (err: any) => {
+          deepStrictEqual(err.errors, [
+            { field: 'gasLimit', error: 'intrinsic gas too low: 21000 < 21016' },
+          ]);
+          return true;
+        }
+      );
+      deepStrictEqual(Transaction.prepare({ ...tx, data: '01' }).raw.gasLimit, 21016n);
+      throws(
+        () =>
+          Transaction.prepare({
+            ...tx,
+            gasLimit: 21000n,
+            accessList: [
+              {
+                address: '0x0000000000000000000000000000000000000000',
+                storageKeys: ['0x' + '00'.repeat(32)],
+              },
+            ],
+          }),
+        (err: any) => {
+          deepStrictEqual(err.errors, [
+            { field: 'gasLimit', error: 'intrinsic gas too low: 21000 < 25300' },
+          ]);
+          return true;
+        }
+      );
+      deepStrictEqual(
+        Transaction.prepare({
+          ...tx,
+          accessList: [
+            {
+              address: '0x0000000000000000000000000000000000000000',
+              storageKeys: ['0x' + '00'.repeat(32)],
+            },
+          ],
+        }).raw.gasLimit,
+        25300n
+      );
+      const blobTx = {
+        type: 'eip4844' as const,
+        to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
+        nonce: 0n,
+        value: 0n,
+        maxFeePerGas: weigwei.decode('2'),
+        maxFeePerBlobGas: 1n,
+        blobVersionedHashes: ['0x01' + '00'.repeat(31)],
+      };
+      Transaction.prepare(blobTx);
+      Transaction.prepare({ ...blobTx, blobVersionedHashes: [] }, false);
+      throws(
+        () => Transaction.prepare({ ...blobTx, blobVersionedHashes: [] }),
+        (err: any) => {
+          deepStrictEqual(err.errors, [
+            { field: 'blobVersionedHashes', error: 'must contain at least one versioned hash' },
+          ]);
+          return true;
+        }
+      );
+      throws(
+        () =>
+          Transaction.prepare(
+            { ...blobTx, blobVersionedHashes: ['0x00' + '00'.repeat(31)] },
+            false
+          ),
+        (err: any) => {
+          deepStrictEqual(err.errors, [
+            { field: 'blobVersionedHashes', error: 'versioned hash must start with 0x01' },
+          ]);
+          return true;
+        }
+      );
+      throws(
+        () => Transaction.prepare({ ...blobTx, to: '0x', data: '00' }, false),
+        (err: any) => {
+          deepStrictEqual(err.errors, [
+            { field: 'to', error: 'eip4844 transaction destination must not be empty' },
+          ]);
+          return true;
+        }
+      );
+      const sparse: string[] = [];
+      sparse.length = 1;
+      const inheritedSparse: string[] = [];
+      Object.setPrototypeOf(inheritedSparse, { 0: '0x01' + '00'.repeat(31) });
+      inheritedSparse.length = 1;
+      const inheritedBadSparse: string[] = [];
+      Object.setPrototypeOf(inheritedBadSparse, { 0: '0x00' + '00'.repeat(31) });
+      inheritedBadSparse.length = 1;
+      throws(
+        () =>
+          validateFields(
+            'eip4844',
+            {
+              chainId: 1n,
+              nonce: 0n,
+              maxPriorityFeePerGas: 1n,
+              maxFeePerGas: 1n,
+              gasLimit: 21000n,
+              to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
+              value: 0n,
+              data: '',
+              accessList: [],
+              maxFeePerBlobGas: 1n,
+              blobVersionedHashes: sparse,
+            },
+            false
+          ),
+        (err: any) => {
+          deepStrictEqual(err.errors, [
+            { field: 'blobVersionedHashes', error: 'missing array item 0' },
+          ]);
+          return true;
+        }
+      );
+      throws(
+        () =>
+          validateFields(
+            'eip4844',
+            {
+              chainId: 1n,
+              nonce: 0n,
+              maxPriorityFeePerGas: 1n,
+              maxFeePerGas: 1n,
+              gasLimit: 21000n,
+              to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
+              value: 0n,
+              data: '',
+              accessList: [],
+              maxFeePerBlobGas: 1n,
+              blobVersionedHashes: inheritedSparse,
+            },
+            false
+          ),
+        (err: any) => {
+          deepStrictEqual(err.errors, [
+            { field: 'blobVersionedHashes', error: 'missing array item 0' },
+          ]);
+          return true;
+        }
+      );
+      throws(
+        () =>
+          validateFields(
+            'eip4844',
+            {
+              chainId: 1n,
+              nonce: 0n,
+              maxPriorityFeePerGas: 1n,
+              maxFeePerGas: 1n,
+              gasLimit: 21000n,
+              to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
+              value: 0n,
+              data: '',
+              accessList: [],
+              maxFeePerBlobGas: 1n,
+              blobVersionedHashes: inheritedBadSparse,
+            },
+            false
+          ),
+        (err: any) => {
+          deepStrictEqual(err.errors, [
+            { field: 'blobVersionedHashes', error: 'missing array item 0' },
+          ]);
+          return true;
+        }
+      );
     });
   });
   should('create contract', () => {
@@ -895,6 +1465,37 @@ describe('Transactions', () => {
       to: '0x',
       data: '00',
     });
+    Transaction.prepare(
+      {
+        type: 'legacy',
+        nonce: 0n,
+        value: 0n,
+        gasLimit: 1500000n,
+        gasPrice: 21000000000n,
+        to: '0x',
+        data: `0x${'00'.repeat(amounts.maxInitDataSize)}`,
+      },
+      false
+    );
+    throws(
+      () =>
+        Transaction.prepare(
+          {
+            type: 'legacy',
+            nonce: 0n,
+            value: 0n,
+            gasLimit: 1500000n,
+            gasPrice: 21000000000n,
+            to: '0x',
+            data: `0x${'00'.repeat(amounts.maxInitDataSize + 1)}`,
+          },
+          false
+        ),
+      (err: any) => {
+        deepStrictEqual(err.errors, [{ field: 'data', error: 'initcode is too big: 1048578' }]);
+        return true;
+      }
+    );
     const consPrefix =
       '60606040526040805190810160405280600d81526020017f57726170706564204574686572000000000000000000000000000000000000008152506000908051906020019061004f9291906100c8565b506040805190810160405280600481526020017f57455448000000000000000000000000000000000000000000000000000000008152506001908051906020019061009b9291906100c8565b506012600260006101000a81548160ff021916908360ff16021790555034156100c357600080fd5b61016d565b828054600181600116156101000203166002900490600052602060002090601f016020900481019282601f1061010957805160ff1916838001178555610137565b82800160010185558215610137579182015b8281111561013657825182559160200191906001019061011b565b5b5090506101449190610148565b5090565b61016a91905b8082111561016657600081600090555060010161014e565b5090565b90565b610c348061017c6000396000f300';
     const actualCode =

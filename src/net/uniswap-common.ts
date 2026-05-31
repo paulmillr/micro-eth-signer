@@ -1,7 +1,7 @@
 import { type ContractInfo } from '../advanced/abi-decoder.ts';
 import { tokenFromSymbol } from '../advanced/abi.ts';
 import { addr } from '../core/address.ts';
-import { type IWeb3Provider, createDecimal, ethHex, isBytes, weieth } from '../utils.ts';
+import { type IWeb3Provider, createDecimal, ethHex, isBytes, type TRet, weieth } from '../utils.ts';
 
 export type SwapOpt = { slippagePercent: number; ttl: number };
 export const DEFAULT_SWAP_OPT: SwapOpt = { slippagePercent: 0.5, ttl: 30 * 60 };
@@ -44,12 +44,14 @@ export async function awaitDeep<T, E extends boolean | undefined>(
   o: T,
   ignore_errors: E
 ): Promise<E extends true ? NestedUnPromiseIgnore<T> : NestedUnPromise<T>> {
+  // Fresh symbol avoids colliding with user objects that happen to have `awaitDeep` keys.
+  const tag = Symbol();
   let promises: Promise<any>[] = [];
   const traverse = (o: any): any => {
     if (Array.isArray(o)) return o.map((i) => traverse(i));
     if (isBytes(o)) return o;
-    if (isPromise(o)) return { awaitDeep: promises.push(o) };
-    if (typeof o === 'object') {
+    if (isPromise(o)) return { [tag]: promises.push(o) };
+    if (o !== null && typeof o === 'object') {
       let ret: Record<string, any> = {};
       for (let k in o) ret[k] = traverse(o[k]);
       return ret;
@@ -67,8 +69,8 @@ export async function awaitDeep<T, E extends boolean | undefined>(
   const trBack = (o: any): any => {
     if (Array.isArray(o)) return o.map((i) => trBack(i));
     if (isBytes(o)) return o;
-    if (typeof o === 'object') {
-      if (typeof o === 'object' && o.awaitDeep) return values[o.awaitDeep - 1];
+    if (o !== null && typeof o === 'object') {
+      if (tag in o) return values[o[tag] - 1];
       let ret: Record<string, any> = {};
       for (let k in o) ret[k] = trBack(o[k]);
       return ret;
@@ -81,7 +83,7 @@ export async function awaitDeep<T, E extends boolean | undefined>(
 export type CommonBase = {
   contract: string;
 } & ContractInfo;
-export const COMMON_BASES: CommonBase[] = [
+export const COMMON_BASES: TRet<CommonBase[]> = [
   'WETH',
   'DAI',
   'USDC',
@@ -92,7 +94,7 @@ export const COMMON_BASES: CommonBase[] = [
   'AMPL',
 ]
   .map((i) => tokenFromSymbol(i))
-  .filter((i) => !!i);
+  .filter((i) => !!i) as TRet<CommonBase[]>;
 export const WETH: string = tokenFromSymbol('WETH')!.contract;
 if (!WETH) throw new Error('WETH is undefined!');
 
@@ -118,10 +120,25 @@ export function isValidUniAddr(address: string): boolean {
 
 export type Token = { decimals: number; contract: string; symbol: string };
 
-function getToken(token: 'eth' | Token): Token {
-  if (typeof token === 'string' && token.toLowerCase() === 'eth')
-    return { symbol: 'ETH', decimals: 18, contract: 'eth' };
-  return token as Token;
+function getToken(token: 'eth' | Token, name: string): Token {
+  if (typeof token === 'string') {
+    if (token.toLowerCase() === 'eth') return { symbol: 'ETH', decimals: 18, contract: 'eth' };
+    // Runtime callers can bypass the union type; keep invalid input distinct from no-route.
+    throw new Error(`uniswap.swap: wrong ${name}`);
+  }
+  if (token === null || typeof token !== 'object') throw new Error(`uniswap.swap: wrong ${name}`);
+  const t = token as Partial<Token>;
+  if (
+    typeof t.contract !== 'string' ||
+    !t.contract ||
+    typeof t.symbol !== 'string' ||
+    typeof t.decimals !== 'number' ||
+    !Number.isSafeInteger(t.decimals) ||
+    t.decimals < 0
+  ) {
+    throw new Error(`uniswap.swap: wrong ${name}`);
+  }
+  return t as Token;
 }
 
 export abstract class UniswapAbstract {
@@ -168,12 +185,10 @@ export abstract class UniswapAbstract {
       }
     | undefined
   > {
-    const fromInfo = getToken(fromCoin);
-    const toInfo = getToken(toCoin);
-    if (!fromInfo || !toInfo) return;
+    const fromInfo = getToken(fromCoin, 'fromCoin');
+    const toInfo = getToken(toCoin, 'toCoin');
     const fromContract = fromInfo.contract.toLowerCase();
     const toContract = toInfo.contract.toLowerCase();
-    if (!fromContract || !toContract) return;
     const fromDecimal = createDecimal(fromInfo.decimals);
     const toDecimal = createDecimal(toInfo.decimals);
     const inputAmount = fromDecimal.decode(amount);
@@ -207,9 +222,9 @@ export abstract class UniswapAbstract {
         },
       };
     } catch (e) {
-      // @ts-ignore
-      console.log('E', e);
-      return;
+      // No route is the documented soft-failure; other bestPath failures must stay visible.
+      if (e instanceof Error && e.message === 'uniswap: cannot find path') return;
+      throw e;
     }
   }
 }

@@ -18,7 +18,9 @@ import _UniswapV3 from './net/uniswap-v3.ts';
  * import { Chainlink, Web3Provider } from 'micro-eth-signer/net.js';
  * const prov = new Web3Provider(jsonrpc(fetch, 'http://localhost:8545'));
  * const link = new Chainlink(prov);
- * await link.coinPrice('BTC');
+ * async function main() {
+ *   await link.coinPrice('BTC');
+ * }
  * ```
  */
 export const Chainlink = _Chainlink;
@@ -32,7 +34,9 @@ export const Chainlink = _Chainlink;
  * import { ENS, Web3Provider } from 'micro-eth-signer/net.js';
  * const prov = new Web3Provider(jsonrpc(fetch, 'http://localhost:8545'));
  * const ens = new ENS(prov);
- * await ens.nameToAddress('vitalik.eth');
+ * async function main() {
+ *   await ens.nameToAddress('vitalik.eth');
+ * }
  * ```
  */
 export const ENS = _ENS;
@@ -71,7 +75,9 @@ export const UniswapV3 = _UniswapV3;
  * import { jsonrpc } from 'micro-ftch';
  * import { Web3Provider } from 'micro-eth-signer/net.js';
  * const prov = new Web3Provider(jsonrpc(fetch, 'http://localhost:8545'));
- * await prov.height();
+ * async function main() {
+ *   await prov.height();
+ * }
  * ```
  */
 export const Web3Provider = _Web3Provider;
@@ -85,8 +91,10 @@ export const Web3Provider = _Web3Provider;
  * import { jsonrpc } from 'micro-ftch';
  * import { calcTransfersDiff, Web3Provider } from 'micro-eth-signer/net.js';
  * const prov = new Web3Provider(jsonrpc(fetch, 'http://localhost:8545'));
- * const txs = await prov.transfers('0xd8da6bf26964af9d7eed9e03e53415d37aa96045');
- * calcTransfersDiff(txs);
+ * async function main() {
+ *   const txs = await prov.transfers('0xd8da6bf26964af9d7eed9e03e53415d37aa96045');
+ *   calcTransfersDiff(txs);
+ * }
  * ```
  */
 export const calcTransfersDiff = _calcTransfersDiff;

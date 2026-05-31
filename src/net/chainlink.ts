@@ -50,7 +50,7 @@ export const TOKENS: Record<string, { decimals: number; contract: string; tokenC
     AMPL: {
       decimals: 18,
       contract: '0xe20ca8d7546932360e37e9d72c1a47334af57706',
-      tokenContract: '0xd46ba6d942050d489dbd938a2c909a5d5039a161',
+      tokenContract: tokenFromSymbol('AMPL')!.contract,
     },
     AMZN: {
       decimals: 8,
@@ -75,7 +75,7 @@ export const TOKENS: Record<string, { decimals: number; contract: string; tokenC
     BAT: {
       decimals: 8,
       contract: '0x9441d7556e7820b5ca42082cfa99487d56aca958',
-      tokenContract: '0x0d8775f648430679a709e98d2b0cb6250d2887ef',
+      tokenContract: tokenFromSymbol('BAT')!.contract,
     },
     BNB: {
       decimals: 8,
@@ -100,7 +100,7 @@ export const TOKENS: Record<string, { decimals: number; contract: string; tokenC
     COMP: {
       decimals: 8,
       contract: '0xdbd020caef83efd542f4de03e3cf0c28a4428bd5',
-      tokenContract: '0xc00e94cb662c3520282e6f5717214004a7f26888',
+      tokenContract: tokenFromSymbol('COMP')!.contract,
     },
     COVER: {
       decimals: 8,
@@ -120,7 +120,7 @@ export const TOKENS: Record<string, { decimals: number; contract: string; tokenC
     DAI: {
       decimals: 8,
       contract: '0xaed0c38402a5d19df6e4c03f4e2dced6e29c1ee9',
-      tokenContract: '0x60d9564303c70d3f040ea9393d98d94f767d020c',
+      tokenContract: tokenFromSymbol('DAI')!.contract,
     },
     DPI: {
       decimals: 8,
@@ -170,7 +170,7 @@ export const TOKENS: Record<string, { decimals: number; contract: string; tokenC
     MKR: {
       decimals: 8,
       contract: '0xec1d1b3b0443256cc3860e24a46f108e699484aa',
-      tokenContract: '0x9f8f72aa9304c8b593d555f12ef6589cc3a579a2',
+      tokenContract: tokenFromSymbol('MKR')!.contract,
     },
     MTA: {
       decimals: 8,
@@ -235,12 +235,12 @@ export const TOKENS: Record<string, { decimals: number; contract: string; tokenC
     UNI: {
       decimals: 8,
       contract: '0x553303d460ee0afb37edff9be42922d8ff63220e',
-      tokenContract: '0x1f9840a85d5af5bf1d1762f925bdaddc4201f984',
+      tokenContract: tokenFromSymbol('UNI')!.contract,
     },
     USDC: {
       decimals: 8,
       contract: '0x8fffffd4afb6115b954bd326cbe7b4ba576818f6',
-      tokenContract: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48',
+      tokenContract: tokenFromSymbol('USDC')!.contract,
     },
     USDK: {
       decimals: 8,
@@ -250,7 +250,7 @@ export const TOKENS: Record<string, { decimals: number; contract: string; tokenC
     USDT: {
       decimals: 8,
       contract: '0x3e7d1eab13ad0104d2750b8863b489d65364e32d',
-      tokenContract: '0xdac17f958d2ee523a2206206994597c13d831ec7',
+      tokenContract: tokenFromSymbol('USDT')!.contract,
     },
     YFI: {
       decimals: 8,

@@ -33,10 +33,10 @@ export async function main() {
 
   await bench('init micro-eth-signer', () => {
     mkzg = new kzg.KZG(s_fast);
-  }, 1);
+  });
   await bench('init kzg-wasm', async () => {
     wkzg = await loadKZG(opts)
-  }, 1);
+  });
 
   const i0 = VIEM['blob-to-kzg-commitment'][1].input;
   const i1 = VIEM['compute-kzg-proof'][0].input;

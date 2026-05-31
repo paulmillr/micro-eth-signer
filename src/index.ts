@@ -1,5 +1,9 @@
 import { addr as _addr } from './core/address.ts';
-import { authorization as _authorization } from './core/tx-internal.ts';
+import {
+  authorization as _authorization,
+  type AuthorizationItem as _AuthorizationItem,
+  type AuthorizationRequest as _AuthorizationRequest,
+} from './core/tx-internal.ts';
 import { Transaction as _Transaction } from './core/tx.ts';
 import {
   eip191Signer as _eip191Signer,
@@ -7,7 +11,9 @@ import {
   signTyped as _signTyped,
   verifyTyped as _verifyTyped,
   type EIP712Domain as _EIP712Domain,
+  type Hex as _Hex,
   type TypedData as _TypedData,
+  type TypedSigner as _TypedSigner,
 } from './core/typed-data.ts';
 import {
   amounts as _amounts,
@@ -15,6 +21,7 @@ import {
   ethHexNoLeadingZero as _ethHexNoLeadingZero,
   weieth as _weieth,
   weigwei as _weigwei,
+  type Bytes as _Bytes,
 } from './utils.ts';
 
 /**
@@ -42,6 +49,10 @@ export const addr = _addr;
  * ```
  */
 export const authorization = _authorization;
+/** EIP-7702 authorization request payload. */
+export type AuthorizationRequest = _AuthorizationRequest;
+/** EIP-7702 signed authorization item. */
+export type AuthorizationItem = _AuthorizationItem;
 /**
  * Typed transaction builder, signer, and serializer.
  * @param type - Transaction version to validate against.
@@ -76,6 +87,10 @@ export const Transaction = _Transaction;
  * ```
  */
 export const eip191Signer = _eip191Signer;
+/** Hex string or byte array accepted by typed-data signing helpers. */
+export type Hex = _Hex;
+/** Generic message signer returned by EIP-191 and EIP-712 helpers. */
+export type TypedSigner<T> = _TypedSigner<T>;
 /**
  * EIP-712 domain shape.
  * Used by `signTyped`, `verifyTyped`, and `encoder` to describe the signing domain.
@@ -222,3 +237,5 @@ export const weieth = _weieth;
  * ```
  */
 export const weigwei = _weigwei;
+/** Byte-array input accepted by the package helpers. */
+export type Bytes = _Bytes;

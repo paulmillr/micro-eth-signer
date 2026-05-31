@@ -6,6 +6,7 @@ import { addr } from './address.ts';
 import {
   RawTx,
   TxVersions,
+  calcIntrinsicGas,
   decodeLegacyV,
   removeSig,
   sortRawData,
@@ -31,16 +32,19 @@ import {
 
 // Transaction-related utils.
 
-// 4 fields are required. Others are pre-filled with default values.
+// Defaultable fields are pre-filled when the selected tx type exposes them.
 const TX_DEFAULTS = {
   accessList: [], // needs to be .slice()-d to create new reference
-  authorizationList: [],
+  // EIP-7702 authorizationList must be caller-provided and non-empty, so it has no default.
   chainId: BigInt(1) satisfies bigint as bigint, // mainnet
   data: '',
-  gasLimit: BigInt(21000) satisfies bigint as bigint, // TODO: investigate if limit is smaller in eip4844 txs
-  maxPriorityFeePerGas: (BigInt(1) * amounts.GWEI) satisfies bigint as bigint, // Reduce fingerprinting by using standard, popular value
+  // TODO: investigate if limit is smaller in eip4844 txs.
+  gasLimit: BigInt(21000) satisfies bigint as bigint,
+  // Reduce fingerprinting by using standard, popular value.
+  maxPriorityFeePerGas: (BigInt(1) * amounts.GWEI) satisfies bigint as bigint,
   type: 'eip1559',
 } as const;
+const GAS_PER_BLOB = /* @__PURE__ */ BigInt(131072);
 type DefaultField = keyof typeof TX_DEFAULTS;
 type DefaultType = (typeof TX_DEFAULTS)['type'];
 type DefaultsOptional<T> = {
@@ -83,13 +87,16 @@ export class Transaction<T extends TxType> {
   readonly type: T;
   readonly raw: TxCoder<T>;
   readonly isSigned: boolean;
+  private readonly strict: boolean;
 
   // Doesn't force any defaults, catches if fields incompatible with type
   constructor(type: T, raw: TxCoder<T>, strict = true, allowSignatureFields = true) {
     this.type = type;
-    this.raw = raw;
+    // Preserve whether this was validated as user input or machine/historical data.
+    this.strict = strict;
     validateFields(type, raw, strict, allowSignatureFields);
-    this.isSigned = typeof raw.r === 'bigint' && typeof raw.s === 'bigint';
+    this.raw = cloneDeep(raw);
+    this.isSigned = typeof this.raw.r === 'bigint' && typeof this.raw.s === 'bigint';
   }
   // Defaults
   static prepare<T extends { type: undefined }>(
@@ -105,16 +112,21 @@ export class Transaction<T extends TxType> {
     if (!TxVersions.hasOwnProperty(type)) throw new Error(`wrong transaction type=${type}`);
     const coder = TxVersions[type];
     const fields = new Set(coder.fields as string[]);
+    const hasGasLimit = Object.hasOwn(data, 'gasLimit');
     // Copy default fields, but only if the field is present on the tx type.
     const raw: Record<string, any> = { type };
     for (const f in TX_DEFAULTS) {
       if (f !== 'type' && fields.has(f)) {
         raw[f] = TX_DEFAULTS[f as DefaultField];
-        if (['accessList', 'authorizationList'].includes(f)) raw[f] = cloneDeep(raw[f]);
+        if (f === 'accessList') raw[f] = cloneDeep(raw[f]);
       }
     }
     // Copy all fields, so we can validate unexpected ones.
-    return new Transaction(type, sortRawData(Object.assign(raw, data)), strict, false);
+    Object.assign(raw, data);
+    // Preserve normalized default type when callers pass the supported `{ type: undefined }` shape.
+    raw.type = type;
+    if (!hasGasLimit && fields.has('gasLimit')) raw.gasLimit = calcIntrinsicGas(type, raw);
+    return new Transaction(type, sortRawData(raw), strict, false);
   }
   /**
    * Creates transaction which sends whole account balance. Does two things:
@@ -221,23 +233,33 @@ export class Transaction<T extends TxType> {
       // maxFeePerGas = baseFeePerGas[*2] + maxPriorityFeePerGas
       gasFee = r.maxFeePerGas;
     }
-    // TODO: how to calculate 4844 fee?
-    return raw.gasLimit * gasFee;
+    let res = raw.gasLimit * gasFee;
+    if (type === 'eip4844') {
+      const r = raw as SpecifyVersion<['eip4844']>;
+      // EIP-4844 §Execution layer validation: max_total_fee includes
+      // GAS_PER_BLOB * blob_count * max_fee_per_blob_gas, with GAS_PER_BLOB = 2**17.
+      res += GAS_PER_BLOB * BigInt(r.blobVersionedHashes.length) * r.maxFeePerBlobGas;
+    }
+    return res;
   }
   clone(): Transaction<T> {
-    return new Transaction(this.type, cloneDeep(this.raw));
+    return new Transaction(this.type, cloneDeep(this.raw), this.strict);
   }
   verifySignature(): boolean {
     this.assertIsSigned();
-    const { r, s } = this.raw;
-    return verify(
-      new secp256k1.Signature(r!, s!).toBytes(),
-      this.calcHash(false),
-      hexToBytes(this.recoverSender().publicKey)
-    );
+    const { r, s, yParity } = this.raw;
+    const sig = initSig({ r: r!, s: s! }, yParity!);
+    // EIP-2 high-s tx signatures are structurally decodable but invalid, so
+    // this boolean verifier returns false while malformed signature fields still throw above.
+    if (sig.hasHighS()) return false;
+    const hash = this.calcHash(false);
+    const publicKey = secp256k1.recoverPublicKey(sig.toBytes('recovered'), hash, {
+      prehash: false,
+    });
+    return verify(sig.toBytes(), hash, publicKey);
   }
   removeSignature(): Transaction<T> {
-    return new Transaction(this.type, removeSig(cloneDeep(this.raw)));
+    return new Transaction(this.type, removeSig(cloneDeep(this.raw)), this.strict);
   }
   /**
    * Signs transaction with a private key.

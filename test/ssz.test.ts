@@ -1,6 +1,6 @@
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils.js';
 import { describe, should } from '@paulmillr/jsbt/test.js';
-import { deepStrictEqual, throws } from 'node:assert';
+import { deepStrictEqual, notStrictEqual, throws } from 'node:assert';
 import { readdirSync, readFileSync } from 'node:fs';
 import * as snappy from 'snappyjs';
 import * as yaml from 'yaml';
@@ -10,48 +10,39 @@ import { __dirname } from './util.ts';
 // https://github.com/ethereum/consensus-spec-tests
 const PATH = './test/vectors/consensus-spec-tests/tests/general/phase0/ssz_generic/';
 const STATIC_PATH = './test/vectors/consensus-spec-tests/tests/mainnet/deneb/ssz_static/';
-const SSZ_STABLE_PATH = './vectors/ssz/';
-const SSZ_STABLE_PATH_2 = `${__dirname}/vectors/ssz`;
-
-function parseVectors(path) {
-  const res = {};
-  for (const name of readdirSync(`${__dirname}/${path}`)) {
-    const curPath = `${__dirname}/${path}/${name}`;
-    const data = readFileSync(`${curPath}/serialized.ssz_snappy`);
-    const hex = bytesToHex(snappy.uncompress(data));
-    const meta = yaml.parse(readFileSync(`${curPath}/meta.yaml`, 'utf8'), yamlOpt);
-    const value = yaml.parse(readFileSync(`${curPath}/value.yaml`, 'utf8'), yamlOpt);
-    res[name] = { meta, value, hex };
-  }
-  return res;
-}
+const SSZ_PATH = `${__dirname}/vectors/ssz`;
+const NEW_SSZ_PATH = `${__dirname}/new_vectors/ssz`;
+const yamlOpt = { intAsBigInt: true };
 
 // TODO: think about additional package to export vectors?
 // Pros: less deps?
 // Cons: need to sync after changes, bigints issues with json (need to add parser/decoder with bigint support)
-const VALID = {};
-const INVALID = {};
-const yamlOpt = { intAsBigInt: true };
-for (const category of readdirSync(PATH)) {
-  for (const valid of ['valid', 'invalid']) {
-    for (const name of readdirSync(`${PATH}/${category}/${valid}`)) {
-      const curPath = `${PATH}/${category}/${valid}/${name}`;
-      const data = readFileSync(`${curPath}/serialized.ssz_snappy`);
-      const hex = bytesToHex(snappy.uncompress(data));
-      const fullName = `${category}/${name}`;
+const readGenericVectors = (path) => {
+  const validVectors = {};
+  const invalidVectors = {};
+  for (const category of readdirSync(path)) {
+    for (const valid of ['valid', 'invalid']) {
+      for (const name of readdirSync(`${path}/${category}/${valid}`)) {
+        const curPath = `${path}/${category}/${valid}/${name}`;
+        const data = readFileSync(`${curPath}/serialized.ssz_snappy`);
+        const hex = bytesToHex(snappy.uncompress(data));
+        const fullName = `${category}/${name}`;
 
-      if (valid === 'valid') {
-        const meta = yaml.parse(readFileSync(`${curPath}/meta.yaml`, 'utf8'), yamlOpt);
-        const value = yaml.parse(readFileSync(`${curPath}/value.yaml`, 'utf8'), yamlOpt);
-        VALID[fullName] = { meta, value, hex };
-      } else {
-        INVALID[fullName] = hex;
+        if (valid === 'valid') {
+          const meta = yaml.parse(readFileSync(`${curPath}/meta.yaml`, 'utf8'), yamlOpt);
+          const value = yaml.parse(readFileSync(`${curPath}/value.yaml`, 'utf8'), yamlOpt);
+          validVectors[fullName] = { meta, value, hex };
+        } else {
+          invalidVectors[fullName] = hex;
+        }
       }
     }
   }
-}
+  return { valid: validVectors, invalid: invalidVectors };
+};
+const { valid: VALID, invalid: INVALID } = readGenericVectors(PATH);
 
-function * readStructVectors(path) {
+function* readStructVectors(path) {
   const res = [];
   for (const type of readdirSync(path)) {
     for (const name of readdirSync(`${path}/${type}`)) {
@@ -112,9 +103,12 @@ const mapTypes = (type, electra, elm) => {
         ) {
           res[k] = SSZ.bitvector(128).decode(hexToBytes(v.slice(2)));
         } else if (
-          ['StableAttestation', 'Attestation', 'StableBeaconBlockBody', 'BeaconBlockBody'].includes(
-            type
-          )
+          [
+            'ProgressiveAttestation',
+            'Attestation',
+            'ProgressiveBeaconBlockBody',
+            'BeaconBlockBody',
+          ].includes(type)
         ) {
           res[k] = SSZ.bitlist(2048 * 64).decode(hexToBytes(v.slice(2)));
         } else res[k] = SSZ.bitlist(2048).decode(hexToBytes(v.slice(2)));
@@ -184,563 +178,294 @@ const mapTypes = (type, electra, elm) => {
 };
 
 describe('SSZ', () => {
-  describe('staticContainer', () => {
-    describe('basic (from EIP)', () => {
-      const Shape1 = SSZ.stableContainer(4, {
-        side: SSZ.uint16,
-        color: SSZ.uint8,
-        radius: SSZ.uint16,
-      });
-      const Shape2 = SSZ.stableContainer(8, {
-        side: SSZ.uint16,
-        color: SSZ.uint8,
-        radius: SSZ.uint16,
-      });
-      const Shape3 = SSZ.stableContainer(8, {
-        side: SSZ.uint16,
-        colors: SSZ.list(4, SSZ.uint8),
-        radius: SSZ.uint16,
-      });
-      const VarTestStruct = SSZ.container({
-        A: SSZ.uint16,
-        B: Shape3,
-        C: SSZ.uint8,
-      });
-      const VarTestStruct2 = SSZ.container({
-        A: SSZ.uint16,
-        B: SSZ.list(2, Shape3),
-        C: SSZ.uint8,
-      });
-      const ShapePair3 = SSZ.container({
-        shape_1: Shape3,
-        shape_2: Shape3,
-      });
-      const Shape4 = SSZ.stableContainer(33, {
-        side: SSZ.uint16,
-        colors: SSZ.list(4, SSZ.uint8),
-        radius: SSZ.uint16,
-      });
-      const ShapePair4 = SSZ.container({
-        shape_1: Shape4,
-        shape_2: Shape4,
-      });
-      should('stableContainer', () => {
-        const VECTORS = [
-          {
-            c: Shape1,
-            value: { side: 0x42, color: 1, radius: 0x42 },
-            serialized: '074200014200',
-            hash_tree_root: '37b28eab19bc3e246e55d2e2b2027479454c27ee006d92d4847c84893a162e6d',
-          },
-          {
-            c: Shape1,
-            value: { side: 0x42, color: 1 },
-            serialized: '03420001',
-            hash_tree_root: 'bfdb6fda9d02805e640c0f5767b8d1bb9ff4211498a5e2d7c0f36e1b88ce57ff',
-          },
-          {
-            c: Shape1,
-            value: { color: 1 },
-            serialized: '0201',
-            hash_tree_root: '522edd7309c0041b8eb6a218d756af558e9cf4c816441ec7e6eef42dfa47bb98',
-          },
-          {
-            c: Shape1,
-            value: { color: 1, radius: 0x42 },
-            serialized: '06014200',
-            hash_tree_root: 'f66d2c38c8d2afbd409e86c529dff728e9a4208215ca20ee44e49c3d11e145d8',
-          },
-          {
-            c: Shape2,
-            value: { side: 0x42, color: 1, radius: 0x42 },
-            serialized: '074200014200',
-            hash_tree_root: '0792fb509377ee2ff3b953dd9a88eee11ac7566a8df41c6c67a85bc0b53efa4e',
-          },
-          {
-            c: Shape2,
-            value: { side: 0x42, color: 1 },
-            serialized: '03420001',
-            hash_tree_root: 'ddc7acd38ae9d6d6788c14bd7635aeb1d7694768d7e00e1795bb6d328ec14f28',
-          },
-          {
-            c: Shape2,
-            value: { color: 1 },
-            serialized: '0201',
-            hash_tree_root: '9893ecf9b68030ff23c667a5f2e4a76538a8e2ab48fd060a524888a66fb938c9',
-          },
-          {
-            c: Shape2,
-            value: { color: 1, radius: 0x42 },
-            serialized: '06014200',
-            hash_tree_root: 'e823471310312d52aa1135d971a3ed72ba041ade3ec5b5077c17a39d73ab17c5',
-          },
-          {
-            c: Shape3,
-            value: { side: 0x42, colors: [1, 2], radius: 0x42 },
-            serialized: '0742000800000042000102',
-            hash_tree_root: '1093b0f1d88b1b2b458196fa860e0df7a7dc1837fe804b95d664279635cb302f',
-          },
-          {
-            c: Shape3,
-            value: { side: 0x42 },
-            serialized: '014200',
-            hash_tree_root: '28df3f1c3eebd92504401b155c5cfe2f01c0604889e46ed3d22a3091dde1371f',
-          },
-          {
-            c: Shape3,
-            value: { colors: [1, 2] },
-            serialized: '02040000000102',
-            hash_tree_root: '659638368467b2c052ca698fcb65902e9b42ce8e94e1f794dd5296ceac2dec3e',
-          },
-          {
-            c: Shape3,
-            value: { radius: 0x42 },
-            serialized: '044200',
-            hash_tree_root: 'd585dd0561c718bf4c29e4c1bd7d4efd4a5fe3c45942a7f778acb78fd0b2a4d2',
-          },
-          {
-            c: Shape3,
-            value: { colors: [1, 2], radius: 0x42 },
-            serialized: '060600000042000102',
-            hash_tree_root: '00fc0cecc200a415a07372d5d5b8bc7ce49f52504ed3da0336f80a26d811c7bf',
-          },
-          {
-            c: VarTestStruct,
-            value: { A: 11, B: { colors: [1, 2], radius: 0x42 }, C: 3 },
-            serialized: '0b000700000003060600000042000102',
-            hash_tree_root: 'c29e3166aa3fb90442673b56736eb7f4e6e060ed1f4088556e7be81cb1458380',
-          },
-          {
-            c: VarTestStruct2,
-            value: { A: 11, B: [{ colors: [1, 2], radius: 0x42 }], C: 3 },
-            serialized: '0b00070000000304000000060600000042000102',
-            hash_tree_root: 'd5197534723f8b2643d54adde5ef9c456a28e0df61c4568f92c7f00244af3b4f',
-          },
-
-          {
-            c: ShapePair3,
-            value: {
-              shape_1: { colors: [1, 2], radius: 0x42 },
-              shape_2: { side: 5, colors: [3, 4], radius: 0x23 },
-            },
-            serialized: '08000000110000000606000000420001020705000800000023000304',
-            hash_tree_root: 'c932d6052fb9643366c3271552ba5397791df399271edaa8e46e694d8fb22c57',
-          },
-          {
-            c: ShapePair3,
-            value: {
-              shape_1: { side: 5, colors: [3, 4], radius: 0x23 },
-              shape_2: { colors: [1, 2], radius: 0x42 },
-            },
-            serialized: '08000000130000000705000800000023000304060600000042000102',
-            hash_tree_root: 'b60d88a6e2c50b573ac61c069ea2c4cd01b345b33c1a1631ae18c27bf33e4cee',
-          },
-          {
-            c: ShapePair4,
-            value: {
-              shape_1: { colors: [1, 2], radius: 0x42 },
-              shape_2: { side: 5, colors: [3, 4], radius: 0x23 },
-            },
-            serialized: '080000001500000006000000000600000042000102070000000005000800000023000304',
-            hash_tree_root: 'e0694811df863204b7a4dbf0239dbe5a555ff451954142eb2af7bf9b4f6763bf',
-          },
-          {
-            c: ShapePair4,
-            value: {
-              shape_1: { side: 5, colors: [3, 4], radius: 0x23 },
-              shape_2: { colors: [1, 2], radius: 0x42 },
-            },
-            serialized: '080000001700000007000000000500080000002300030406000000000600000042000102',
-            hash_tree_root: 'b88771fd9e8f80f8621c63084cbf9c1b12301dcc117f6604ad992777eb7b1dd7',
-          },
-        ];
-        for (const v of VECTORS) {
-          deepStrictEqual(v.c.decode(hexToBytes(v.serialized)), v.value, 'decode');
-          deepStrictEqual(bytesToHex(v.c.encode(v.value)), v.serialized, 'encode');
-          deepStrictEqual(bytesToHex(v.c.merkleRoot(v.value)), v.hash_tree_root);
-        }
-      });
-      should('profile', () => {
-        const Square = SSZ.profile(Shape1, [], ['side', 'color']);
-        const Circle = SSZ.profile(Shape1, [], ['color', 'radius']);
-        const SquareOpt = SSZ.profile(Shape1, ['color'], ['side']);
-        const CircleOpt = SSZ.profile(Shape1, ['radius'], ['color']);
-        const SquareOpt2 = SSZ.profile(Shape1, ['color', 'side']);
-        const CircleOpt2 = SSZ.profile(Shape1, ['radius', 'color']);
-        deepStrictEqual(Square.size, 3);
-        deepStrictEqual(Circle.size, 3);
-        deepStrictEqual(Shape1.size, undefined);
-        deepStrictEqual(SquareOpt.size, undefined);
-        deepStrictEqual(SquareOpt2.size, undefined);
-        deepStrictEqual(CircleOpt2.size, undefined);
-        const VECTORS = [
-          // Square
-          {
-            c: Shape1,
-            value: { side: 0x42, color: 1 },
-            serialized: '03420001',
-            hash_tree_root: 'bfdb6fda9d02805e640c0f5767b8d1bb9ff4211498a5e2d7c0f36e1b88ce57ff',
-          },
-          {
-            c: Square,
-            value: { side: 0x42, color: 1 },
-            serialized: '420001',
-            hash_tree_root: 'bfdb6fda9d02805e640c0f5767b8d1bb9ff4211498a5e2d7c0f36e1b88ce57ff',
-          },
-          {
-            c: SquareOpt,
-            value: { side: 0x42, color: 1 },
-            serialized: '01420001',
-            hash_tree_root: 'bfdb6fda9d02805e640c0f5767b8d1bb9ff4211498a5e2d7c0f36e1b88ce57ff',
-          },
-          {
-            c: SquareOpt2,
-            value: { side: 0x42, color: 1 },
-            serialized: '03420001', // Same as Shape1 (because no fields omitted before)
-            hash_tree_root: 'bfdb6fda9d02805e640c0f5767b8d1bb9ff4211498a5e2d7c0f36e1b88ce57ff',
-          },
-          // Circle
-          {
-            c: Shape1,
-            value: { color: 1, radius: 0x42 },
-            serialized: '06014200',
-            hash_tree_root: 'f66d2c38c8d2afbd409e86c529dff728e9a4208215ca20ee44e49c3d11e145d8',
-          },
-          {
-            c: Circle,
-            value: { color: 1, radius: 0x42 },
-            serialized: '014200',
-            hash_tree_root: 'f66d2c38c8d2afbd409e86c529dff728e9a4208215ca20ee44e49c3d11e145d8',
-          },
-          {
-            c: CircleOpt,
-            value: { color: 1, radius: 0x42 },
-            serialized: '01014200',
-            hash_tree_root: 'f66d2c38c8d2afbd409e86c529dff728e9a4208215ca20ee44e49c3d11e145d8',
-          },
-          {
-            c: CircleOpt2,
-            value: { color: 1, radius: 0x42 },
-            serialized: '03014200', // different from Shape!
-            hash_tree_root: 'f66d2c38c8d2afbd409e86c529dff728e9a4208215ca20ee44e49c3d11e145d8',
-          },
-        ];
-        for (const v of VECTORS) {
-          deepStrictEqual(bytesToHex(v.c.encode(v.value)), v.serialized, 'encode');
-          deepStrictEqual(bytesToHex(v.c.merkleRoot(v.value)), v.hash_tree_root);
-          deepStrictEqual(v.c.decode(hexToBytes(v.serialized)), v.value, 'decode');
-        }
-      });
-      should('_isStableCompat', () => {
-        // Field types are compatible with themselves.
-        deepStrictEqual(SSZ.uint8._isStableCompat(SSZ.uint8), true);
-        deepStrictEqual(SSZ.uint16._isStableCompat(SSZ.uint16), true);
-        deepStrictEqual(SSZ.bitlist(5)._isStableCompat(SSZ.bitlist(5)), true);
-        deepStrictEqual(SSZ.bitvector(5)._isStableCompat(SSZ.bitvector(5)), true);
-        deepStrictEqual(SSZ.bitvector(5)._isStableCompat(SSZ.bitvector(6)), false);
-
-        // byte is compatible with uint8 and vice versa.
-        deepStrictEqual(SSZ.uint8._isStableCompat(SSZ.byte), true);
-        deepStrictEqual(SSZ.byte._isStableCompat(SSZ.uint8), true);
-        deepStrictEqual(SSZ.uint8._isStableCompat(SSZ.uint16), false);
-        // Bitlist[N] / Bitvector[N] field types are compatible if they share the same capacity N.
-        deepStrictEqual(SSZ.bitlist(5)._isStableCompat(SSZ.bitvector(5)), true);
-        deepStrictEqual(SSZ.bitlist(5)._isStableCompat(SSZ.bitvector(6)), false);
-        // List[T, N] / Vector[T, N] field types are compatible if T is compatible and if they also share the same capacity N.
-        deepStrictEqual(SSZ.list(5, SSZ.byte)._isStableCompat(SSZ.vector(5, SSZ.uint8)), true);
-        deepStrictEqual(SSZ.bytelist(5)._isStableCompat(SSZ.vector(5, SSZ.uint8)), true);
-        deepStrictEqual(SSZ.bytevector(5)._isStableCompat(SSZ.vector(5, SSZ.uint8)), true);
-        deepStrictEqual(SSZ.list(5, SSZ.byte)._isStableCompat(SSZ.vector(6, SSZ.uint8)), false);
-        deepStrictEqual(SSZ.bytelist(5)._isStableCompat(SSZ.vector(6, SSZ.uint8)), false);
-        deepStrictEqual(SSZ.bytevector(5)._isStableCompat(SSZ.vector(6, SSZ.uint8)), false);
-        // Container / StableContainer[N] field types are compatible if all inner field types are compatible, if they also share the same field names in the same order, and for StableContainer[N] if they also share the same capacity N.
-        const AF = { A: SSZ.uint8, B: SSZ.uint16, C: SSZ.uint32 };
-        const BF = { A: SSZ.uint32, B: SSZ.uint16, C: SSZ.uint8 };
-        const CF = { A: SSZ.uint32, B: SSZ.uint16 };
-        // container-container
-        deepStrictEqual(SSZ.container(AF)._isStableCompat(SSZ.container(AF)), true);
-        deepStrictEqual(SSZ.container(AF)._isStableCompat(SSZ.container(BF)), false);
-        deepStrictEqual(SSZ.container(AF)._isStableCompat(SSZ.container(CF)), false);
-        // container-stable container
-        deepStrictEqual(SSZ.container(AF)._isStableCompat(SSZ.stableContainer(5, AF)), true);
-        deepStrictEqual(SSZ.container(BF)._isStableCompat(SSZ.stableContainer(5, AF)), false);
-        // stable container-stable container
-        deepStrictEqual(
-          SSZ.stableContainer(5, AF)._isStableCompat(SSZ.stableContainer(5, AF)),
-          true
-        );
-        deepStrictEqual(
-          SSZ.stableContainer(6, AF)._isStableCompat(SSZ.stableContainer(5, AF)),
-          false
-        );
-        // Profile[X] field types are compatible with StableContainer types compatible with X, and are compatible with Profile[Y] where Y is compatible with X if also all inner field types are compatible. Differences solely in optionality do not affect merkleization compatibility.
-        const ASC = SSZ.stableContainer(5, AF);
-        const BSC = SSZ.stableContainer(5, BF);
-        // profile-stable container
-        deepStrictEqual(SSZ.profile(ASC, ['A', 'B', 'C'])._isStableCompat(ASC), true);
-        deepStrictEqual(SSZ.profile(ASC, ['A', 'B', 'C'])._isStableCompat(BSC), false);
-        // profile -container
-        deepStrictEqual(
-          SSZ.profile(ASC, ['A', 'B', 'C'])._isStableCompat(SSZ.container(AF)),
-          false
-        );
-        deepStrictEqual(
-          SSZ.profile(ASC, ['A', 'B', 'C'])._isStableCompat(SSZ.container(BF)),
-          false
-        );
-        // profile-profile
-        deepStrictEqual(
-          SSZ.profile(ASC, ['A', 'B', 'C'])._isStableCompat(SSZ.profile(ASC, ['A'])),
-          true
-        );
-        deepStrictEqual(
-          SSZ.profile(ASC, ['A', 'B', 'C'])._isStableCompat(SSZ.profile(BSC, ['A'])),
-          false
-        );
-      });
+  should('ForkSlots', () => {
+    deepStrictEqual(SSZ.ForkSlots, {
+      Phase0: 0,
+      Altair: 74240 * 32,
+      Bellatrix: 144896 * 32,
+      Capella: 194048 * 32,
+      Deneb: 269568 * 32,
+      Electra: 364032 * 32,
+      Osaka: 411392 * 32,
     });
-    describe('consensus-specs', () => {
-      const SingleFieldTestStableStruct = SSZ.stableContainer(4, { A: SSZ.byte });
-      const SmallTestStableStruct = SSZ.stableContainer(4, {
-        A: SSZ.uint16,
-        B: SSZ.uint16,
-      });
-      const FixedTestStableStruct = SSZ.stableContainer(4, {
-        A: SSZ.uint8,
-        B: SSZ.uint64,
-        C: SSZ.uint32,
-      });
-      const VarTestStableStruct = SSZ.stableContainer(4, {
-        A: SSZ.uint16,
-        B: SSZ.list(1024, SSZ.uint16),
-        C: SSZ.uint8,
-      });
-      const ComplexTestStableStruct = SSZ.stableContainer(8, {
-        A: SSZ.uint16,
-        B: SSZ.list(128, SSZ.uint16),
-        C: SSZ.uint8,
-        D: SSZ.bytelist(256),
-        E: VarTestStableStruct,
-        F: SSZ.vector(4, FixedTestStableStruct),
-        G: SSZ.vector(2, VarTestStableStruct),
-      });
-      const BitsStableStruct = SSZ.stableContainer(8, {
-        A: SSZ.bitlist(5),
-        B: SSZ.bitvector(2),
-        C: SSZ.bitvector(1),
-        D: SSZ.bitlist(6),
-        E: SSZ.bitvector(8),
-      });
-      should('stableContainer', () => {
-        // https://github.com/ethereum/consensus-specs/files/15417175/ssz_generic_7495.tar.gz
-        const VECTORS = parseVectors(SSZ_STABLE_PATH + 'stablecontainers/valid');
-        const coders = {
-          SingleFieldTestStableStruct,
-          SmallTestStableStruct,
-          FixedTestStableStruct,
-          VarTestStableStruct,
-          ComplexTestStableStruct,
-          BitsStableStruct,
-        };
-        const nonNull = (x, r) => (x == null ? undefined : r(x));
-        const cleanEmpty = (x) => {
-          for (const k in x) if (x[k] === null || x[k] === undefined) delete x[k];
-          return x;
-        };
-        for (const [k, v] of Object.entries(VECTORS)) {
-          const sName = k.split('_')[0];
-          //console.log('K', k, v);
-          const c = coders[sName];
-          let val = v.value;
-          cleanEmpty(val);
-          if (sName === 'BitsStableStruct') {
-            val = {
-              A: nonNull(v.value.A, (r) => SSZ.bitlist(5).decode(hexToBytes(r.slice(2)))),
-              B: nonNull(v.value.B, (r) => SSZ.bitvector(2).decode(hexToBytes(r.slice(2)))),
-              C: nonNull(v.value.C, (r) => SSZ.bitvector(1).decode(hexToBytes(r.slice(2)))),
-              D: nonNull(v.value.D, (r) => SSZ.bitlist(6).decode(hexToBytes(r.slice(2)))),
-              E: nonNull(v.value.E, (r) => SSZ.bitvector(8).decode(hexToBytes(r.slice(2)))),
-            };
-            cleanEmpty(val);
-          } else if (sName === 'ComplexTestStableStruct') {
-            if (val.A !== undefined) val.A = Number(val.A);
-            if (val.B) val.B = val.B.map(Number);
-            if (val.C !== undefined) val.C = Number(val.C);
-            if (val.D !== undefined) val.D = hexToBytes(val.D.slice(2));
-            if (val.E) {
-              cleanEmpty(val.E);
-              if (val.E.A !== undefined) val.E.A = Number(val.E.A);
-              if (val.E.B !== undefined) val.E.B = val.E.B.map(Number);
-              if (val.E.C !== undefined) val.E.C = Number(val.E.C);
-            }
-            if (val.F) {
-              val.F = val.F.map(cleanEmpty);
-              for (const i of val.F) {
-                if (i.A !== undefined) i.A = Number(i.A);
-                if (i.C !== undefined) i.C = Number(i.C);
-              }
-            }
-            if (val.G) {
-              val.G = val.G.map(cleanEmpty);
-              for (const i of val.G) {
-                if (i.A !== undefined) i.A = Number(i.A);
-                if (i.B !== undefined) i.B = i.B.map(Number);
-                if (i.C !== undefined) i.C = Number(i.C);
-              }
-            }
-          } else if (sName === 'FixedTestStableStruct') {
-            if (val.A !== undefined) val.A = Number(val.A);
-            if (val.C !== undefined) val.C = Number(val.C);
-          } else if (sName === 'SingleFieldTestStableStruct') {
-            if (val.A !== undefined) val.A = Number(val.A);
-          } else if (sName === 'SmallTestStableStruct') {
-            if (val.A !== undefined) val.A = Number(val.A);
-            if (val.B !== undefined) val.B = Number(val.B);
-          } else if (sName === 'VarTestStableStruct') {
-            if (val.A !== undefined) val.A = Number(val.A);
-            if (val.B !== undefined) val.B = val.B.map(Number);
-            if (val.C !== undefined) val.C = Number(val.C);
-          }
-          deepStrictEqual(c.decode(hexToBytes(v.hex)), val, 'decode');
-          deepStrictEqual(bytesToHex(c.encode(val)), v.hex, 'encode');
-          deepStrictEqual(`0x${bytesToHex(c.merkleRoot(val))}`, v.meta.root, 'hash');
-        }
-      });
-      should('profile', () => {
-        const SingleFieldTestProfile = SSZ.profile(SingleFieldTestStableStruct, [], ['A']);
-        const SmallTestProfile1 = SSZ.profile(SmallTestStableStruct, [], ['A', 'B']);
-        const SmallTestProfile2 = SSZ.profile(SmallTestStableStruct, [], ['A']);
-        const SmallTestProfile3 = SSZ.profile(SmallTestStableStruct, [], ['B']);
-        const FixedTestProfile1 = SSZ.profile(FixedTestStableStruct, [], ['A', 'B', 'C']);
-        const FixedTestProfile2 = SSZ.profile(FixedTestStableStruct, [], ['A', 'B']);
-        const FixedTestProfile3 = SSZ.profile(FixedTestStableStruct, [], ['A', 'C']);
-        const FixedTestProfile4 = SSZ.profile(FixedTestStableStruct, [], ['C']);
-        const VarTestProfile1 = SSZ.profile(VarTestStableStruct, [], ['A', 'B', 'C']);
-        const VarTestProfile2 = SSZ.profile(VarTestStableStruct, [], ['B', 'C']);
-        const VarTestProfile3 = SSZ.profile(VarTestStableStruct, [], ['B']);
-        const ComplexTestProfile1 = SSZ.profile(
-          ComplexTestStableStruct,
-          [],
-          ['A', 'B', 'C', 'D', 'E', 'F', 'G']
-        );
-        const ComplexTestProfile2 = SSZ.profile(
-          ComplexTestStableStruct,
-          [],
-          ['A', 'B', 'C', 'D', 'E']
-        );
-        const ComplexTestProfile3 = SSZ.profile(ComplexTestStableStruct, [], ['A', 'C', 'E', 'G']);
-        const ComplexTestProfile4 = SSZ.profile(ComplexTestStableStruct, [], ['B', 'D', 'F']);
-        const ComplexTestProfile5 = SSZ.profile(ComplexTestStableStruct, [], ['E', 'F', 'G']);
-        const BitsProfile1 = SSZ.profile(BitsStableStruct, [], ['A', 'B', 'C', 'D', 'E']);
-        const BitsProfile2 = SSZ.profile(BitsStableStruct, [], ['A', 'B', 'C', 'D']);
-        const BitsProfile3 = SSZ.profile(BitsStableStruct, [], ['A', 'D', 'E']);
-        const coders = {
-          SingleFieldTestProfile,
-          SmallTestProfile1,
-          SmallTestProfile2,
-          SmallTestProfile3,
-          FixedTestProfile1,
-          FixedTestProfile2,
-          FixedTestProfile3,
-          FixedTestProfile4,
-          VarTestProfile1,
-          VarTestProfile2,
-          VarTestProfile3,
-          ComplexTestProfile1,
-          ComplexTestProfile2,
-          ComplexTestProfile3,
-          ComplexTestProfile4,
-          ComplexTestProfile5,
-          BitsProfile1,
-          BitsProfile2,
-          BitsProfile3,
-        };
-        const VECTORS = parseVectors(SSZ_STABLE_PATH + 'profiles/valid');
-        const nonNull = (x, r) => (x == null ? undefined : r(x));
-        const cleanEmpty = (x) => {
-          for (const k in x) if (x[k] === null || x[k] === undefined) delete x[k];
-          return x;
-        };
-        for (const [k, v] of Object.entries(VECTORS)) {
-          const sName = k.split('_')[0];
-          //console.log('K', k, v);
-          const c = coders[sName];
-          let val = v.value;
-          cleanEmpty(val);
-          if (sName.startsWith('BitsProfile')) {
-            val = {
-              A: nonNull(v.value.A, (r) => SSZ.bitlist(5).decode(hexToBytes(r.slice(2)))),
-              B: nonNull(v.value.B, (r) => SSZ.bitvector(2).decode(hexToBytes(r.slice(2)))),
-              C: nonNull(v.value.C, (r) => SSZ.bitvector(1).decode(hexToBytes(r.slice(2)))),
-              D: nonNull(v.value.D, (r) => SSZ.bitlist(6).decode(hexToBytes(r.slice(2)))),
-              E: nonNull(v.value.E, (r) => SSZ.bitvector(8).decode(hexToBytes(r.slice(2)))),
-            };
-            cleanEmpty(val);
-          } else if (sName.startsWith('ComplexTestProfile')) {
-            if (val.A !== undefined) val.A = Number(val.A);
-            if (val.B) val.B = val.B.map(Number);
-            if (val.C !== undefined) val.C = Number(val.C);
-            if (val.D !== undefined) val.D = hexToBytes(val.D.slice(2));
-            if (val.E) {
-              cleanEmpty(val.E);
-              if (val.E.A !== undefined) val.E.A = Number(val.E.A);
-              if (val.E.B !== undefined) val.E.B = val.E.B.map(Number);
-              if (val.E.C !== undefined) val.E.C = Number(val.E.C);
-            }
-            if (val.F) {
-              val.F = val.F.map(cleanEmpty);
-              for (const i of val.F) {
-                if (i.A !== undefined) i.A = Number(i.A);
-                if (i.C !== undefined) i.C = Number(i.C);
-              }
-            }
-            if (val.G) {
-              val.G = val.G.map(cleanEmpty);
-              for (const i of val.G) {
-                if (i.A !== undefined) i.A = Number(i.A);
-                if (i.B !== undefined) i.B = i.B.map(Number);
-                if (i.C !== undefined) i.C = Number(i.C);
-              }
-            }
-          } else if (sName.startsWith('FixedTestProfile')) {
-            if (val.A !== undefined) val.A = Number(val.A);
-            if (val.C !== undefined) val.C = Number(val.C);
-          } else if (sName.startsWith('SingleFieldTestProfile')) {
-            if (val.A !== undefined) val.A = Number(val.A);
-          } else if (sName.startsWith('SmallTestProfile')) {
-            if (val.A !== undefined) val.A = Number(val.A);
-            if (val.B !== undefined) val.B = Number(val.B);
-          } else if (sName.startsWith('VarTestProfile')) {
-            if (val.A !== undefined) val.A = Number(val.A);
-            if (val.B !== undefined) val.B = val.B.map(Number);
-            if (val.C !== undefined) val.C = Number(val.C);
-          }
-          deepStrictEqual(c.decode(hexToBytes(v.hex)), val, 'decode');
-          deepStrictEqual(bytesToHex(c.encode(val)), v.hex, 'encode');
-          deepStrictEqual(`0x${bytesToHex(c.merkleRoot(val))}`, v.meta.root, 'hash');
-        }
-      });
-      should('electra', () => {
-        const TYPES = {
-          ...SSZ.ETH2_TYPES,
-          ...SSZ.ETH2_CONSENSUS,
-          ...SSZ.ETH2_PROFILES.electra,
-          //BeaconBlockBody: undefined,
-        };
-        for (const t of readStructVectors(`${SSZ_STABLE_PATH_2}/electra`)) {
-          // should(`${t.type}/${t.name}`, () => {
-            const { hex, meta, value, type } = t;
-            const c = TYPES[type];
-            if (!c) return;
-            const val = mapTypes(type, true, value);
-            deepStrictEqual(c.decode(c.encode(val)), val);
-            deepStrictEqual(bytesToHex(c.encode(val)), hex);
-            deepStrictEqual(c.decode(hexToBytes(hex)), val);
-            deepStrictEqual(`0x${bytesToHex(c.merkleRoot(val))}`, meta.root);
-          // });
-        }
-      });
+  });
+  should('Electra request limits', () => {
+    deepStrictEqual(
+      {
+        progressiveExecutionRequests:
+          SSZ.ETH2_CONSENSUS.ProgressiveExecutionRequests.info.fields.consolidations.info.N,
+        electraExecutionRequests:
+          SSZ.ETH2_PROFILES.electra.ExecutionRequests.info.container.info.fields.consolidations.info
+            .N,
+      },
+      {
+        progressiveExecutionRequests: 2,
+        electraExecutionRequests: 2,
+      }
+    );
+  });
+  should('Execution payload keeps execution requests separate', () => {
+    const fields = [
+      'parent_hash',
+      'fee_recipient',
+      'state_root',
+      'receipts_root',
+      'logs_bloom',
+      'prev_randao',
+      'block_number',
+      'gas_limit',
+      'gas_used',
+      'timestamp',
+      'extra_data',
+      'base_fee_per_gas',
+      'block_hash',
+      'transactions',
+      'withdrawals',
+      'blob_gas_used',
+      'excess_blob_gas',
+    ];
+    deepStrictEqual(
+      {
+        progressive: Object.keys(SSZ.ETH2_CONSENSUS.ProgressiveExecutionPayload.info.fields),
+        electra: Object.keys(SSZ.ETH2_PROFILES.electra.ExecutionPayload.info.container.info.fields),
+        bodyRequestFields: Object.keys(
+          SSZ.ETH2_CONSENSUS.ProgressiveBeaconBlockBody.info.fields.execution_requests.info.fields
+        ),
+      },
+      {
+        progressive: fields,
+        electra: fields,
+        bodyRequestFields: ['deposits', 'withdrawals', 'consolidations'],
+      }
+    );
+  });
+  should('Execution payload header keeps execution requests separate', () => {
+    const fields = [
+      'parent_hash',
+      'fee_recipient',
+      'state_root',
+      'receipts_root',
+      'logs_bloom',
+      'prev_randao',
+      'block_number',
+      'gas_limit',
+      'gas_used',
+      'timestamp',
+      'extra_data',
+      'base_fee_per_gas',
+      'block_hash',
+      'transactions_root',
+      'withdrawals_root',
+      'blob_gas_used',
+      'excess_blob_gas',
+    ];
+    deepStrictEqual(
+      {
+        progressive: Object.keys(SSZ.ETH2_CONSENSUS.ProgressiveExecutionPayloadHeader.info.fields),
+        electra: Object.keys(
+          SSZ.ETH2_PROFILES.electra.ExecutionPayloadHeader.info.container.info.fields
+        ),
+        bodyRequestFields: Object.keys(
+          SSZ.ETH2_CONSENSUS.ProgressiveBeaconBlockBody.info.fields.execution_requests.info.fields
+        ),
+      },
+      {
+        progressive: fields,
+        electra: fields,
+        bodyRequestFields: ['deposits', 'withdrawals', 'consolidations'],
+      }
+    );
+  });
+  should('Capella beacon block body carries full execution payload', () => {
+    deepStrictEqual(
+      Object.keys(
+        SSZ.CapellaBeaconBlock.info.fields.body.info.fields.execution_payload.info.fields
+      ),
+      [
+        'parent_hash',
+        'fee_recipient',
+        'state_root',
+        'receipts_root',
+        'logs_bloom',
+        'prev_randao',
+        'block_number',
+        'gas_limit',
+        'gas_used',
+        'timestamp',
+        'extra_data',
+        'base_fee_per_gas',
+        'block_hash',
+        'transactions',
+        'withdrawals',
+      ]
+    );
+  });
+  should('Bellatrix beacon block body carries full execution payload', () => {
+    deepStrictEqual(
+      Object.keys(
+        SSZ.BellatrixBeaconBlock.info.fields.body.info.fields.execution_payload.info.fields
+      ),
+      [
+        'parent_hash',
+        'fee_recipient',
+        'state_root',
+        'receipts_root',
+        'logs_bloom',
+        'prev_randao',
+        'block_number',
+        'gas_limit',
+        'gas_used',
+        'timestamp',
+        'extra_data',
+        'base_fee_per_gas',
+        'block_hash',
+        'transactions',
+      ]
+    );
+  });
+  should('Phase0 beacon state carries pending attestation queues', () => {
+    const fields = SSZ.Phase0BeaconState.info.fields;
+    deepStrictEqual(
+      {
+        fields: Object.keys(fields),
+        previousEpochAttestationsLimit: fields.previous_epoch_attestations?.info.N,
+        currentEpochAttestationsLimit: fields.current_epoch_attestations?.info.N,
+        previousEpochAttestationsInner:
+          fields.previous_epoch_attestations?.info.inner === SSZ.ETH2_TYPES.PendingAttestation,
+        currentEpochAttestationsInner:
+          fields.current_epoch_attestations?.info.inner === SSZ.ETH2_TYPES.PendingAttestation,
+      },
+      {
+        fields: [
+          'genesis_time',
+          'genesis_validators_root',
+          'slot',
+          'fork',
+          'latest_block_header',
+          'block_roots',
+          'state_roots',
+          'historical_roots',
+          'eth1_data',
+          'eth1_data_votes',
+          'eth1_deposit_index',
+          'validators',
+          'balances',
+          'randao_mixes',
+          'slashings',
+          'previous_epoch_attestations',
+          'current_epoch_attestations',
+          'justification_bits',
+          'previous_justified_checkpoint',
+          'current_justified_checkpoint',
+          'finalized_checkpoint',
+        ],
+        previousEpochAttestationsLimit: 4096,
+        currentEpochAttestationsLimit: 4096,
+        previousEpochAttestationsInner: true,
+        currentEpochAttestationsInner: true,
+      }
+    );
+  });
+  should('Default values are fresh', () => {
+    const checkFresh = (coder, mutate, expected) => {
+      const a = coder.default;
+      const b = coder.default;
+      notStrictEqual(a, b);
+      mutate(a);
+      deepStrictEqual(b, expected);
+      deepStrictEqual(coder.default, expected);
+    };
+    checkFresh(SSZ.list(8, SSZ.uint8), (v) => v.push(1), []);
+    checkFresh(SSZ.bitlist(8), (v) => v.push(true), []);
+    checkFresh(
+      SSZ.bitvector(4),
+      (v) => {
+        v[0] = true;
+      },
+      [false, false, false, false]
+    );
+    checkFresh(
+      SSZ.bytelist(8),
+      (v) => {
+        v[0] = 1;
+      },
+      new Uint8Array()
+    );
+    checkFresh(
+      SSZ.bytevector(4),
+      (v) => {
+        v[0] = 1;
+      },
+      new Uint8Array(4)
+    );
+    const vecList = SSZ.vector(2, SSZ.list(8, SSZ.uint8));
+    const vecA = vecList.default;
+    const vecB = vecList.default;
+    notStrictEqual(vecA, vecB);
+    notStrictEqual(vecA[0], vecA[1]);
+    notStrictEqual(vecA[0], vecB[0]);
+    vecA[0].push(1);
+    deepStrictEqual(vecA, [[1], []]);
+    deepStrictEqual(vecB, [[], []]);
+    deepStrictEqual(vecList.default, [[], []]);
+    checkFresh(
+      SSZ.container({ a: SSZ.list(8, SSZ.uint8), b: SSZ.bytevector(2), c: SSZ.uint8 }),
+      (v) => {
+        v.a.push(1);
+        v.b[0] = 2;
+        v.c = 3;
+      },
+      { a: [], b: new Uint8Array(2), c: 0 }
+    );
+    checkFresh(
+      SSZ.union(null, SSZ.uint8),
+      (v) => {
+        v.selector = 1;
+      },
+      { selector: 0, value: null }
+    );
+    checkFresh(SSZ.union(SSZ.list(8, SSZ.uint8), SSZ.uint8), (v) => v.value.push(1), {
+      selector: 0,
+      value: [],
     });
+    checkFresh(
+      SSZ.progressiveContainer([1], { a: SSZ.list(8, SSZ.uint8) }),
+      (v) => {
+        v.a.push(1);
+      },
+      { a: [] }
+    );
+    const progressive = SSZ.progressiveContainer([1, 1], {
+      a: SSZ.list(8, SSZ.uint8),
+      b: SSZ.uint8,
+    });
+    checkFresh(
+      SSZ.profile(progressive, [], ['a', 'b']),
+      (v) => {
+        v.a.push(1);
+        v.b = 2;
+      },
+      { a: [], b: 0 }
+    );
+  });
+  should('Coder metadata is frozen', () => {
+    const fields: any = { a: SSZ.list(4, SSZ.uint8), b: SSZ.bytevector(2) };
+    const coder = SSZ.container(fields);
+    fields.c = SSZ.uint16;
+    deepStrictEqual(Object.keys(coder.info.fields), ['a', 'b']);
+    deepStrictEqual(Object.isFrozen(fields), false);
+    deepStrictEqual(Object.isFrozen(coder), true);
+    deepStrictEqual(Object.isFrozen(coder.info), true);
+    deepStrictEqual(Object.isFrozen(coder.info.fields), true);
+    deepStrictEqual(Object.isFrozen(coder.info.fields.a), true);
+    const progressive = SSZ.progressiveContainer([1], { a: SSZ.uint8 });
+    deepStrictEqual(Object.isFrozen(progressive.info), true);
+    deepStrictEqual(Object.isFrozen(progressive.info.activeFields), true);
+    deepStrictEqual(Object.isFrozen(SSZ.ETH2_TYPES), true);
+    deepStrictEqual(Object.isFrozen(SSZ.ETH2_TYPES.BeaconBlock.info.fields), true);
+    deepStrictEqual(Object.isFrozen(SSZ.ETH2_CONSENSUS), true);
+    deepStrictEqual(Object.isFrozen(SSZ.ETH2_PROFILES), true);
+    deepStrictEqual(Object.isFrozen(SSZ.ETH2_PROFILES.electra), true);
   });
 
   const SingleFieldTestStruct = SSZ.container({
@@ -784,6 +509,29 @@ describe('SSZ', () => {
     ComplexTestStruct,
     BitsStruct,
   };
+
+  should('electra', () => {
+    const TYPES = {
+      ...SSZ.ETH2_TYPES,
+      ...SSZ.ETH2_CONSENSUS,
+      ...SSZ.ETH2_PROFILES.electra,
+    };
+    for (const t of readStructVectors(`${NEW_SSZ_PATH}/electra`)) {
+      const { hex, meta, value, type } = t;
+      const c = TYPES[type];
+      if (!c) throw new Error(`missing Electra SSZ coder: ${type}`);
+      const val = mapTypes(type, true, value);
+      try {
+        deepStrictEqual(c.decode(c.encode(val)), val, `${type}/${t.name}: roundtrip`);
+        deepStrictEqual(bytesToHex(c.encode(val)), hex, `${type}/${t.name}: encode`);
+        deepStrictEqual(c.decode(hexToBytes(hex)), val, `${type}/${t.name}: decode`);
+        deepStrictEqual(`0x${bytesToHex(c.merkleRoot(val))}`, meta.root, `${type}/${t.name}: root`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        throw new Error(`${type}/${t.name}: ${msg}`);
+      }
+    }
+  });
 
   should('basic', () => {
     const isSmall = (type) => ['uint8', 'uint16', 'uint32'].includes(type);
@@ -928,6 +676,8 @@ describe('SSZ', () => {
     const coder4 = SSZ.bitvector(4);
     deepStrictEqual(coder4.decode(new Uint8Array([12])), [false, false, true, true]);
     deepStrictEqual(coder4.encode([false, false, true, true]), new Uint8Array([12]));
+    throws(() => coder4.encode([true, false, true]));
+    throws(() => coder4.encode([true, false, true, false, true]));
 
     const coder12 = SSZ.bitvector(12);
     deepStrictEqual(coder12.decode(new Uint8Array([24, 1])), [
@@ -1002,9 +752,24 @@ describe('SSZ', () => {
       true,
     ]);
     throws(() => bl256.decode(new Uint8Array([24, 0])));
+    const bl8 = SSZ.bitlist(8);
+    const emptyRoot = Array.from(bl8.merkleRoot([]));
+    const emptyChunks = bl8.chunks([]);
+    emptyChunks[0][0] = 1;
+    deepStrictEqual(bl8.chunks([]), [new Uint8Array(32)]);
+    deepStrictEqual(Array.from(bl8.merkleRoot([])), emptyRoot);
+    const emptyByteRoot = Array.from(SSZ.bytelist(31).merkleRoot(new Uint8Array([])));
+    emptyChunks[0][0] = 2;
+    deepStrictEqual(Array.from(SSZ.bytelist(31).merkleRoot(new Uint8Array([]))), emptyByteRoot);
+    deepStrictEqual(Array.from(SSZ.bytelist(0).merkleRoot(new Uint8Array([]))), emptyByteRoot);
+    throws(() => SSZ.bytelist(-1));
+    throws(() => SSZ.bytelist(1.5));
+    throws(() => SSZ.bytelist(Number.NaN));
   });
 
   should('List', () => {
+    const emptyRoot = Array.from(SSZ.list(1, SSZ.uint8).merkleRoot([]));
+    deepStrictEqual(Array.from(SSZ.list(0, SSZ.uint8).merkleRoot([])), emptyRoot);
     const lst = SSZ.list(32, SSZ.uint16);
     deepStrictEqual(
       lst.encode(new Array(32).fill(33)),
@@ -1031,6 +796,7 @@ describe('SSZ', () => {
 
     const vlistVectors = [
       [[[]], '04000000'],
+      [[[], []], '0800000008000000'],
       [[[0xaa]], '04000000aa'],
       [[[0xaa, 0xbb, 0xcc]], '04000000aabbcc'],
       [[[], [], []], '0c0000000c0000000c000000'],
@@ -1041,6 +807,9 @@ describe('SSZ', () => {
       deepStrictEqual(bytesToHex(vlist.encode(value)), hex);
       deepStrictEqual(vlist.decode(hexToBytes(hex)), value);
     }
+    const vlist2 = SSZ.vector(2, SSZ.list(8, SSZ.uint8));
+    throws(() => vlist2.decode(new Uint8Array([])));
+    throws(() => vlist2.decode(hexToBytes('04000000')));
     const nested = SSZ.list(3, SSZ.list(3, SSZ.uint8));
     deepStrictEqual(
       bytesToHex(nested.encode([[1, 2], [3], [4, 5, 6]])),
@@ -1176,7 +945,7 @@ describe('SSZ', () => {
       ],
       [
         SSZ.union(null, SSZ.uint16, SSZ.uint32),
-        { selector: 0, value: undefined },
+        { selector: 0, value: null },
         '00',
         'f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b',
       ],
@@ -1222,6 +991,18 @@ describe('SSZ', () => {
       deepStrictEqual(c.decode(hexToBytes(hex)), value);
       deepStrictEqual(bytesToHex(c.merkleRoot(value)), root);
     }
+    const nullUnion = SSZ.union(null, SSZ.uint8);
+    deepStrictEqual(nullUnion.default, { selector: 0, value: null });
+    deepStrictEqual(bytesToHex(nullUnion.encode(nullUnion.default)), '00');
+    deepStrictEqual(nullUnion.decode(hexToBytes('00')), { selector: 0, value: null });
+    deepStrictEqual(bytesToHex(nullUnion.encode({ selector: 0, value: undefined })), '00');
+    throws(() => nullUnion.encode({ selector: 0, value: 0 }));
+    const nullValue = { selector: 0, value: null };
+    const nullChunks = nullUnion.chunks(nullValue);
+    deepStrictEqual(nullChunks, [new Uint8Array(32)]);
+    const nullRoot = Array.from(nullUnion.merkleRoot(nullValue));
+    nullChunks[0][0] = 1;
+    deepStrictEqual(Array.from(nullUnion.merkleRoot(nullValue)), nullRoot);
   });
   describe('ssz_static', () => {
     for (const t of readStructVectors(STATIC_PATH)) {

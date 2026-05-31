@@ -1,6 +1,6 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import * as P from 'micro-packed';
-import { isBytes, isObject, type Bytes } from '../utils.ts';
+import { isBytes, isObject, type Bytes, type TArg, type TRet } from '../utils.ts';
 /*
 
 Simple serialize (SSZ) is the serialization method used on the Beacon Chain.
@@ -24,11 +24,17 @@ API difference:
 - bytes provided as bytes instead of hex strings (same as other libs)
 
 */
-const BYTES_PER_CHUNK = 32; // Should be equal to digest size of hash
+// SSZ merkleization operates on 32-byte chunks; keep this aligned with chunk
+// splitting and zero-chunk padding.
+const BYTES_PER_CHUNK = 32;
+// Canonical zero SSZ chunk; callers that expose mutable chunk arrays must wrap
+// or copy this singleton.
 const EMPTY_CHUNK = /* @__PURE__ */ new Uint8Array(BYTES_PER_CHUNK);
 
 /**
  * Slot numbers at which each Ethereum consensus fork activates on mainnet.
+ * Fork activations happen at epoch boundaries, so each published slot here should
+ * be `activation_epoch * 32`.
  * @example
  * Branch consensus handling on the active fork range.
  * ```ts
@@ -36,16 +42,25 @@ const EMPTY_CHUNK = /* @__PURE__ */ new Uint8Array(BYTES_PER_CHUNK);
  * const isCapella = slot >= ForkSlots.Capella && slot < ForkSlots.Deneb;
  * ```
  */
-export const ForkSlots = /* @__PURE__ */ (() =>
-  ({
+export const ForkSlots: TRet<{
+  readonly Phase0: number;
+  readonly Altair: number;
+  readonly Bellatrix: number;
+  readonly Capella: number;
+  readonly Deneb: number;
+  readonly Electra: number;
+  readonly Osaka: number;
+}> = /* @__PURE__ */ (() =>
+  Object.freeze({
     Phase0: 0, // 2020-12-01
     Altair: 2375680, // 2021-10-27
-    Bellatrix: 4700013, // 2022-09-06
+    // EIP-6953: Bellatrix mainnet activation epoch 144896, so slot 4636672.
+    Bellatrix: 4636672, // 2022-09-06
     Capella: 6209536, // 2023-04-12
     Deneb: 8626176, // 2024-03-13
     Electra: 11649024, // 2025-05-07
-    Osaka: 13164544 // 2025-12-03
-  }) as const)();
+    Osaka: 13164544, // 2025-12-03
+  } as const))();
 
 /**
  * SSZ coder with serialization and Merkleization metadata.
@@ -64,14 +79,17 @@ export type SSZCoder<T> = P.CoderType<T> & {
   chunks: (value: T) => Bytes[];
   /** Computes the SSZ Merkle root of the value. */
   merkleRoot: (value: T) => Bytes;
-  /** Internal compatibility check used by stable container helpers. */
-  _isStableCompat: (other: SSZCoder<any>) => boolean;
+  /** Internal compatibility check used by progressive SSZ helpers. */
+  _isProgressiveCompat: (other: SSZCoder<any>) => boolean;
 };
+type SSZValue<T extends SSZCoder<any>> = T extends SSZCoder<infer V> ? V : never;
 
 // Utils for hashing
-function chunks(data: Bytes): Bytes[] {
+function chunks(data: TArg<Bytes>): TRet<Bytes[]> {
   const res = [];
   for (let i = 0; i < Math.ceil(data.length / BYTES_PER_CHUNK); i++) {
+    // Full chunks stay zero-copy views into `data`; only the final short chunk is
+    // copied before zero-padding.
     const chunk = data.subarray(i * BYTES_PER_CHUNK, (i + 1) * BYTES_PER_CHUNK);
     if (chunk.length === BYTES_PER_CHUNK) res.push(chunk);
     else {
@@ -80,42 +98,66 @@ function chunks(data: Bytes): Bytes[] {
       res.push(tmp);
     }
   }
-  return res;
+  return res as TRet<Bytes[]>;
 }
-const hash = (a: Uint8Array, b: Uint8Array): Uint8Array =>
-  sha256.create().update(a).update(b).digest();
-const mixInLength = (root: Uint8Array, length: number) =>
+// SSZ Merkle interior nodes hash two 32-byte child chunks as sha256(left || right).
+const hash = (a: TArg<Uint8Array>, b: TArg<Uint8Array>): TRet<Uint8Array> =>
+  sha256.create().update(a).update(b).digest() as TRet<Uint8Array>;
+// SSZ list-like roots mix the logical length as the right child encoded as a
+// 32-byte little-endian uint256.
+const mixInLength = (root: TArg<Uint8Array>, length: number): TRet<Uint8Array> =>
   hash(root, P.U256LE.encode(BigInt(length)));
+const mixInSelector = (root: TArg<Uint8Array>, selector: number): TRet<Uint8Array> => {
+  const chunk = EMPTY_CHUNK.slice();
+  chunk[0] = selector;
+  return hash(root, chunk);
+};
 
 // Will OOM without this, because tree padded to next power of two.
+// `zeroHashes[d]` caches the all-zero Merkle root for a subtree of depth `d`,
+// starting from the zero chunk at depth 0.
 const zeroHashes = /* @__PURE__ */ (() => {
-  const res: Bytes[] = [EMPTY_CHUNK];
+  const res: Bytes[] = [EMPTY_CHUNK.slice()];
   for (let i = 0; i < 64; i++) res.push(hash(res[i], res[i]));
   return res;
 })();
 
-const merkleize = (chunks: Uint8Array[], limit?: number): Uint8Array => {
-  let chunksLen = chunks.length;
+const merkleize = (chunks: TArg<Uint8Array[]>, limit?: number): TRet<Uint8Array> => {
+  let cs = chunks as Uint8Array[];
+  let chunksLen = cs.length;
   if (limit !== undefined) {
-    if (limit < chunks.length) {
+    if (limit < cs.length) {
       throw new Error(
-        `SSZ/merkleize: limit (${limit}) is less than the number of chunks (${chunks.length})`
+        `SSZ/merkleize: limit (${limit}) is less than the number of chunks (${cs.length})`
       );
     }
     chunksLen = limit;
   }
+  // `limit` widens the virtual zero-padded tree; empty inputs should still resolve to the cached zero root for that depth.
+  if (chunksLen === 0) return zeroHashes[0] as TRet<Uint8Array>;
   // log2(next power of two), we cannot use binary ops since it can be bigger than 2**32.
   const depth = Math.ceil(Math.log2(chunksLen));
-  if (chunks.length == 0) return zeroHashes[depth];
+  if (cs.length == 0) return zeroHashes[depth] as TRet<Uint8Array>;
   for (let l = 0; l < depth; l++) {
     const level = [];
-    for (let i = 0; i < chunks.length; i += 2)
-      level.push(hash(chunks[i], i + 1 < chunks.length ? chunks[i + 1] : zeroHashes[l]));
-    chunks = level;
+    for (let i = 0; i < cs.length; i += 2)
+      level.push(hash(cs[i], i + 1 < cs.length ? cs[i + 1] : zeroHashes[l]));
+    cs = level;
   }
-  return chunks[0];
+  return cs[0] as TRet<Uint8Array>;
 };
 
+const merkleizeProgressive = (chunks: TArg<Uint8Array[]>, numLeaves = 1): TRet<Uint8Array> => {
+  const cs = chunks as Uint8Array[];
+  // simple-serialize.md: progressive merkleization returns Bytes32() for empty input, not `merkleize([])`.
+  if (cs.length === 0) return EMPTY_CHUNK.slice() as TRet<Uint8Array>;
+  return hash(
+    merkleize(cs.slice(0, numLeaves), numLeaves),
+    merkleizeProgressive(cs.slice(numLeaves), numLeaves * 4)
+  );
+};
+
+// Shared minimum surface for generic SSZ builders; deeper packed-coder invariants are validated later.
 const checkSSZ = (o: any) => {
   if (
     typeof o !== 'object' ||
@@ -130,11 +172,50 @@ const checkSSZ = (o: any) => {
   }
 };
 
+// SSZ coders expose `default` as a getter; generic deep-freezing would materialize huge defaults.
+const freezeSSZ = <T extends SSZCoder<any>>(coder: T): T => {
+  if (Object.isFrozen(coder)) return coder;
+  const info = coder.info as any;
+  if (isObject(info)) {
+    if (isObject(info.inner)) freezeSSZ(info.inner as SSZCoder<any>);
+    if (isObject(info.fields)) {
+      for (const value of Object.values(info.fields)) freezeSSZ(value as SSZCoder<any>);
+      Object.freeze(info.fields);
+    }
+    if (isObject(info.types)) {
+      for (const value of Object.values(info.types)) {
+        if (value !== null) freezeSSZ(value as SSZCoder<any>);
+      }
+      Object.freeze(info.types);
+    }
+    if (isObject(info.container)) freezeSSZ(info.container as SSZCoder<any>);
+    if (Array.isArray(info.activeFields)) Object.freeze(info.activeFields);
+    Object.freeze(info);
+  }
+  return Object.freeze(coder);
+};
+
+const freezeRegistry = <T extends Record<string, any>>(registry: T): T => {
+  if (Object.isFrozen(registry)) return registry;
+  for (const value of Object.values(registry)) {
+    if (!isObject(value)) continue;
+    if (typeof value.encode === 'function' && typeof value.decode === 'function')
+      freezeSSZ(value as SSZCoder<any>);
+    else freezeRegistry(value);
+  }
+  return Object.freeze(registry);
+};
+
 // TODO: improve
-const isStableCompat = <T>(a: SSZCoder<T>, b: SSZCoder<any>): boolean => {
-  if (a === b) return true; // fast path
-  const _a = a as any;
-  const _b = b as any;
+// SSZ simple-serialize Compatible Merkleization defines a closed substitution relation
+// with an "all other types are incompatible" fallback; matching roots for sample values
+// are not enough to accept `profile(..., replaceType)`.
+const isProgressiveCompat = <T>(a: TArg<SSZCoder<T>>, b: TArg<SSZCoder<any>>): boolean => {
+  const ca = a as SSZCoder<T>;
+  const cb = b as SSZCoder<any>;
+  if (ca === cb) return true; // fast path
+  const _a = ca as any;
+  const _b = cb as any;
   if (_a.info && _b.info) {
     const aI = _a.info;
     const bI = _b.info;
@@ -147,17 +228,12 @@ const isStableCompat = <T>(a: SSZCoder<T>, b: SSZCoder<any>): boolean => {
       listTypes.includes(aI.type) &&
       listTypes.includes(bI.type) &&
       aI.N === bI.N &&
-      aI.inner._isStableCompat(bI.inner)
+      aI.inner._isProgressiveCompat(bI.inner)
     ) {
       return true;
     }
-    // Container / StableContainer[N] field types are compatible if all inner field types are compatible,
-    // if they also share the same field names in the same order, and for StableContainer[N] if they also
-    // share the same capacity N.
-    const contType = ['container', 'stableContainer'];
-    if (contType.includes(aI.type) && contType.includes(bI.type)) {
-      // both stable containers, but different capacity
-      if (aI.N !== undefined && bI.N !== undefined && aI.N !== bI.N) return false;
+    // Container field types are compatible if they share field names in order and inner field types are compatible.
+    if (aI.type === 'container' && bI.type === 'container') {
       const kA = Object.keys(aI.fields);
       const kB = Object.keys(bI.fields);
       if (kA.length !== kB.length) return false;
@@ -165,46 +241,83 @@ const isStableCompat = <T>(a: SSZCoder<T>, b: SSZCoder<any>): boolean => {
         const fA = kA[i];
         const fB = kB[i];
         if (fA !== fB) return false;
-        if (!aI.fields[fA]._isStableCompat(bI.fields[fA])) return false;
+        if (!aI.fields[fA]._isProgressiveCompat(bI.fields[fA])) return false;
       }
       return true;
     }
-    // Profile[X] field types are compatible with StableContainer types compatible with X, and
+    if (aI.type === 'progressiveList' && bI.type === 'progressiveList')
+      return aI.inner._isProgressiveCompat(bI.inner);
+    if (aI.type === 'progressiveBitList' && bI.type === 'progressiveBitList') return true;
+    if (aI.type === 'progressiveContainer' && bI.type === 'progressiveContainer') {
+      const byPos = (info: any) => {
+        let field = 0;
+        const res: Record<number, string> = {};
+        const keys = Object.keys(info.fields);
+        for (let i = 0; i < info.activeFields.length; i++) {
+          if (!info.activeFields[i]) continue;
+          res[i] = keys[field++];
+        }
+        return res;
+      };
+      const aPos = byPos(aI);
+      const bPos = byPos(bI);
+      const oneSide = new Set<string>();
+      for (const i of new Set([...Object.keys(aPos), ...Object.keys(bPos)])) {
+        const aName = aPos[+i];
+        const bName = bPos[+i];
+        if (aName !== undefined && bName !== undefined) {
+          if (aName !== bName) return false;
+          if (!aI.fields[aName]._isProgressiveCompat(bI.fields[bName])) return false;
+        } else oneSide.add((aName || bName)!);
+      }
+      for (const name of oneSide) if (aI.fields[name] && bI.fields[name]) return false;
+      return true;
+    }
+    if (aI.type === 'compatibleUnion' && bI.type === 'compatibleUnion') {
+      for (const aT of Object.values(aI.types) as SSZCoder<any>[])
+        for (const bT of Object.values(bI.types) as SSZCoder<any>[])
+          if (!aT._isProgressiveCompat(bT)) return false;
+      return true;
+    }
+    // Profile[X] field types are compatible with ProgressiveContainer types compatible with X, and
     // are compatible with Profile[Y] where Y is compatible with X if also all inner field types
     // are compatible. Differences solely in optionality do not affect merkleization compatibility.
     if (aI.type === 'profile' || bI.type === 'profile') {
-      //console.log('PROF PROF?', aI.type, bI.type, aI.container._isStableCompat(bI));
-      if (aI.type === 'profile' && bI.type === 'stableContainer')
-        return aI.container._isStableCompat(b);
-      if (aI.type === 'stableContainer' && bI.type === 'profile')
-        return a._isStableCompat(bI.container);
+      //console.log('PROF PROF?', aI.type, bI.type, aI.container._isProgressiveCompat(bI));
+      if (aI.type === 'profile' && bI.type === 'progressiveContainer')
+        return aI.container._isProgressiveCompat(cb);
+      if (aI.type === 'progressiveContainer' && bI.type === 'profile')
+        return ca._isProgressiveCompat(bI.container);
       if (aI.type === 'profile' && bI.type === 'profile')
-        return aI.container._isStableCompat(bI.container);
+        return aI.container._isProgressiveCompat(bI.container);
     }
   }
   return false;
 };
 
-const basic = <T>(type: string, inner: P.CoderType<T>, def: T): SSZCoder<T> => ({
-  ...inner,
-  default: def,
-  chunkCount: 1,
-  composite: false,
-  info: { type },
-  _isStableCompat(other) {
-    return isStableCompat(this, other);
-  },
-  chunks(value: T) {
-    return [this.merkleRoot(value)];
-  },
-  merkleRoot: (value: T) => {
-    const res = new Uint8Array(32);
-    res.set(inner.encode(value));
-    return res;
-  },
-});
+// Basic SSZ objects hash as a single 32-byte chunk with their serialized bytes right-padded by zeros.
+const basic = <T>(type: string, inner: P.CoderType<T>, def: T): TRet<SSZCoder<T>> =>
+  freezeSSZ({
+    ...inner,
+    default: def,
+    chunkCount: 1,
+    composite: false,
+    info: { type },
+    _isProgressiveCompat(other: TArg<SSZCoder<any>>) {
+      return isProgressiveCompat(this, other);
+    },
+    chunks(value: TArg<T>) {
+      return [this.merkleRoot(value)];
+    },
+    merkleRoot: (value: TArg<T>) => {
+      const res = new Uint8Array(32);
+      res.set(inner.encode(value as T));
+      return res;
+    },
+  } as any) as TRet<SSZCoder<T>>;
 
-const int = (len: number, small = true) =>
+// Keep <=32-bit SSZ uints on the ergonomic JS number surface while preserving bigint for wider widths.
+const int = (len: number, small = true): P.CoderType<number | bigint> =>
   P.apply(P.bigint(len, true), {
     encode: (from) => {
       if (!small) return from;
@@ -220,36 +333,57 @@ const int = (len: number, small = true) =>
     },
   });
 
-const _0n = /* @__PURE__ */ BigInt(0);
+const _0n: bigint = /* @__PURE__ */ BigInt(0);
+type SSZInt = SSZCoder<number | bigint>;
 /** SSZ coder for 8-bit unsigned integers. */
-export const uint8 = /* @__PURE__ */ basic('uint8', /* @__PURE__ */ int(1), 0);
+export const uint8: TRet<SSZInt> = /* @__PURE__ */ basic('uint8', /* @__PURE__ */ int(1), 0);
 /** SSZ coder for 16-bit unsigned integers. */
-export const uint16 = /* @__PURE__ */ basic('uint16', /* @__PURE__ */ int(2), 0);
+export const uint16: TRet<SSZInt> = /* @__PURE__ */ basic('uint16', /* @__PURE__ */ int(2), 0);
 /** SSZ coder for 32-bit unsigned integers. */
-export const uint32 = /* @__PURE__ */ basic('uint32', /* @__PURE__ */ int(4), 0);
+export const uint32: TRet<SSZInt> = /* @__PURE__ */ basic('uint32', /* @__PURE__ */ int(4), 0);
 /** SSZ coder for 64-bit unsigned integers. */
-export const uint64 = /* @__PURE__ */ basic('uint64', /* @__PURE__ */ int(8, false), _0n);
+export const uint64: TRet<SSZInt> = /* @__PURE__ */ basic(
+  'uint64',
+  /* @__PURE__ */ int(8, false),
+  _0n
+);
 /** SSZ coder for 128-bit unsigned integers. */
-export const uint128 = /* @__PURE__ */ basic('uint128', /* @__PURE__ */ int(16, false), _0n);
+export const uint128: TRet<SSZInt> = /* @__PURE__ */ basic(
+  'uint128',
+  /* @__PURE__ */ int(16, false),
+  _0n
+);
 /** SSZ coder for 256-bit unsigned integers. */
-export const uint256 = /* @__PURE__ */ basic('uint256', /* @__PURE__ */ int(32, false), _0n);
+export const uint256: TRet<SSZInt> = /* @__PURE__ */ basic(
+  'uint256',
+  /* @__PURE__ */ int(32, false),
+  _0n
+);
 /** SSZ coder for booleans. */
-export const boolean = /* @__PURE__ */ basic('boolean', P.bool, false);
+export const boolean: TRet<SSZCoder<boolean>> = /* @__PURE__ */ basic('boolean', P.bool, false);
 
-const array = <T>(len: P.Length, inner: SSZCoder<T>): P.CoderType<T[]> => {
-  checkSSZ(inner);
-  let arr = P.array(len, inner);
+const array = <T>(len: P.Length, inner: TArg<SSZCoder<T>>): P.CoderType<T[]> => {
+  const item = inner as SSZCoder<T>;
+  checkSSZ(item);
+  let arr = P.array(len, item);
   // variable size arrays
   if (inner.size === undefined) {
     arr = P.wrap({
-      encodeStream: P.array(len, P.pointer(P.U32LE, inner)).encodeStream,
+      encodeStream: P.array(len, P.pointer(P.U32LE, item)).encodeStream,
       decodeStream: (r) => {
         const res: T[] = [];
-        if (!r.leftBytes) return res;
+        // Empty input is only valid for genuinely empty dynamic lists; fixed-length callers still need a full offset table.
+        const fixedLen = typeof len === 'number' ? len : undefined;
+        if (!r.leftBytes) {
+          if (fixedLen !== undefined) throw r.err('SSZ/array: wrong fixed size length');
+          return res;
+        }
         const first = P.U32LE.decodeStream(r);
-        const len = (first - r.pos) / P.U32LE.size!;
-        if (!Number.isSafeInteger(len)) throw r.err('SSZ/array: wrong fixed size length');
-        const rest = P.array(len, P.U32LE).decodeStream(r);
+        const offsetCount = (first - r.pos) / P.U32LE.size!;
+        if (!Number.isSafeInteger(offsetCount)) throw r.err('SSZ/array: wrong fixed size length');
+        if (fixedLen !== undefined && offsetCount + 1 !== fixedLen)
+          throw r.err('SSZ/array: wrong fixed size length');
+        const rest = P.array(offsetCount, P.U32LE).decodeStream(r);
         const offsets = [first, ...rest];
         // SSZ decoding requires very specific encoding and should throw on data constructed differently.
         // There is also ZST problem here (as in ETH ABI), but it is impossible to exploit since
@@ -260,7 +394,7 @@ const array = <T>(len: P.Length, inner: SSZCoder<T>): P.CoderType<T[]> => {
           if (next < pos) throw r.err('SSZ/array: decreasing offset');
           const len = next - pos;
           if (r.pos !== pos) throw r.err('SSZ/array: wrong offset');
-          res.push(inner.decode(r.bytes(len)));
+          res.push(item.decode(r.bytes(len)));
         }
         return res;
       },
@@ -283,26 +417,32 @@ type VectorType<T> = SSZCoder<T[]> & { info: { type: 'vector'; N: number; inner:
  * vector(2, uint8).encode([1, 2]);
  * ```
  */
-export const vector = <T>(len: number, inner: SSZCoder<T>): VectorType<T> => {
+export const vector = <T>(len: number, inner: TArg<SSZCoder<T>>): TRet<VectorType<T>> => {
+  const item = inner as SSZCoder<T>;
   if (!Number.isSafeInteger(len) || len <= 0)
     throw new Error(`SSZ/vector: wrong length=${len} (should be positive integer)`);
-  return {
-    ...array(len, inner),
-    info: { type: 'vector', N: len, inner },
-    _isStableCompat(other) {
-      return isStableCompat(this, other);
+  return freezeSSZ({
+    ...array(len, item),
+    info: { type: 'vector', N: len, inner: item },
+    _isProgressiveCompat(other: TArg<SSZCoder<any>>) {
+      return isProgressiveCompat(this, other);
     },
-    default: new Array(len).fill(inner.default),
+    // Mutable inner defaults need per-slot copies; `fill(inner.default)` aliases one shared value across the vector.
+    get default() {
+      const res = new Array(len);
+      for (let i = 0; i < len; i++) res[i] = item.default;
+      return res;
+    },
     composite: true,
-    chunkCount: inner.composite ? Math.ceil((len * inner.size!) / 32) : len,
-    chunks(value) {
-      if (!inner.composite) return chunks(this.encode(value));
-      return value.map((i) => inner.merkleRoot(i));
+    chunkCount: item.composite ? Math.ceil((len * item.size!) / 32) : len,
+    chunks(value: TArg<T[]>) {
+      if (!item.composite) return chunks(this.encode(value as T[]));
+      return (value as T[]).map((i) => item.merkleRoot(i));
     },
-    merkleRoot(value) {
+    merkleRoot(value: TArg<T[]>) {
       return merkleize(this.chunks(value));
     },
-  };
+  } as any) as TRet<VectorType<T>>;
 };
 type ListType<T> = SSZCoder<T[]> & { info: { type: 'list'; N: number; inner: SSZCoder<T> } };
 /**
@@ -318,32 +458,80 @@ type ListType<T> = SSZCoder<T[]> & { info: { type: 'list'; N: number; inner: SSZ
  * list(2, uint8).encode([1]);
  * ```
  */
-export const list = <T>(maxLen: number, inner: SSZCoder<T>): ListType<T> => {
-  checkSSZ(inner);
-  const coder = P.validate(array(null, inner), (value) => {
+export const list = <T>(maxLen: number, inner: TArg<SSZCoder<T>>): TRet<ListType<T>> => {
+  const item = inner as SSZCoder<T>;
+  checkSSZ(item);
+  const coder = P.validate(array(null, item), (value) => {
     if (!Array.isArray(value) || value.length > maxLen)
       throw new Error(`SSZ/list: wrong value=${value} (len=${value.length} maxLen=${maxLen})`);
     return value;
   });
-  return {
+  return freezeSSZ({
     ...coder,
-    info: { type: 'list', N: maxLen, inner },
-    _isStableCompat(other) {
-      return isStableCompat(this, other);
+    info: { type: 'list', N: maxLen, inner: item },
+    _isProgressiveCompat(other: TArg<SSZCoder<any>>) {
+      return isProgressiveCompat(this, other);
     },
     composite: true,
-    chunkCount: !inner.composite ? Math.ceil((maxLen * inner.size!) / BYTES_PER_CHUNK) : maxLen,
-    default: [],
-    chunks(value) {
-      if (inner.composite) return value.map((i) => inner.merkleRoot(i));
-      return chunks(this.encode(value));
+    chunkCount: !item.composite ? Math.ceil((maxLen * item.size!) / BYTES_PER_CHUNK) : maxLen,
+    // List defaults are public values too; reusing one mutable array lets caller edits leak into later defaults.
+    get default() {
+      return [];
     },
-    merkleRoot(value) {
+    chunks(value: TArg<T[]>) {
+      if (item.composite) return (value as T[]).map((i) => item.merkleRoot(i));
+      return chunks(this.encode(value as T[]));
+    },
+    merkleRoot(value: TArg<T[]>) {
       return mixInLength(merkleize(this.chunks(value), this.chunkCount), value.length);
     },
-  };
+  } as any) as TRet<ListType<T>>;
 };
 
+type ProgressiveListType<T> = SSZCoder<T[]> & {
+  info: { type: 'progressiveList'; inner: SSZCoder<T> };
+};
+/**
+ * Creates an unbounded SSZ progressive-list coder.
+ * @param inner - Element coder used for every position.
+ * @returns Variable-size progressive list coder.
+ * @throws If the element coder or encoded value is invalid. {@link Error}
+ * @example
+ * Encode a progressive list of small integers.
+ * ```ts
+ * import { progressiveList, uint8 } from 'micro-eth-signer/advanced/ssz.js';
+ * progressiveList(uint8).encode([1, 2]);
+ * ```
+ */
+export const progressiveList = <T>(inner: TArg<SSZCoder<T>>): TRet<ProgressiveListType<T>> => {
+  const item = inner as SSZCoder<T>;
+  checkSSZ(item);
+  const coder = P.validate(array(null, item), (value) => {
+    if (!Array.isArray(value)) throw new Error(`SSZ/progressiveList: wrong value=${value}`);
+    return value;
+  });
+  return freezeSSZ({
+    ...coder,
+    info: { type: 'progressiveList', inner: item },
+    _isProgressiveCompat(other: TArg<SSZCoder<any>>) {
+      return isProgressiveCompat(this, other);
+    },
+    composite: true,
+    chunkCount: NaN,
+    get default() {
+      return [];
+    },
+    chunks(value: TArg<T[]>) {
+      if (item.composite) return (value as T[]).map((i) => item.merkleRoot(i));
+      return chunks(this.encode(value as T[]));
+    },
+    merkleRoot(value: TArg<T[]>) {
+      return mixInLength(merkleizeProgressive(this.chunks(value)), value.length);
+    },
+  } as any) as TRet<ProgressiveListType<T>>;
+};
+
+// Dynamic SSZ fields occupy a uint32 offset slot in the fixed section; fixed-size fields stay inline.
 const wrapPointer = <T>(p: P.CoderType<T>) => (p.size === undefined ? P.pointer(P.U32LE, p) : p);
 const wrapRawPointer = <T>(p: P.CoderType<T>) => (p.size === undefined ? P.U32LE : p);
 
@@ -355,6 +543,8 @@ const fixOffsets = (
   obj: Record<string, any>,
   offset: number
 ) => {
+  // Patch the fixed-section decode result in place: offsets are consumed in field order, and equal offsets
+  // are valid when an earlier dynamic field is empty.
   const offsets = [];
   for (const f of offsetFields) offsets.push(obj[f] + offset);
   for (let i = 0; i < offsets.length; i++) {
@@ -388,56 +578,64 @@ type ContainerCoder<T extends Record<string, SSZCoder<any>>> = SSZCoder<{
  */
 export const container = <T extends Record<string, SSZCoder<any>>>(
   fields: T
-): ContainerCoder<T> => {
-  if (!Object.keys(fields).length) throw new Error('SSZ/container: no fields');
+): TRet<ContainerCoder<T>> => {
+  const fs = { ...fields } as T;
+  if (!Object.keys(fs).length) throw new Error('SSZ/container: no fields');
   const ptrCoder = P.struct(
-    Object.fromEntries(Object.entries(fields).map(([k, v]) => [k, wrapPointer(v)]))
+    Object.fromEntries(Object.entries(fs).map(([k, v]) => [k, wrapPointer(v)]))
   ) as ContainerCoder<T>;
   const fixedCoder = P.struct(
-    Object.fromEntries(Object.entries(fields).map(([k, v]) => [k, wrapRawPointer(v)]))
+    Object.fromEntries(Object.entries(fs).map(([k, v]) => [k, wrapRawPointer(v)]))
   );
-  const offsetFields = Object.keys(fields).filter((i) => fields[i].size === undefined);
+  const offsetFields = Object.keys(fs).filter((i) => fs[i].size === undefined);
   const coder = P.wrap({
     encodeStream: ptrCoder.encodeStream,
-    decodeStream: (r) => fixOffsets(r, fields, offsetFields, fixedCoder.decodeStream(r), 0) as any,
+    decodeStream: (r) => fixOffsets(r, fs, offsetFields, fixedCoder.decodeStream(r), 0) as any,
   }) as ContainerCoder<T>;
-  return {
+  return freezeSSZ({
     ...coder,
-    info: { type: 'container', fields },
-    _isStableCompat(other) {
-      return isStableCompat(this, other);
+    info: { type: 'container', fields: fs },
+    _isProgressiveCompat(other: TArg<SSZCoder<any>>) {
+      return isProgressiveCompat(this, other);
     },
     size: offsetFields.length ? undefined : fixedCoder.size, // structure is fixed size if all fields is fixed size
-    default: Object.fromEntries(Object.entries(fields).map(([k, v]) => [k, v.default])) as {
-      [K in keyof T]: P.UnwrapCoder<T[K]>;
+    // Container defaults are public values too; reusing child defaults here lets caller edits leak into later defaults.
+    get default() {
+      return Object.fromEntries(Object.entries(fs).map(([k, v]) => [k, v.default])) as {
+        [K in keyof T]: P.UnwrapCoder<T[K]>;
+      };
     },
     composite: true,
-    chunkCount: Object.keys(fields).length,
-    chunks(value: T) {
-      return Object.entries(fields).map(([k, v]) => v.merkleRoot(value[k]));
+    chunkCount: Object.keys(fs).length,
+    chunks(value: TArg<P.UnwrapCoder<ContainerCoder<T>>>) {
+      const val = value as P.UnwrapCoder<ContainerCoder<T>>;
+      return Object.entries(fs).map(([k, v]) => v.merkleRoot(val[k]));
     },
-    merkleRoot(value: T) {
+    merkleRoot(value: TArg<P.UnwrapCoder<ContainerCoder<T>>>) {
       return merkleize(this.chunks(value as any));
     },
-  };
+  } as any) as TRet<ContainerCoder<T>>;
 };
 
 // Like 'P.bits', but different direction
-const bitsCoder = (len: number): P.Coder<Bytes, boolean[]> => ({
-  encode: (data: Uint8Array): boolean[] => {
-    const res: boolean[] = [];
-    for (const byte of data) for (let i = 0; i < 8; i++) res.push(!!(byte & (1 << i)));
-    for (let i = len; i < res.length; i++) {
-      if (res[i]) throw new Error('SSZ/bitsCoder/encode: non-zero padding');
-    }
-    return res.slice(0, len);
-  },
-  decode: (data: boolean[]): Uint8Array => {
-    const res = new Uint8Array(Math.ceil(len / 8));
-    for (let i = 0; i < data.length; i++) if (data[i]) res[Math.floor(i / 8)] |= 1 << i % 8;
-    return res;
-  },
-});
+const bitsCoder = (len: number): TRet<P.Coder<Bytes, boolean[]>> =>
+  ({
+    encode: (data: TArg<Uint8Array>): boolean[] => {
+      const res: boolean[] = [];
+      for (const byte of data as Uint8Array)
+        for (let i = 0; i < 8; i++) res.push(!!(byte & (1 << i)));
+      for (let i = len; i < res.length; i++) {
+        if (res[i]) throw new Error('SSZ/bitsCoder/encode: non-zero padding');
+      }
+      return res.slice(0, len);
+    },
+    decode: (data: boolean[]): TRet<Uint8Array> => {
+      // Caller must already clip to exactly `len` bits; otherwise extra booleans spill into the serialized padding bits.
+      const res = new Uint8Array(Math.ceil(len / 8));
+      for (let i = 0; i < data.length; i++) if (data[i]) res[Math.floor(i / 8)] |= 1 << (i % 8);
+      return res as TRet<Uint8Array>;
+    },
+  }) as TRet<P.Coder<Bytes, boolean[]>>;
 type BitVectorType = SSZCoder<boolean[]> & { info: { type: 'bitVector'; N: number } };
 /**
  * Creates an SSZ bitvector coder.
@@ -450,27 +648,35 @@ type BitVectorType = SSZCoder<boolean[]> & { info: { type: 'bitVector'; N: numbe
  * bitvector(4).encode([true, false, true, false]);
  * ```
  */
-export const bitvector = (len: number): BitVectorType => {
+export const bitvector = (len: number): TRet<BitVectorType> => {
   if (!Number.isSafeInteger(len) || len <= 0)
     throw new Error(`SSZ/bitVector: wrong length=${len} (should be positive integer)`);
   const bytesLen = Math.ceil(len / 8);
-  const coder = P.apply(P.bytes(bytesLen), bitsCoder(len));
-  return {
+  // Fixed bitvectors must reject caller arrays that are not exactly N bits; otherwise extra bits spill into serialized padding.
+  const coder = P.validate(P.apply(P.bytes(bytesLen), bitsCoder(len)), (value) => {
+    if (!Array.isArray(value) || value.length !== len)
+      throw new Error(`SSZ/bitVector: wrong value=${value} (len=${value?.length} expected=${len})`);
+    return value;
+  });
+  return freezeSSZ({
     ...coder,
     info: { type: 'bitVector', N: len },
-    _isStableCompat(other) {
-      return isStableCompat(this, other);
+    _isProgressiveCompat(other: TArg<SSZCoder<any>>) {
+      return isProgressiveCompat(this, other);
     },
-    default: new Array(len).fill(false),
+    // Bitvector defaults are public values too; reusing one mutable array lets caller edits leak into later defaults.
+    get default() {
+      return new Array(len).fill(false);
+    },
     composite: true,
     chunkCount: Math.ceil(len / 256),
-    chunks(value) {
-      return chunks(this.encode(value));
+    chunks(value: TArg<boolean[]>) {
+      return chunks(this.encode(value as boolean[]));
     },
     merkleRoot(value: boolean[]) {
       return merkleize(this.chunks(value), this.chunkCount);
     },
-  };
+  } as any) as TRet<BitVectorType>;
 };
 type BitListType = SSZCoder<boolean[]> & { info: { type: 'bitList'; N: number } };
 /**
@@ -484,9 +690,11 @@ type BitListType = SSZCoder<boolean[]> & { info: { type: 'bitList'; N: number } 
  * bitlist(4).encode([true, false, true]);
  * ```
  */
-export const bitlist = (maxLen: number): BitListType => {
+export const bitlist = (maxLen: number): TRet<BitListType> => {
   if (!Number.isSafeInteger(maxLen) || maxLen <= 0)
     throw new Error(`SSZ/bitList: wrong max length=${maxLen} (should be positive integer)`);
+  const chunkCount = Math.ceil(maxLen / 256);
+  const emptyRoot = zeroHashes[Math.ceil(Math.log2(chunkCount))];
   let coder: P.CoderType<boolean[]> = P.wrap({
     encodeStream: (w, value) => {
       w.bytes(bitsCoder(value.length + 1).decode([...value, true])); // last true bit is terminator
@@ -506,24 +714,81 @@ export const bitlist = (maxLen: number): BitListType => {
       throw new Error(`SSZ/bitList/encode: wrong value=${value} (${typeof value})`);
     return value;
   });
-  return {
+  return freezeSSZ({
     ...coder,
     info: { type: 'bitList', N: maxLen },
-    _isStableCompat(other) {
-      return isStableCompat(this, other);
+    _isProgressiveCompat(other: TArg<SSZCoder<any>>) {
+      return isProgressiveCompat(this, other);
     },
     size: undefined,
-    default: [],
-    chunkCount: Math.ceil(maxLen / 256),
+    // Bitlist defaults are public values too; reusing one mutable array lets caller edits leak into later defaults.
+    get default() {
+      return [];
+    },
+    chunkCount,
     composite: true,
-    chunks(value) {
-      const data = value.length ? bitvector(value.length).encode(value) : EMPTY_CHUNK;
+    chunks(value: TArg<boolean[]>) {
+      const data = value.length ? bitvector(value.length).encode(value) : EMPTY_CHUNK.slice();
       return chunks(data);
     },
     merkleRoot(value: boolean[]) {
-      return mixInLength(merkleize(this.chunks(value), this.chunkCount), value.length);
+      const root = value.length ? merkleize(this.chunks(value), this.chunkCount) : emptyRoot;
+      return mixInLength(root, value.length);
     },
-  };
+  } as any) as TRet<BitListType>;
+};
+
+type ProgressiveBitListType = SSZCoder<boolean[]> & { info: { type: 'progressiveBitList' } };
+/**
+ * Creates an unbounded SSZ progressive-bitlist coder.
+ * @returns Variable-size progressive bitlist coder with terminator-bit serialization.
+ * @example
+ * Encode boolean flags with progressive bitlist serialization.
+ * ```ts
+ * import { progressiveBitlist } from 'micro-eth-signer/advanced/ssz.js';
+ * progressiveBitlist().encode([true, false]);
+ * ```
+ */
+export const progressiveBitlist = (): TRet<ProgressiveBitListType> => {
+  let coder: P.CoderType<boolean[]> = P.wrap({
+    encodeStream: (w, value) => {
+      w.bytes(bitsCoder(value.length + 1).decode([...value, true]));
+    },
+    decodeStream: (r) => {
+      const bytes = r.bytes(r.leftBytes);
+      if (!bytes.length || bytes[bytes.length - 1] === 0)
+        throw new Error('SSZ/progressiveBitlist: empty trailing byte');
+      const bits = bitsCoder(bytes.length * 8).encode(bytes);
+      const terminator = bits.lastIndexOf(true);
+      if (terminator === -1) throw new Error('SSZ/progressiveBitList: no terminator');
+      return bits.slice(0, terminator);
+    },
+  });
+  coder = P.validate(coder, (value) => {
+    if (!Array.isArray(value))
+      throw new Error(`SSZ/progressiveBitList/encode: wrong value=${value} (${typeof value})`);
+    return value;
+  });
+  return freezeSSZ({
+    ...coder,
+    info: { type: 'progressiveBitList' },
+    _isProgressiveCompat(other: TArg<SSZCoder<any>>) {
+      return isProgressiveCompat(this, other);
+    },
+    size: undefined,
+    get default() {
+      return [];
+    },
+    chunkCount: NaN,
+    composite: true,
+    chunks(value: TArg<boolean[]>) {
+      if (!value.length) return [];
+      return chunks(bitsCoder(value.length).decode(value));
+    },
+    merkleRoot(value: TArg<boolean[]>) {
+      return mixInLength(merkleizeProgressive(this.chunks(value)), value.length);
+    },
+  } as any) as TRet<ProgressiveBitListType>;
 };
 
 /**
@@ -539,48 +804,120 @@ export const bitlist = (maxLen: number): BitListType => {
  * ```
  */
 export const union = (
-  ...types: (SSZCoder<any> | null)[]
-): SSZCoder<{ selector: number; value: any }> => {
-  if (types.length < 1 || types.length >= 128)
-    throw Error('SSZ/union: should have [1...128) types');
-  if (types[0] === null && types.length < 2)
+  ...types: TArg<(SSZCoder<any> | null)[]>
+): TRet<SSZCoder<{ selector: number; value: any }>> => {
+  const ts = types as (SSZCoder<any> | null)[];
+  if (ts.length < 1 || ts.length >= 128) throw Error('SSZ/union: should have [1...128) types');
+  if (ts[0] === null && ts.length < 2)
     throw new Error('SSZ/union: should have at least 2 types if first is null');
-  for (let i = 0; i < types.length; i++) {
-    if (i > 0 && types[i] === null) throw new Error('SSZ/union: only first type can be null');
-    if (types[i] !== null) checkSSZ(types[i]);
+  for (let i = 0; i < ts.length; i++) {
+    if (i > 0 && ts[i] === null) throw new Error('SSZ/union: only first type can be null');
+    if (ts[i] !== null) checkSSZ(ts[i]);
   }
+  const none = P.apply(P.magicBytes(P.EMPTY), {
+    encode: () => null,
+    decode: (value) => {
+      if (value !== null && value !== undefined)
+        throw new Error(`SSZ/union: wrong null-branch value=${value}`);
+      return undefined;
+    },
+  });
   const coder = P.apply(
     P.tag(
       P.U8,
-      Object.fromEntries(
-        types.map((t, i) => [i, t === null ? P.magicBytes(P.EMPTY) : P.prefix(null, t)]) as any
-      )
+      Object.fromEntries(ts.map((t, i) => [i, t === null ? none : P.prefix(null, t)]) as any)
     ),
     {
       encode: ({ TAG, data }) => ({ selector: TAG, value: data }),
       decode: ({ selector, value }) => ({ TAG: selector, data: value }),
     }
   );
-  return {
+  const res: SSZCoder<{ selector: number; value: any }> = {
     ...(coder as any),
     size: undefined, // union is always variable size
     chunkCount: NaN,
-    default: { selector: 0, value: types[0] === null ? null : types[0].default },
-    _isStableCompat(other) {
-      return isStableCompat(this, other);
+    // SSZ None maps to public `null`; `undefined` is still accepted on encode for older callers.
+    get default() {
+      return { selector: 0, value: ts[0] === null ? null : ts[0].default };
+    },
+    _isProgressiveCompat(other: TArg<SSZCoder<any>>) {
+      return isProgressiveCompat(this, other);
     },
     composite: true,
     chunks({ selector, value }) {
-      const type = types[selector];
-      if (type === null) return EMPTY_CHUNK;
-      return [types[selector]!.merkleRoot(value)];
+      const type = ts[selector];
+      if (type === null) return [EMPTY_CHUNK.slice()];
+      return [ts[selector]!.merkleRoot(value)];
     },
     merkleRoot: ({ selector, value }) => {
-      const type = types[selector];
-      if (type === null) return mixInLength(EMPTY_CHUNK, 0);
-      return mixInLength(types[selector]!.merkleRoot(value), selector);
+      const type = ts[selector];
+      if (type === null) return mixInSelector(EMPTY_CHUNK, 0);
+      return mixInSelector(ts[selector]!.merkleRoot(value), selector);
     },
   };
+  return freezeSSZ(res as any) as TRet<SSZCoder<{ selector: number; value: any }>>;
+};
+
+type CompatibleUnionType<T extends Record<number, SSZCoder<any>>> = SSZCoder<{
+  selector: keyof T & number;
+  data: P.UnwrapCoder<T[keyof T]>;
+}> & { info: { type: 'compatibleUnion'; types: T } };
+/**
+ * Creates an SSZ compatible-union coder from explicit selector options.
+ * @param types - Variant coders keyed by uint8 selectors 1 through 127.
+ * @returns Compatible-union coder that serializes selector byte plus payload.
+ * @throws If the selector map is empty, out of range, or has incompatible variants. {@link Error}
+ * @example
+ * Encode a value with selector `1`.
+ * ```ts
+ * import { compatibleUnion, uint8 } from 'micro-eth-signer/advanced/ssz.js';
+ * compatibleUnion({ 1: uint8 }).encode({ selector: 1, data: 7 });
+ * ```
+ */
+export const compatibleUnion = <T extends Record<number, SSZCoder<any>>>(
+  types: T
+): TRet<CompatibleUnionType<T>> => {
+  const ts = { ...types } as T;
+  if (!isObject(types) || !Object.keys(ts).length) throw new Error('SSZ/compatibleUnion: no types');
+  const entries = Object.entries(ts) as [string, SSZCoder<any>][];
+  for (let i = 0; i < entries.length; i++) {
+    const [k, t] = entries[i];
+    const selector = Number(k);
+    if (`${selector}` !== k || !Number.isSafeInteger(selector) || selector < 1 || selector > 127)
+      throw new Error(`SSZ/compatibleUnion: wrong selector=${k}`);
+    checkSSZ(t);
+    for (let j = 0; j < i; j++) {
+      if (!t._isProgressiveCompat(entries[j][1]))
+        throw new Error(`SSZ/compatibleUnion: incompatible selector=${k}`);
+    }
+  }
+  const coder = P.apply(
+    P.tag(P.U8, Object.fromEntries(entries.map(([k, t]) => [k, P.prefix(null, t)])) as any),
+    {
+      encode: ({ TAG, data }) => ({ selector: TAG, data }),
+      decode: ({ selector, data }) => ({ TAG: selector, data }),
+    }
+  );
+  const res: CompatibleUnionType<T> = {
+    ...(coder as any),
+    info: { type: 'compatibleUnion', types: ts },
+    size: undefined,
+    chunkCount: NaN,
+    get default() {
+      throw new Error('SSZ/compatibleUnion: no default');
+    },
+    _isProgressiveCompat(other: TArg<SSZCoder<any>>) {
+      return isProgressiveCompat(this, other);
+    },
+    composite: true,
+    chunks({ selector, data }) {
+      return [ts[selector]!.merkleRoot(data)];
+    },
+    merkleRoot({ selector, data }) {
+      return mixInSelector(ts[selector]!.merkleRoot(data), selector);
+    },
+  };
+  return freezeSSZ(res as any) as TRet<CompatibleUnionType<T>>;
 };
 type ByteListType = SSZCoder<Bytes> & {
   info: { type: 'list'; N: number; inner: typeof byte };
@@ -589,34 +926,40 @@ type ByteListType = SSZCoder<Bytes> & {
  * Creates an SSZ byte-list coder.
  * @param maxLen - Maximum number of bytes allowed in the list.
  * @returns Variable-size byte-list coder.
+ * @throws If the maximum length or encoded byte list is invalid. {@link Error}
  * @example
  * Encode a variable-length byte payload with a four-byte limit.
  * ```ts
  * bytelist(4).encode(new Uint8Array([1, 2]));
  * ```
  */
-export const bytelist = (maxLen: number): ByteListType => {
+export const bytelist = (maxLen: number): TRet<ByteListType> => {
+  // maxLen is structural SSZ metadata; non-integer or negative bounds make chunkCount and Merkle limits incoherent.
+  if (!Number.isSafeInteger(maxLen) || maxLen < 0)
+    throw new Error(`SSZ/bytelist: wrong length=${maxLen} (should be non-negative integer)`);
   const coder = P.validate(P.bytes(null), (value) => {
     if (!isBytes(value) || value.length > maxLen)
       throw new Error(`SSZ/bytelist: wrong value=${value}`);
     return value;
   });
-  return {
+  return freezeSSZ({
     ...coder,
     info: { type: 'list', N: maxLen, inner: byte },
-    _isStableCompat(other) {
-      return isStableCompat(this, other);
+    _isProgressiveCompat(other: TArg<SSZCoder<any>>) {
+      return isProgressiveCompat(this, other);
     },
-    default: Uint8Array.of(),
+    get default() {
+      return Uint8Array.of();
+    },
     composite: true,
     chunkCount: Math.ceil(maxLen / 32),
-    chunks(value) {
-      return chunks(this.encode(value));
+    chunks(value: TArg<Bytes>) {
+      return chunks(this.encode(value as Bytes));
     },
-    merkleRoot(value) {
+    merkleRoot(value: TArg<Bytes>) {
       return mixInLength(merkleize(this.chunks(value), this.chunkCount), value.length);
     },
-  };
+  } as any) as TRet<ByteListType>;
 };
 type ByteVectorType = SSZCoder<Bytes> & {
   info: { type: 'vector'; N: number; inner: typeof byte };
@@ -632,101 +975,97 @@ type ByteVectorType = SSZCoder<Bytes> & {
  * bytevector(2).encode(new Uint8Array([1, 2]));
  * ```
  */
-export const bytevector = (len: number): ByteVectorType => {
+export const bytevector = (len: number): TRet<ByteVectorType> => {
   if (!Number.isSafeInteger(len) || len <= 0)
     throw new Error(`SSZ/vector: wrong length=${len} (should be positive integer)`);
-  return {
+  return freezeSSZ({
     ...P.bytes(len),
     info: { type: 'vector', N: len, inner: byte },
-    _isStableCompat(other) {
-      return isStableCompat(this, other);
+    _isProgressiveCompat(other: TArg<SSZCoder<any>>) {
+      return isProgressiveCompat(this, other);
     },
-    default: new Uint8Array(len),
+    // Bytevector defaults are public values too; reusing one mutable Uint8Array lets caller edits leak into later defaults.
+    get default() {
+      return new Uint8Array(len);
+    },
     composite: true,
     chunkCount: Math.ceil(len / 32),
-    chunks(value) {
-      return chunks(this.encode(value));
+    chunks(value: TArg<Bytes>) {
+      return chunks(this.encode(value as Bytes));
     },
-    merkleRoot(value) {
+    merkleRoot(value: TArg<Bytes>) {
       return merkleize(this.chunks(value));
     },
-  };
+  } as any) as TRet<ByteVectorType>;
 };
 
-type StableContainerCoder<T extends Record<string, SSZCoder<any>>> = SSZCoder<{
-  [K in keyof T]?: P.UnwrapCoder<T[K]>;
-}> & { info: { type: 'stableContainer'; N: number; fields: T } };
+type ProgressiveContainerCoder<T extends Record<string, SSZCoder<any>>> = SSZCoder<{
+  [K in keyof T]: P.UnwrapCoder<T[K]>;
+}> & { info: { type: 'progressiveContainer'; activeFields: readonly boolean[]; fields: T } };
 /**
- * Creates an SSZ stable-container coder.
- * @param N - Maximum number of fields allowed by the container profile.
+ * Creates an SSZ progressive-container coder.
+ * @param activeFields - Progressive active-field bitmap. It must end in `1` and contain exactly one `1` per field.
  * @param fields - Field coders keyed by field name.
- * @returns Stable-container coder compatible with SSZ profiles.
- * @throws If the field set is empty, exceeds `N`, or contains invalid SSZ coders. {@link Error}
+ * @returns Progressive-container coder compatible with SSZ profiles.
+ * @throws If the field set or active-field bitmap is invalid. {@link Error}
  * @example
- * Encode a stable container with one optional field present.
+ * Encode a progressive container with one active field.
  * ```ts
- * import { stableContainer, uint8 } from 'micro-eth-signer/advanced/ssz.js';
- * stableContainer(1, { side: uint8 }).encode({ side: 3 });
+ * import { progressiveContainer, uint8 } from 'micro-eth-signer/advanced/ssz.js';
+ * progressiveContainer([1], { side: uint8 }).encode({ side: 3 });
  * ```
  */
-export const stableContainer = <T extends Record<string, SSZCoder<any>>>(
-  N: number,
+export const progressiveContainer = <T extends Record<string, SSZCoder<any>>>(
+  activeFields: (boolean | number)[],
   fields: T
-): StableContainerCoder<T> => {
-  const fieldsNames = Object.keys(fields) as (keyof T)[];
-  const fieldsLen = fieldsNames.length;
-  if (!fieldsLen) throw new Error('SSZ/stableContainer: no fields');
-  if (fieldsLen > N) throw new Error('SSZ/stableContainer: more fields than N');
-  const bv = bitvector(N);
-  const coder = P.wrap({
-    encodeStream: (w, value) => {
-      const bsVal = new Array(N).fill(false);
-      for (let i = 0; i < fieldsLen; i++) if (value[fieldsNames[i]] !== undefined) bsVal[i] = true;
-      bv.encodeStream(w, bsVal);
-      const activeFields = fieldsNames.filter((_, i) => bsVal[i]);
-      const ptrCoder = P.struct(
-        Object.fromEntries(activeFields.map((k) => [k, wrapPointer(fields[k])]))
-      ) as StableContainerCoder<T>;
-      w.bytes(ptrCoder.encode(value));
-    },
-    decodeStream: (r) => {
-      const bsVal = bv.decodeStream(r);
-      for (let i = fieldsLen; i < bsVal.length; i++) {
-        if (bsVal[i] !== false) throw new Error('stableContainer: non-zero padding');
-      }
-      const activeFields = fieldsNames.filter((_, i) => bsVal[i]);
-      const fixedCoder = P.struct(
-        Object.fromEntries(activeFields.map((k) => [k, wrapRawPointer(fields[k])]))
-      );
-      const offsetFields = activeFields.filter((i) => fields[i].size === undefined);
-      return fixOffsets(r, fields, offsetFields as any, fixedCoder.decodeStream(r), bv.size!);
-    },
-  }) as StableContainerCoder<T>;
-  return {
+): TRet<ProgressiveContainerCoder<T>> => {
+  const fs = { ...fields } as T;
+  const fieldsLen = Object.keys(fs).length;
+  if (!fieldsLen) throw new Error('SSZ/progressiveContainer: no fields');
+  if (!Array.isArray(activeFields) || !activeFields.length || activeFields.length > 256)
+    throw new Error('SSZ/progressiveContainer: wrong activeFields');
+  const active = activeFields.map((i) => {
+    if (i === true || i === 1) return true;
+    if (i === false || i === 0) return false;
+    throw new Error('SSZ/progressiveContainer: wrong activeFields');
+  });
+  // simple-serialize.md §Illegal types: active_fields must end in 1 and contain exactly one 1 per field.
+  if (!active[active.length - 1]) throw new Error('SSZ/progressiveContainer: trailing inactive');
+  if (active.filter(Boolean).length !== fieldsLen)
+    throw new Error('SSZ/progressiveContainer: activeFields/fields mismatch');
+  const coder = container(fs) as unknown as ProgressiveContainerCoder<T>;
+  return freezeSSZ({
     ...coder,
-    info: { type: 'stableContainer', N, fields },
-    size: undefined,
-    default: Object.fromEntries(Object.entries(fields).map(([k, _v]) => [k, undefined])) as {
-      [K in keyof T]: P.UnwrapCoder<T[K]>;
+    info: { type: 'progressiveContainer', activeFields: active, fields: fs },
+    _isProgressiveCompat(other: TArg<SSZCoder<any>>) {
+      return isProgressiveCompat(this, other);
     },
-    _isStableCompat(other) {
-      return isStableCompat(this, other);
+    // Object spread materializes the wrapped container getter once; keep progressive defaults fresh too.
+    get default() {
+      return coder.default;
     },
-    composite: true,
-    chunkCount: N,
-    chunks(value: P.UnwrapCoder<StableContainerCoder<T>>) {
-      const res = Object.entries(fields).map(([k, v]) =>
-        value[k] === undefined ? new Uint8Array(32) : v.merkleRoot(value[k])
-      );
-      while (res.length < N) res.push(new Uint8Array(32));
+    chunkCount: active.length,
+    chunks(value: TArg<P.UnwrapCoder<ProgressiveContainerCoder<T>>>) {
+      const res: Bytes[] = [];
+      let field = 0;
+      const entries = Object.entries(fs);
+      for (const enabled of active) {
+        if (!enabled) {
+          res.push(EMPTY_CHUNK.slice());
+          continue;
+        }
+        const [k, v] = entries[field++];
+        // Progressive active-field positions are part of the Merkle input, so inactive slots stay as zero chunks.
+        res.push(v.merkleRoot((value as P.UnwrapCoder<ProgressiveContainerCoder<T>>)[k]));
+      }
       return res;
     },
-    merkleRoot(value: P.UnwrapCoder<StableContainerCoder<T>>) {
-      const bsVal = new Array(N).fill(false);
-      for (let i = 0; i < fieldsLen; i++) if (value[fieldsNames[i]] !== undefined) bsVal[i] = true;
-      return hash(merkleize(this.chunks(value as any)), bv.merkleRoot(bsVal));
+    merkleRoot(value: TArg<P.UnwrapCoder<ProgressiveContainerCoder<T>>>) {
+      const activeChunk = EMPTY_CHUNK.slice();
+      activeChunk.set(bitsCoder(active.length).decode(active as boolean[]));
+      return hash(merkleizeProgressive(this.chunks(value as any)), activeChunk);
     },
-  };
+  } as any) as TRet<ProgressiveContainerCoder<T>>;
 };
 
 type ProfileCoder<
@@ -734,22 +1073,32 @@ type ProfileCoder<
   OptK extends keyof T & string,
   ReqK extends keyof T & string,
 > = SSZCoder<{ [K in ReqK]: P.UnwrapCoder<T[K]> } & { [K in OptK]?: P.UnwrapCoder<T[K]> }> & {
-  info: { type: 'profile'; container: StableContainerCoder<T> };
+  info: { type: 'profile'; container: ProgressiveContainerCoder<T> };
 };
+type ProgressiveFields<T> = T extends {
+  info: { fields: infer F extends Record<string, SSZCoder<any>> };
+}
+  ? F
+  : never;
+type ProfileType<
+  T extends { info: { fields: Record<string, SSZCoder<any>> } },
+  OptK extends keyof ProgressiveFields<T> & string,
+  ReqK extends keyof ProgressiveFields<T> & string,
+> = ProfileCoder<ProgressiveFields<T>, OptK, ReqK>;
 
 /**
- * Creates an SSZ profile coder over a stable container.
- * @param c - Base stable-container coder.
+ * Creates an SSZ profile coder over a progressive container.
+ * @param c - Base progressive-container coder.
  * @param optFields - Field names marked optional in the profile.
  * @param requiredFields - Field names that must stay present in the profile.
  * @param replaceType - Optional type replacements for profiled fields.
  * @returns Profile coder constrained to the selected optional fields.
- * @throws If the stable container, field lists, or replacement types are invalid. {@link Error}
+ * @throws If the progressive container, field lists, or replacement types are invalid. {@link Error}
  * @example
- * Build related required-field and optional-field views over one stable container.
+ * Build related required-field and optional-field views over one progressive container.
  * ```ts
  * import * as SSZ from 'micro-eth-signer/advanced/ssz.js';
- * const Shape = SSZ.stableContainer(4, {
+ * const Shape = SSZ.progressiveContainer([1, 1, 1], {
  *   side: SSZ.uint16,
  *   color: SSZ.uint8,
  *   radius: SSZ.uint16,
@@ -759,10 +1108,10 @@ type ProfileCoder<
  * const Circle2 = SSZ.profile(Shape, ['radius'], ['color'], { color: SSZ.byte });
  * ```
  * @example
- * Build a required-field view over a stable container.
+ * Build a required-field view over a progressive container.
  * ```ts
- * import { profile, stableContainer, uint8 } from 'micro-eth-signer/advanced/ssz.js';
- * const Shape = stableContainer(1, { side: uint8 });
+ * import { profile, progressiveContainer, uint8 } from 'micro-eth-signer/advanced/ssz.js';
+ * const Shape = progressiveContainer([1], { side: uint8 });
  * profile(Shape, [], ['side']).encode({ side: 3 });
  * ```
  */
@@ -771,14 +1120,16 @@ export const profile = <
   OptK extends keyof T & string,
   ReqK extends keyof T & string,
 >(
-  c: StableContainerCoder<T>,
+  c: TArg<ProgressiveContainerCoder<T>>,
   optFields: OptK[],
   requiredFields: ReqK[] = [],
   replaceType: Record<string, any> = {}
-): ProfileCoder<T, OptK, ReqK> => {
-  checkSSZ(c);
-  if (c.info.type !== 'stableContainer') throw new Error('profile: expected stableContainer');
-  const containerFields: Set<string> = new Set(Object.keys(c.info.fields));
+): TRet<ProfileCoder<T, OptK, ReqK>> => {
+  const base = c as ProgressiveContainerCoder<T>;
+  checkSSZ(base);
+  if (base.info.type !== 'progressiveContainer')
+    throw new Error('profile: expected progressiveContainer');
+  const containerFields: Set<string> = new Set(Object.keys(base.info.fields));
   if (!Array.isArray(optFields)) throw new Error('profile: optional fields should be array');
   const optFS: Set<string> = new Set(optFields);
   for (const f of optFS) {
@@ -794,21 +1145,23 @@ export const profile = <
   if (!isObject(replaceType)) throw new Error('profile: replaceType should be object');
   for (const k in replaceType) {
     if (!containerFields.has(k)) throw new Error(`profile/replaceType: unexpected field ${k}`);
-    if (!replaceType[k]._isStableCompat(c.info.fields[k]))
+    if (!replaceType[k]._isProgressiveCompat(base.info.fields[k]))
       throw new Error(`profile/replaceType: incompatible field ${k}`);
   }
   // Order should be same
-  const allFields = Object.keys(c.info.fields).filter((i) => optFS.has(i) || reqFS.has(i));
+  const allFields = Object.keys(base.info.fields).filter((i) => optFS.has(i) || reqFS.has(i));
   // bv is omitted if all fields are required!
-  const fieldCoders = { ...c.info.fields, ...replaceType };
+  const fieldCoders = { ...base.info.fields, ...replaceType };
   let coder: ProfileCoder<T, OptK, ReqK>;
+  let profileRoot = false;
   if (optFS.size === 0) {
     // All fields are required, it is just container, possible with size
     coder = container(
       Object.fromEntries(allFields.map((k) => [k, fieldCoders[k]]))
     ) as any as ProfileCoder<T, OptK, ReqK>;
+    profileRoot = true;
   } else {
-    // NOTE: we cannot merge this with stable container,
+    // NOTE: we cannot merge this with progressive container,
     // because some fields are active and some is not (based on required/non-required)
     const bv = bitvector(optFS.size);
     const forFields = (fn: (f: string, optPos: number | undefined) => void) => {
@@ -855,24 +1208,28 @@ export const profile = <
       size: undefined,
     } as ProfileCoder<T, OptK, ReqK>;
   }
-  return {
+  return freezeSSZ({
     ...coder,
-    info: { type: 'profile', container: c },
-    default: Object.fromEntries(Array.from(reqFS).map((f) => [f, fieldCoders[f].default])) as {
-      [K in ReqK]: P.UnwrapCoder<T[K]>;
-    } & { [K in OptK]?: P.UnwrapCoder<T[K]> },
-    _isStableCompat(other) {
-      return isStableCompat(this, other);
+    info: { type: 'profile', container: base },
+    // Profile defaults are public values too; reusing mutable required-field defaults lets caller edits leak into later defaults.
+    get default() {
+      return Object.fromEntries(Array.from(reqFS).map((f) => [f, fieldCoders[f].default])) as {
+        [K in ReqK]: P.UnwrapCoder<T[K]>;
+      } & { [K in OptK]?: P.UnwrapCoder<T[K]> };
+    },
+    _isProgressiveCompat(other: TArg<SSZCoder<any>>) {
+      return isProgressiveCompat(this, other);
     },
     composite: true,
-    chunkCount: c.info.N,
-    chunks(value: P.UnwrapCoder<ProfileCoder<T, OptK, ReqK>>) {
-      return c.chunks(value);
+    chunkCount: profileRoot ? coder.chunkCount : base.info.activeFields.length,
+    chunks(value: TArg<P.UnwrapCoder<ProfileCoder<T, OptK, ReqK>>>) {
+      // Current consensus profiles are ordinary SSZ containers; only old optional-profile shapes use the base container root.
+      return profileRoot ? coder.chunks(value as any) : base.chunks(value as any);
     },
-    merkleRoot(value: P.UnwrapCoder<ProfileCoder<T, OptK, ReqK>>) {
-      return c.merkleRoot(value);
+    merkleRoot(value: TArg<P.UnwrapCoder<ProfileCoder<T, OptK, ReqK>>>) {
+      return profileRoot ? coder.merkleRoot(value as any) : base.merkleRoot(value as any);
     },
-  };
+  } as any) as TRet<ProfileCoder<T, OptK, ReqK>>;
 };
 
 // Aliases
@@ -928,15 +1285,18 @@ const NEXT_SYNC_COMMITTEE_DEPTH = 5;
 const BLOCK_BODY_EXECUTION_PAYLOAD_DEPTH = 4;
 const FINALIZED_ROOT_DEPTH = 6;
 // Electra
+// Electra light-client sync-protocol.md defines gindices 86/87/169, whose floorlog2 depths are 6/6/7.
+const ELECTRA_SYNC_COMMITTEE_DEPTH = 6;
+const ELECTRA_FINALIZED_ROOT_DEPTH = 7;
 const MAX_COMMITTEES_PER_SLOT = 64;
 const PENDING_PARTIAL_WITHDRAWALS_LIMIT = 134217728;
-const PENDING_BALANCE_DEPOSITS_LIMIT = 134217728;
+const PENDING_DEPOSITS_LIMIT = 134217728;
 const PENDING_CONSOLIDATIONS_LIMIT = 262144;
 const MAX_ATTESTER_SLASHINGS_ELECTRA = 1;
 const MAX_ATTESTATIONS_ELECTRA = 8;
 const MAX_DEPOSIT_REQUESTS_PER_PAYLOAD = 8192;
 const MAX_WITHDRAWAL_REQUESTS_PER_PAYLOAD = 16;
-const MAX_CONSOLIDATION_REQUESTS_PER_PAYLOAD = 1;
+const MAX_CONSOLIDATION_REQUESTS_PER_PAYLOAD = 2;
 
 // We can reduce size if we inline these. But updates for new forks would be hard.
 const Slot = uint64;
@@ -946,66 +1306,123 @@ const ValidatorIndex = uint64;
 const WithdrawalIndex = uint64;
 const BlobIndex = uint64;
 const Gwei = uint64;
-const Root = /* @__PURE__ */ bytevector(32);
-const Hash32 = /* @__PURE__ */ bytevector(32);
-const Bytes32 = /* @__PURE__ */ bytevector(32);
-const Version = /* @__PURE__ */ bytevector(4);
-const DomainType = /* @__PURE__ */ bytevector(4);
-const ForkDigest = /* @__PURE__ */ bytevector(4);
-const Domain = /* @__PURE__ */ bytevector(32);
-const BLSPubkey = /* @__PURE__ */ bytevector(48);
-const KZGCommitment = /* @__PURE__ */ bytevector(48);
-const KZGProof = /* @__PURE__ */ bytevector(48);
-const BLSSignature = /* @__PURE__ */ bytevector(96);
+const Root: TRet<ByteVectorType> = /* @__PURE__ */ bytevector(32);
+const Hash32: TRet<ByteVectorType> = /* @__PURE__ */ bytevector(32);
+const Bytes32: TRet<ByteVectorType> = /* @__PURE__ */ bytevector(32);
+const Version: TRet<ByteVectorType> = /* @__PURE__ */ bytevector(4);
+const DomainType: TRet<ByteVectorType> = /* @__PURE__ */ bytevector(4);
+const ForkDigest: TRet<ByteVectorType> = /* @__PURE__ */ bytevector(4);
+const Domain: TRet<ByteVectorType> = /* @__PURE__ */ bytevector(32);
+const BLSPubkey: TRet<ByteVectorType> = /* @__PURE__ */ bytevector(48);
+const KZGCommitment: TRet<ByteVectorType> = /* @__PURE__ */ bytevector(48);
+const KZGProof: TRet<ByteVectorType> = /* @__PURE__ */ bytevector(48);
+const BLSSignature: TRet<ByteVectorType> = /* @__PURE__ */ bytevector(96);
 const Ether = uint64;
 const ParticipationFlags = uint8;
-const ExecutionAddress = /* @__PURE__ */ bytevector(20);
-const PayloadId = /* @__PURE__ */ bytevector(8);
-const Transaction = /* @__PURE__ */ bytelist(MAX_BYTES_PER_TRANSACTION);
+const ExecutionAddress: TRet<ByteVectorType> = /* @__PURE__ */ bytevector(20);
+const PayloadId: TRet<ByteVectorType> = /* @__PURE__ */ bytevector(8);
+const Transaction: TRet<ByteListType> = /* @__PURE__ */ bytelist(MAX_BYTES_PER_TRANSACTION);
 // Tree-shaking: esbuild can keep parent schema builders alive through inline arithmetic args.
-const Blob = /* @__PURE__ */ bytevector(
+const Blob: TRet<ByteVectorType> = /* @__PURE__ */ bytevector(
   /* @__PURE__ */ (() => BYTES_PER_FIELD_ELEMENT * FIELD_ELEMENTS_PER_BLOB)()
 );
 
-const Checkpoint = /* @__PURE__ */ container({ epoch: Epoch, root: Root });
-const AttestationData = /* @__PURE__ */ container({
+const Checkpoint: ContainerCoder<{ epoch: typeof Epoch; root: typeof Root }> =
+  /* @__PURE__ */ container({ epoch: Epoch, root: Root });
+// Forks keep the same SSZ layout here; only the meaning of `index` changes after Electra.
+const AttestationData: ContainerCoder<{
+  slot: typeof Slot;
+  index: typeof CommitteeIndex;
+  beacon_block_root: typeof Root;
+  source: typeof Checkpoint;
+  target: typeof Checkpoint;
+}> = /* @__PURE__ */ container({
   slot: Slot,
   index: CommitteeIndex,
   beacon_block_root: Root,
   source: Checkpoint,
   target: Checkpoint,
 });
-const Attestation = /* @__PURE__ */ container({
+// Legacy attestation stays 3-field; Electra widens the outer container via `AttestationElectra` below.
+const Attestation: ContainerCoder<{
+  aggregation_bits: BitListType;
+  data: typeof AttestationData;
+  signature: typeof BLSSignature;
+}> = /* @__PURE__ */ container({
   aggregation_bits: /* @__PURE__ */ bitlist(MAX_VALIDATORS_PER_COMMITTEE),
   data: AttestationData,
   signature: BLSSignature,
 });
-const AggregateAndProof = /* @__PURE__ */ container({
+// Legacy aggregate-and-proof wrapper; Electra gossip wrappers are intentionally not exported below.
+const AggregateAndProof: ContainerCoder<{
+  aggregator_index: typeof ValidatorIndex;
+  aggregate: typeof Attestation;
+  selection_proof: typeof BLSSignature;
+}> = /* @__PURE__ */ container({
   aggregator_index: ValidatorIndex,
   aggregate: Attestation,
   selection_proof: BLSSignature,
 });
-const IndexedAttestation = /* @__PURE__ */ container({
+// Legacy indexed attestation keeps per-committee list bounds; Electra widens them in `IndexedAttestationElectra`.
+const IndexedAttestation: ContainerCoder<{
+  attesting_indices: ListType<SSZValue<typeof ValidatorIndex>>;
+  data: typeof AttestationData;
+  signature: typeof BLSSignature;
+}> = /* @__PURE__ */ container({
   attesting_indices: /* @__PURE__ */ list(MAX_VALIDATORS_PER_COMMITTEE, ValidatorIndex),
   data: AttestationData,
   signature: BLSSignature,
 });
-const AttesterSlashing = /* @__PURE__ */ container({
+// Legacy attester slashings reference legacy indexed attestations; Electra swaps both branches together.
+const AttesterSlashing: ContainerCoder<{
+  attestation_1: typeof IndexedAttestation;
+  attestation_2: typeof IndexedAttestation;
+}> = /* @__PURE__ */ container({
   attestation_1: IndexedAttestation,
   attestation_2: IndexedAttestation,
 });
-const BLSToExecutionChange = /* @__PURE__ */ container({
+// Later forks reuse this Capella registration message as-is; only the signed wrapper and block-body list placement vary.
+const BLSToExecutionChange: ContainerCoder<{
+  validator_index: typeof ValidatorIndex;
+  from_bls_pubkey: typeof BLSPubkey;
+  to_execution_address: typeof ExecutionAddress;
+}> = /* @__PURE__ */ container({
   validator_index: ValidatorIndex,
   from_bls_pubkey: BLSPubkey,
   to_execution_address: ExecutionAddress,
 });
-const Withdrawal = /* @__PURE__ */ container({
+// Current payload forks in this repo still reuse the Capella four-field withdrawal container.
+const Withdrawal: ContainerCoder<{
+  index: typeof WithdrawalIndex;
+  validator_index: typeof ValidatorIndex;
+  address: typeof ExecutionAddress;
+  amount: typeof Gwei;
+}> = /* @__PURE__ */ container({
   index: WithdrawalIndex,
   validator_index: ValidatorIndex,
   address: ExecutionAddress,
   amount: Gwei,
 });
-const ExecutionPayload = /* @__PURE__ */ container({
+// This plain export tracks the V3 payload shape (withdrawals + blob gas); older fork differences are handled by separate block/header exports below.
+const ExecutionPayload: ContainerCoder<{
+  parent_hash: typeof Hash32;
+  fee_recipient: typeof ExecutionAddress;
+  state_root: typeof Bytes32;
+  receipts_root: typeof Bytes32;
+  logs_bloom: ByteVectorType;
+  prev_randao: typeof Bytes32;
+  block_number: typeof uint64;
+  gas_limit: typeof uint64;
+  gas_used: typeof uint64;
+  timestamp: typeof uint64;
+  extra_data: ByteListType;
+  base_fee_per_gas: typeof uint256;
+  block_hash: typeof Hash32;
+  transactions: ListType<SSZValue<typeof Transaction>>;
+  withdrawals: ListType<SSZValue<typeof Withdrawal>>;
+  blob_gas_used: typeof uint64;
+  excess_blob_gas: typeof uint64;
+}> = /* @__PURE__ */ container({
   parent_hash: Hash32,
   fee_recipient: ExecutionAddress,
   state_root: Bytes32,
@@ -1025,51 +1442,113 @@ const ExecutionPayload = /* @__PURE__ */ container({
   excess_blob_gas: uint64,
 });
 MAX_WITHDRAWALS_PER_PAYLOAD;
-const SigningData = /* @__PURE__ */ container({ object_root: Root, domain: Domain });
-const BeaconBlockHeader = /* @__PURE__ */ container({
+// compute_signing_root hashes the signed object's SSZ root together with a 32-byte domain for BLS domain separation.
+const SigningData: ContainerCoder<{ object_root: typeof Root; domain: typeof Domain }> =
+  /* @__PURE__ */ container({ object_root: Root, domain: Domain });
+// Kept as the legacy fixed header because changing `latest_block_header` hashing would break BeaconState roots across forks.
+const BeaconBlockHeader: ContainerCoder<{
+  slot: typeof Slot;
+  proposer_index: typeof ValidatorIndex;
+  parent_root: typeof Root;
+  state_root: typeof Root;
+  body_root: typeof Root;
+}> = /* @__PURE__ */ container({
   slot: Slot,
   proposer_index: ValidatorIndex,
   parent_root: Root,
   state_root: Root,
   body_root: Root,
 });
-const SignedBeaconBlockHeader = /* @__PURE__ */ container({
+// The signature is over compute_signing_root(message, proposer domain); this wrapper keeps the raw header bytes for slashing and sidecar transport.
+const SignedBeaconBlockHeader: ContainerCoder<{
+  message: typeof BeaconBlockHeader;
+  signature: typeof BLSSignature;
+}> = /* @__PURE__ */ container({
   message: BeaconBlockHeader,
   signature: BLSSignature,
 });
-const ProposerSlashing = /* @__PURE__ */ container({
+// Carries the two conflicting signed proposer headers unchanged; later forks only vary the surrounding list cap.
+const ProposerSlashing: ContainerCoder<{
+  signed_header_1: typeof SignedBeaconBlockHeader;
+  signed_header_2: typeof SignedBeaconBlockHeader;
+}> = /* @__PURE__ */ container({
   signed_header_1: SignedBeaconBlockHeader,
   signed_header_2: SignedBeaconBlockHeader,
 });
-const DepositData = /* @__PURE__ */ container({
+// Legacy deposit tuple is the fixed four-field prefix that EIP-6110 deposit requests later extend with a sequential index.
+const DepositData: ContainerCoder<{
+  pubkey: typeof BLSPubkey;
+  withdrawal_credentials: typeof Bytes32;
+  amount: typeof Gwei;
+  signature: typeof BLSSignature;
+}> = /* @__PURE__ */ container({
   pubkey: BLSPubkey,
   withdrawal_credentials: Bytes32,
   amount: Gwei,
   signature: BLSSignature,
 });
-const Deposit = /* @__PURE__ */ container({
+// Deposit proofs carry the tree branch plus the final mix-in-length chunk, so the fixed proof vector is DEPOSIT_CONTRACT_TREE_DEPTH + 1.
+const Deposit: ContainerCoder<{
+  proof: VectorType<SSZValue<typeof Bytes32>>;
+  data: typeof DepositData;
+}> = /* @__PURE__ */ container({
   proof: /* @__PURE__ */ vector(/* @__PURE__ */ (() => DEPOSIT_CONTRACT_TREE_DEPTH + 1)(), Bytes32),
   data: DepositData,
 });
-const VoluntaryExit = /* @__PURE__ */ container({ epoch: Epoch, validator_index: ValidatorIndex });
-const SyncAggregate = /* @__PURE__ */ container({
+// Signed wrappers and block bodies reuse this bare exit request unchanged; only the outer signature/list placement varies.
+const VoluntaryExit: ContainerCoder<{
+  epoch: typeof Epoch;
+  validator_index: typeof ValidatorIndex;
+}> = /* @__PURE__ */ container({ epoch: Epoch, validator_index: ValidatorIndex });
+// Altair defines the sync aggregate as the committee participation bitvector plus one aggregate BLS signature, and later bodies reuse that pair unchanged.
+const SyncAggregate: ContainerCoder<{
+  sync_committee_bits: BitVectorType;
+  sync_committee_signature: typeof BLSSignature;
+}> = /* @__PURE__ */ container({
   sync_committee_bits: /* @__PURE__ */ bitvector(SYNC_COMMITTEE_SIZE),
   sync_committee_signature: BLSSignature,
 });
-const Eth1Data = /* @__PURE__ */ container({
+// Legacy eth1 voting tracks the deposit root/count together with the execution block hash that produced them; later forks still reuse this tuple in BeaconState during the EIP-6110 transition.
+const Eth1Data: ContainerCoder<{
+  deposit_root: typeof Root;
+  deposit_count: typeof uint64;
+  block_hash: typeof Hash32;
+}> = /* @__PURE__ */ container({
   deposit_root: Root,
   deposit_count: uint64,
   block_hash: Hash32,
 });
-const SignedVoluntaryExit = /* @__PURE__ */ container({
+// The signed wrapper preserves the raw voluntary-exit request plus one BLS signature, and later block bodies only list these envelopes.
+const SignedVoluntaryExit: ContainerCoder<{
+  message: typeof VoluntaryExit;
+  signature: typeof BLSSignature;
+}> = /* @__PURE__ */ container({
   message: VoluntaryExit,
   signature: BLSSignature,
 });
-const SignedBLSToExecutionChange = /* @__PURE__ */ container({
+// The signed wrapper keeps the Capella withdrawal-address registration request plus one BLS signature, and later block bodies only list these envelopes.
+const SignedBLSToExecutionChange: ContainerCoder<{
+  message: typeof BLSToExecutionChange;
+  signature: typeof BLSSignature;
+}> = /* @__PURE__ */ container({
   message: BLSToExecutionChange,
   signature: BLSSignature,
 });
-const BeaconBlockBody = /* @__PURE__ */ container({
+// This plain export keeps the pre-Electra beacon body with eth1/deposit/execution-payload fields; later fork-specific variants are exposed separately below.
+const BeaconBlockBody: ContainerCoder<{
+  randao_reveal: typeof BLSSignature;
+  eth1_data: typeof Eth1Data;
+  graffiti: typeof Bytes32;
+  proposer_slashings: ListType<SSZValue<typeof ProposerSlashing>>;
+  attester_slashings: ListType<SSZValue<typeof AttesterSlashing>>;
+  attestations: ListType<SSZValue<typeof Attestation>>;
+  deposits: ListType<SSZValue<typeof Deposit>>;
+  voluntary_exits: ListType<SSZValue<typeof SignedVoluntaryExit>>;
+  sync_aggregate: typeof SyncAggregate;
+  execution_payload: typeof ExecutionPayload;
+  bls_to_execution_changes: ListType<SSZValue<typeof SignedBLSToExecutionChange>>;
+  blob_kzg_commitments: ListType<SSZValue<typeof KZGCommitment>>;
+}> = /* @__PURE__ */ container({
   randao_reveal: BLSSignature,
   eth1_data: Eth1Data,
   graffiti: Bytes32,
@@ -1086,23 +1565,49 @@ const BeaconBlockBody = /* @__PURE__ */ container({
   ),
   blob_kzg_commitments: /* @__PURE__ */ list(MAX_BLOB_COMMITMENTS_PER_BLOCK, KZGCommitment),
 });
-const BeaconBlock = /* @__PURE__ */ container({
+// The outer block wrapper stays the fixed slot/proposer/parent/state/body container; later forks swap the body type via separate exports instead of mutating this plain export.
+const BeaconBlock: ContainerCoder<{
+  slot: typeof Slot;
+  proposer_index: typeof ValidatorIndex;
+  parent_root: typeof Root;
+  state_root: typeof Root;
+  body: typeof BeaconBlockBody;
+}> = /* @__PURE__ */ container({
   slot: Slot,
   proposer_index: ValidatorIndex,
   parent_root: Root,
   state_root: Root,
   body: BeaconBlockBody,
 });
-const SyncCommittee = /* @__PURE__ */ container({
+// Sync committees carry the full 512-member pubkey vector together with the aggregate pubkey used by sync-aggregate verification.
+const SyncCommittee: ContainerCoder<{
+  pubkeys: VectorType<SSZValue<typeof BLSPubkey>>;
+  aggregate_pubkey: typeof BLSPubkey;
+}> = /* @__PURE__ */ container({
   pubkeys: /* @__PURE__ */ vector(SYNC_COMMITTEE_SIZE, BLSPubkey),
   aggregate_pubkey: BLSPubkey,
 });
-const Fork = /* @__PURE__ */ container({
+// Fork metadata tracks the version transition from `previous_version` to `current_version` at `epoch`; digest helpers key off the current version.
+const Fork: ContainerCoder<{
+  previous_version: typeof Version;
+  current_version: typeof Version;
+  epoch: typeof Epoch;
+}> = /* @__PURE__ */ container({
   previous_version: Version,
   current_version: Version,
   epoch: Epoch,
 });
-const Validator = /* @__PURE__ */ container({
+// Validators intentionally stay on the fixed Phase0 field set; later fork logic updates balances and epochs around this object instead of redefining the container.
+const Validator: ContainerCoder<{
+  pubkey: typeof BLSPubkey;
+  withdrawal_credentials: typeof Bytes32;
+  effective_balance: typeof Gwei;
+  slashed: typeof boolean;
+  activation_eligibility_epoch: typeof Epoch;
+  activation_epoch: typeof Epoch;
+  exit_epoch: typeof Epoch;
+  withdrawable_epoch: typeof Epoch;
+}> = /* @__PURE__ */ container({
   pubkey: BLSPubkey,
   withdrawal_credentials: Bytes32,
   effective_balance: Gwei,
@@ -1112,7 +1617,26 @@ const Validator = /* @__PURE__ */ container({
   exit_epoch: Epoch,
   withdrawable_epoch: Epoch,
 });
-const ExecutionPayloadHeader = /* @__PURE__ */ container({
+// Plain execution payload headers stay on the V3 field set; later progressive and Electra exports layer request roots or profiles on top instead of mutating this base header.
+const ExecutionPayloadHeader: ContainerCoder<{
+  parent_hash: typeof Hash32;
+  fee_recipient: typeof ExecutionAddress;
+  state_root: typeof Bytes32;
+  receipts_root: typeof Bytes32;
+  logs_bloom: ByteVectorType;
+  prev_randao: typeof Bytes32;
+  block_number: typeof uint64;
+  gas_limit: typeof uint64;
+  gas_used: typeof uint64;
+  timestamp: typeof uint64;
+  extra_data: ByteListType;
+  base_fee_per_gas: typeof uint256;
+  block_hash: typeof Hash32;
+  transactions_root: typeof Root;
+  withdrawals_root: typeof Root;
+  blob_gas_used: typeof uint64;
+  excess_blob_gas: typeof uint64;
+}> = /* @__PURE__ */ container({
   parent_hash: Hash32,
   fee_recipient: ExecutionAddress,
   state_root: Bytes32,
@@ -1131,11 +1655,45 @@ const ExecutionPayloadHeader = /* @__PURE__ */ container({
   blob_gas_used: uint64,
   excess_blob_gas: uint64,
 });
-const HistoricalSummary = /* @__PURE__ */ container({
+// Historical summaries keep the Capella pair of block and state summary roots; later progressive and Electra beacon states reuse the same inner item type.
+const HistoricalSummary: ContainerCoder<{
+  block_summary_root: typeof Root;
+  state_summary_root: typeof Root;
+}> = /* @__PURE__ */ container({
   block_summary_root: Root,
   state_summary_root: Root,
 });
-const BeaconState = /* @__PURE__ */ container({
+// Plain BeaconState keeps the legacy pre-progressive field set; later progressive and Electra state coders are exposed separately instead of mutating this base container in place.
+const BeaconState: ContainerCoder<{
+  genesis_time: typeof uint64;
+  genesis_validators_root: typeof Root;
+  slot: typeof Slot;
+  fork: typeof Fork;
+  latest_block_header: typeof BeaconBlockHeader;
+  block_roots: VectorType<SSZValue<typeof Root>>;
+  state_roots: VectorType<SSZValue<typeof Root>>;
+  historical_roots: ListType<SSZValue<typeof Root>>;
+  eth1_data: typeof Eth1Data;
+  eth1_data_votes: ListType<SSZValue<typeof Eth1Data>>;
+  eth1_deposit_index: typeof uint64;
+  validators: ListType<SSZValue<typeof Validator>>;
+  balances: ListType<SSZValue<typeof Gwei>>;
+  randao_mixes: VectorType<SSZValue<typeof Bytes32>>;
+  slashings: VectorType<SSZValue<typeof Gwei>>;
+  previous_epoch_participation: ListType<SSZValue<typeof ParticipationFlags>>;
+  current_epoch_participation: ListType<SSZValue<typeof ParticipationFlags>>;
+  justification_bits: BitVectorType;
+  previous_justified_checkpoint: typeof Checkpoint;
+  current_justified_checkpoint: typeof Checkpoint;
+  finalized_checkpoint: typeof Checkpoint;
+  inactivity_scores: ListType<SSZValue<typeof uint64>>;
+  current_sync_committee: typeof SyncCommittee;
+  next_sync_committee: typeof SyncCommittee;
+  latest_execution_payload_header: typeof ExecutionPayloadHeader;
+  next_withdrawal_index: typeof WithdrawalIndex;
+  next_withdrawal_validator_index: typeof ValidatorIndex;
+  historical_summaries: ListType<SSZValue<typeof HistoricalSummary>>;
+}> = /* @__PURE__ */ container({
   genesis_time: uint64,
   genesis_validators_root: Root,
   slot: Slot,
@@ -1168,11 +1726,23 @@ const BeaconState = /* @__PURE__ */ container({
   next_withdrawal_validator_index: ValidatorIndex,
   historical_summaries: /* @__PURE__ */ list(HISTORICAL_ROOTS_LIMIT, HistoricalSummary),
 });
-const BlobIdentifier = /* @__PURE__ */ container({
+// Blob identifiers stay a simple `{ block_root, index }` tuple for external blob lookup; BlobSidecar carries the full sidecar payload separately instead of nesting this helper.
+const BlobIdentifier: ContainerCoder<{
+  block_root: typeof Root;
+  index: typeof BlobIndex;
+}> = /* @__PURE__ */ container({
   block_root: Root,
   index: BlobIndex,
 });
-const BlobSidecar = /* @__PURE__ */ container({
+// Blob sidecars carry the blob bytes together with the KZG witness data and the signed beacon block header needed to bind the blob to its block.
+const BlobSidecar: ContainerCoder<{
+  index: typeof BlobIndex;
+  blob: typeof Blob;
+  kzg_commitment: typeof KZGCommitment;
+  kzg_proof: typeof KZGProof;
+  signed_block_header: typeof SignedBeaconBlockHeader;
+  kzg_commitment_inclusion_proof: VectorType<SSZValue<typeof Bytes32>>;
+}> = /* @__PURE__ */ container({
   index: BlobIndex,
   blob: Blob,
   kzg_commitment: KZGCommitment,
@@ -1183,7 +1753,14 @@ const BlobSidecar = /* @__PURE__ */ container({
     Bytes32
   ),
 });
-const SyncCommitteeContribution = /* @__PURE__ */ container({
+// Sync committee contributions carry one subnet's participation bits together with the slot/root context and aggregate signature for that subcommittee.
+const SyncCommitteeContribution: ContainerCoder<{
+  slot: typeof Slot;
+  beacon_block_root: typeof Root;
+  subcommittee_index: typeof uint64;
+  aggregation_bits: BitVectorType;
+  signature: typeof BLSSignature;
+}> = /* @__PURE__ */ container({
   slot: Slot,
   beacon_block_root: Root,
   subcommittee_index: uint64,
@@ -1192,74 +1769,149 @@ const SyncCommitteeContribution = /* @__PURE__ */ container({
   ),
   signature: BLSSignature,
 });
-const ContributionAndProof = /* @__PURE__ */ container({
+// The wrapper binds one sync committee contribution to the selected aggregator validator and its selection proof without changing the inner contribution layout.
+const ContributionAndProof: ContainerCoder<{
+  aggregator_index: typeof ValidatorIndex;
+  contribution: typeof SyncCommitteeContribution;
+  selection_proof: typeof BLSSignature;
+}> = /* @__PURE__ */ container({
   aggregator_index: ValidatorIndex,
   contribution: SyncCommitteeContribution,
   selection_proof: BLSSignature,
 });
-const DepositMessage = /* @__PURE__ */ container({
+// Deposit messages keep only the unsigned deposit payload prefix; signatures and indices live in the larger deposit data / request wrappers.
+const DepositMessage: ContainerCoder<{
+  pubkey: typeof BLSPubkey;
+  withdrawal_credentials: typeof Bytes32;
+  amount: typeof Gwei;
+}> = /* @__PURE__ */ container({
   pubkey: BLSPubkey,
   withdrawal_credentials: Bytes32,
   amount: Gwei,
 });
-const Eth1Block = /* @__PURE__ */ container({
+// Eth1Block matches the phase0 validator helper shape: timestamp plus deposit contract state; Eth1Data derives block_hash from hash_tree_root(block).
+const Eth1Block: ContainerCoder<{
+  timestamp: typeof uint64;
+  deposit_root: typeof Root;
+  deposit_count: typeof uint64;
+}> = /* @__PURE__ */ container({
   timestamp: uint64,
   deposit_root: Root,
   deposit_count: uint64,
 });
-const ForkData = /* @__PURE__ */ container({
+// ForkData stays the plain `{ current_version, genesis_validators_root }` pair hashed by `compute_fork_data_root`, even when later fork-digest helpers add extra runtime inputs.
+const ForkData: ContainerCoder<{
+  current_version: typeof Version;
+  genesis_validators_root: typeof Root;
+}> = /* @__PURE__ */ container({
   current_version: Version,
   genesis_validators_root: Root,
 });
-const HistoricalBatch = /* @__PURE__ */ container({
+// HistoricalBatch keeps the archived `block_roots` / `state_roots` windows that historical roots commit to, so proofs can descend from a historical batch root back to per-slot roots.
+const HistoricalBatch: ContainerCoder<{
+  block_roots: VectorType<SSZValue<typeof Root>>;
+  state_roots: VectorType<SSZValue<typeof Root>>;
+}> = /* @__PURE__ */ container({
   block_roots: /* @__PURE__ */ vector(SLOTS_PER_HISTORICAL_ROOT, Root),
   state_roots: /* @__PURE__ */ vector(SLOTS_PER_HISTORICAL_ROOT, Root),
 });
-const PendingAttestation = /* @__PURE__ */ container({
+// PendingAttestation keeps the legacy BeaconState wrapper that pairs attestation data with committee bits and inclusion metadata for later reward / proposer accounting.
+const PendingAttestation: ContainerCoder<{
+  aggregation_bits: BitListType;
+  data: typeof AttestationData;
+  inclusion_delay: typeof Slot;
+  proposer_index: typeof ValidatorIndex;
+}> = /* @__PURE__ */ container({
   aggregation_bits: /* @__PURE__ */ bitlist(MAX_VALIDATORS_PER_COMMITTEE),
   data: AttestationData,
   inclusion_delay: Slot,
   proposer_index: ValidatorIndex,
 });
-const PowBlock = /* @__PURE__ */ container({
+// PowBlock keeps the minimal merge-era PoW tuple: this block hash, its parent link, and total difficulty for terminal-block checks, not a full execution header.
+const PowBlock: ContainerCoder<{
+  block_hash: typeof Hash32;
+  parent_hash: typeof Hash32;
+  total_difficulty: typeof uint256;
+}> = /* @__PURE__ */ container({
   block_hash: Hash32,
   parent_hash: Hash32,
   total_difficulty: uint256,
 });
-const SignedAggregateAndProof = /* @__PURE__ */ container({
+// Signed legacy aggregate-and-proof wrapper; Electra gossip wrappers are intentionally not exported below.
+const SignedAggregateAndProof: ContainerCoder<{
+  message: typeof AggregateAndProof;
+  signature: typeof BLSSignature;
+}> = /* @__PURE__ */ container({
   message: AggregateAndProof,
   signature: BLSSignature,
 });
-const SignedBeaconBlock = /* @__PURE__ */ container({
+// SignedBeaconBlock stays the plain proposer-signature envelope over `BeaconBlock`; any fork-specific shape changes live in the nested block/body types, not in the outer wrapper.
+const SignedBeaconBlock: ContainerCoder<{
+  message: typeof BeaconBlock;
+  signature: typeof BLSSignature;
+}> = /* @__PURE__ */ container({
   message: BeaconBlock,
   signature: BLSSignature,
 });
-const SignedContributionAndProof = /* @__PURE__ */ container({
+// The signed wrapper adds no fork-specific fields of its own; it simply signs the existing `ContributionAndProof` payload used for sync committee aggregation.
+const SignedContributionAndProof: ContainerCoder<{
+  message: typeof ContributionAndProof;
+  signature: typeof BLSSignature;
+}> = /* @__PURE__ */ container({
   message: ContributionAndProof,
   signature: BLSSignature,
 });
-const SyncAggregatorSelectionData = /* @__PURE__ */ container({
+// Sync aggregator selection proofs sign only the target slot and the chosen sync subcommittee index; the contribution itself is carried separately later.
+const SyncAggregatorSelectionData: ContainerCoder<{
+  slot: typeof Slot;
+  subcommittee_index: typeof uint64;
+}> = /* @__PURE__ */ container({
   slot: Slot,
   subcommittee_index: uint64,
 });
-const SyncCommitteeMessage = /* @__PURE__ */ container({
+// Sync committee messages are the per-validator signed votes over one beacon block root for one slot; aggregates and slashing evidence compose these messages later.
+const SyncCommitteeMessage: ContainerCoder<{
+  slot: typeof Slot;
+  beacon_block_root: typeof Root;
+  validator_index: typeof ValidatorIndex;
+  signature: typeof BLSSignature;
+}> = /* @__PURE__ */ container({
   slot: Slot,
   beacon_block_root: Root,
   validator_index: ValidatorIndex,
   signature: BLSSignature,
 });
 
-const LightClientHeader = /* @__PURE__ */ container({
+const LightClientHeader: ContainerCoder<{
+  beacon: typeof BeaconBlockHeader;
+  execution: typeof ExecutionPayloadHeader;
+  execution_branch: VectorType<SSZValue<typeof Bytes32>>;
+}> = /* @__PURE__ */ container({
+  // Light-client headers pair a beacon header with the execution payload header plus the Merkle branch proving that execution header was included in the beacon block body.
   beacon: BeaconBlockHeader,
   execution: ExecutionPayloadHeader,
   execution_branch: /* @__PURE__ */ vector(BLOCK_BODY_EXECUTION_PAYLOAD_DEPTH, Bytes32),
 });
-const LightClientBootstrap = /* @__PURE__ */ container({
+// Light-client bootstraps pair one trusted header with the current sync committee and the Merkle branch proving that committee at the header state root.
+const LightClientBootstrap: ContainerCoder<{
+  header: typeof LightClientHeader;
+  current_sync_committee: typeof SyncCommittee;
+  current_sync_committee_branch: VectorType<SSZValue<typeof Bytes32>>;
+}> = /* @__PURE__ */ container({
   header: LightClientHeader,
   current_sync_committee: SyncCommittee,
   current_sync_committee_branch: /* @__PURE__ */ vector(NEXT_SYNC_COMMITTEE_DEPTH, Bytes32),
 });
-const LightClientUpdate = /* @__PURE__ */ container({
+// Light-client updates bundle the attested/finalized headers, the optional next-committee and finality proofs, the signing aggregate, and the slot that aggregate signed for.
+const LightClientUpdate: ContainerCoder<{
+  attested_header: typeof LightClientHeader;
+  next_sync_committee: typeof SyncCommittee;
+  next_sync_committee_branch: VectorType<SSZValue<typeof Bytes32>>;
+  finalized_header: typeof LightClientHeader;
+  finality_branch: VectorType<SSZValue<typeof Bytes32>>;
+  sync_aggregate: typeof SyncAggregate;
+  signature_slot: typeof Slot;
+}> = /* @__PURE__ */ container({
   attested_header: LightClientHeader,
   next_sync_committee: SyncCommittee,
   next_sync_committee_branch: /* @__PURE__ */ vector(NEXT_SYNC_COMMITTEE_DEPTH, Bytes32),
@@ -1268,50 +1920,198 @@ const LightClientUpdate = /* @__PURE__ */ container({
   sync_aggregate: SyncAggregate,
   signature_slot: Slot,
 });
-const LightClientFinalityUpdate = /* @__PURE__ */ container({
+// Finality-only light-client updates drop next-sync-committee data and keep only the finalized-header proof plus the signing aggregate and slot.
+const LightClientFinalityUpdate: ContainerCoder<{
+  attested_header: typeof LightClientHeader;
+  finalized_header: typeof LightClientHeader;
+  finality_branch: VectorType<SSZValue<typeof Bytes32>>;
+  sync_aggregate: typeof SyncAggregate;
+  signature_slot: typeof Slot;
+}> = /* @__PURE__ */ container({
   attested_header: LightClientHeader,
   finalized_header: LightClientHeader,
   finality_branch: /* @__PURE__ */ vector(FINALIZED_ROOT_DEPTH, Bytes32),
   sync_aggregate: SyncAggregate,
   signature_slot: Slot,
 });
-const LightClientOptimisticUpdate = /* @__PURE__ */ container({
+// Optimistic light-client updates keep only the attested header plus the sync aggregate and slot used to rank and verify that optimistic head.
+const LightClientOptimisticUpdate: ContainerCoder<{
+  attested_header: typeof LightClientHeader;
+  sync_aggregate: typeof SyncAggregate;
+  signature_slot: typeof Slot;
+}> = /* @__PURE__ */ container({
   attested_header: LightClientHeader,
   sync_aggregate: SyncAggregate,
   signature_slot: Slot,
 });
 // Electra
-const DepositRequest = /* @__PURE__ */ container({
+// Deposit requests flatten the legacy deposit data and append the sequential request index used during the EIP-6110 transition.
+const DepositRequest: ContainerCoder<{
+  pubkey: typeof BLSPubkey;
+  withdrawal_credentials: typeof Bytes32;
+  amount: typeof Gwei;
+  signature: typeof BLSSignature;
+  index: typeof uint64;
+}> = /* @__PURE__ */ container({
   pubkey: BLSPubkey,
   withdrawal_credentials: Bytes32,
   amount: Gwei,
   signature: BLSSignature,
   index: uint64,
 });
-const WithdrawalRequest = /* @__PURE__ */ container({
+// Withdrawal requests carry the execution source address, validator pubkey, and requested amount exactly as dequeued from the EIP-7002 EL queue.
+const WithdrawalRequest: ContainerCoder<{
+  source_address: typeof ExecutionAddress;
+  validator_pubkey: typeof BLSPubkey;
+  amount: typeof Gwei;
+}> = /* @__PURE__ */ container({
   source_address: ExecutionAddress,
   validator_pubkey: BLSPubkey,
   amount: Gwei,
 });
-const ConsolidationRequest = /* @__PURE__ */ container({
+// Consolidation requests carry the EL source address plus the source/target validator pubkeys exactly as dequeued from the EIP-7251 EL queue.
+const ConsolidationRequest: ContainerCoder<{
+  source_address: typeof ExecutionAddress;
+  source_pubkey: typeof BLSPubkey;
+  target_pubkey: typeof BLSPubkey;
+}> = /* @__PURE__ */ container({
   source_address: ExecutionAddress,
   source_pubkey: BLSPubkey,
   target_pubkey: BLSPubkey,
 });
-const PendingBalanceDeposit = /* @__PURE__ */ container({
+// Electra p2p-interface sends single-attestation gossip with committee/attester indices outside AttestationData.
+const SingleAttestation: ContainerCoder<{
+  committee_index: typeof CommitteeIndex;
+  attester_index: typeof ValidatorIndex;
+  data: typeof AttestationData;
+  signature: typeof BLSSignature;
+}> = /* @__PURE__ */ container({
+  committee_index: CommitteeIndex,
+  attester_index: ValidatorIndex,
+  data: AttestationData,
+  signature: BLSSignature,
+});
+// consensus-specs specs/electra/beacon-chain.md §PendingDeposit: Electra queues full deposit request data plus the originating slot.
+const PendingDeposit: ContainerCoder<{
+  pubkey: typeof BLSPubkey;
+  withdrawal_credentials: typeof Bytes32;
+  amount: typeof Gwei;
+  signature: typeof BLSSignature;
+  slot: typeof Slot;
+}> = /* @__PURE__ */ container({
+  pubkey: BLSPubkey,
+  withdrawal_credentials: Bytes32,
+  amount: Gwei,
+  signature: BLSSignature,
+  slot: Slot,
+});
+// Kept for compatibility with older copied Electra vectors; current BeaconState uses PendingDeposit/pending_deposits.
+const PendingBalanceDeposit: ContainerCoder<{
+  index: typeof ValidatorIndex;
+  amount: typeof Gwei;
+}> = /* @__PURE__ */ container({
   index: ValidatorIndex,
   amount: Gwei,
 });
-const PendingPartialWithdrawal = /* @__PURE__ */ container({
-  index: ValidatorIndex,
+// Electra pending partial withdrawals queue a validator index, amount, and the epoch when the withdrawal becomes processable.
+const PendingPartialWithdrawal: ContainerCoder<{
+  validator_index: typeof ValidatorIndex;
+  amount: typeof Gwei;
+  withdrawable_epoch: typeof Epoch;
+}> = /* @__PURE__ */ container({
+  validator_index: ValidatorIndex,
   amount: Gwei,
   withdrawable_epoch: Epoch,
 });
-const PendingConsolidation = /* @__PURE__ */ container({
+// Electra pending consolidations queue the source and target validator indices after the source exit is scheduled.
+const PendingConsolidation: ContainerCoder<{
+  source_index: typeof ValidatorIndex;
+  target_index: typeof ValidatorIndex;
+}> = /* @__PURE__ */ container({
   source_index: ValidatorIndex,
   target_index: ValidatorIndex,
 });
 
+type ETH2_TYPES = {
+  Slot: typeof Slot;
+  Epoch: typeof Epoch;
+  CommitteeIndex: typeof CommitteeIndex;
+  ValidatorIndex: typeof ValidatorIndex;
+  WithdrawalIndex: typeof WithdrawalIndex;
+  Gwei: typeof Gwei;
+  Root: typeof Root;
+  Hash32: typeof Hash32;
+  Bytes32: typeof Bytes32;
+  Version: typeof Version;
+  DomainType: typeof DomainType;
+  ForkDigest: typeof ForkDigest;
+  Domain: typeof Domain;
+  BLSPubkey: typeof BLSPubkey;
+  BLSSignature: typeof BLSSignature;
+  Ether: typeof Ether;
+  ParticipationFlags: typeof ParticipationFlags;
+  ExecutionAddress: typeof ExecutionAddress;
+  PayloadId: typeof PayloadId;
+  KZGCommitment: typeof KZGCommitment;
+  KZGProof: typeof KZGProof;
+  Checkpoint: typeof Checkpoint;
+  AttestationData: typeof AttestationData;
+  Attestation: typeof Attestation;
+  AggregateAndProof: typeof AggregateAndProof;
+  IndexedAttestation: typeof IndexedAttestation;
+  AttesterSlashing: typeof AttesterSlashing;
+  BLSToExecutionChange: typeof BLSToExecutionChange;
+  ExecutionPayload: typeof ExecutionPayload;
+  SyncAggregate: typeof SyncAggregate;
+  VoluntaryExit: typeof VoluntaryExit;
+  BeaconBlockHeader: typeof BeaconBlockHeader;
+  SigningData: typeof SigningData;
+  SignedBeaconBlockHeader: typeof SignedBeaconBlockHeader;
+  ProposerSlashing: typeof ProposerSlashing;
+  DepositData: typeof DepositData;
+  Deposit: typeof Deposit;
+  SignedVoluntaryExit: typeof SignedVoluntaryExit;
+  Eth1Data: typeof Eth1Data;
+  Withdrawal: typeof Withdrawal;
+  BeaconBlockBody: typeof BeaconBlockBody;
+  BeaconBlock: typeof BeaconBlock;
+  SyncCommittee: typeof SyncCommittee;
+  Fork: typeof Fork;
+  Validator: typeof Validator;
+  ExecutionPayloadHeader: typeof ExecutionPayloadHeader;
+  HistoricalSummary: typeof HistoricalSummary;
+  BeaconState: typeof BeaconState;
+  BlobIdentifier: typeof BlobIdentifier;
+  BlobSidecar: typeof BlobSidecar;
+  ContributionAndProof: typeof ContributionAndProof;
+  DepositMessage: typeof DepositMessage;
+  Eth1Block: typeof Eth1Block;
+  ForkData: typeof ForkData;
+  HistoricalBatch: typeof HistoricalBatch;
+  PendingAttestation: typeof PendingAttestation;
+  PowBlock: typeof PowBlock;
+  Transaction: typeof Transaction;
+  SignedAggregateAndProof: typeof SignedAggregateAndProof;
+  SignedBLSToExecutionChange: typeof SignedBLSToExecutionChange;
+  SignedBeaconBlock: typeof SignedBeaconBlock;
+  SignedContributionAndProof: typeof SignedContributionAndProof;
+  SyncAggregatorSelectionData: typeof SyncAggregatorSelectionData;
+  SyncCommitteeContribution: typeof SyncCommitteeContribution;
+  SyncCommitteeMessage: typeof SyncCommitteeMessage;
+  LightClientHeader: typeof LightClientHeader;
+  LightClientBootstrap: typeof LightClientBootstrap;
+  LightClientUpdate: typeof LightClientUpdate;
+  LightClientOptimisticUpdate: typeof LightClientOptimisticUpdate;
+  LightClientFinalityUpdate: typeof LightClientFinalityUpdate;
+  DepositRequest: typeof DepositRequest;
+  WithdrawalRequest: typeof WithdrawalRequest;
+  ConsolidationRequest: typeof ConsolidationRequest;
+  SingleAttestation: typeof SingleAttestation;
+  PendingDeposit: typeof PendingDeposit;
+  PendingBalanceDeposit: typeof PendingBalanceDeposit;
+  PendingPartialWithdrawal: typeof PendingPartialWithdrawal;
+  PendingConsolidation: typeof PendingConsolidation;
+};
 /**
  * Low-level Ethereum consensus SSZ field coders.
  * @example
@@ -1323,7 +2123,7 @@ const PendingConsolidation = /* @__PURE__ */ container({
  * ETH2_TYPES.Checkpoint.encode({ epoch: 0n, root });
  * ```
  */
-export const ETH2_TYPES = /* @__PURE__ */ (() => ({
+export const ETH2_TYPES: TRet<ETH2_TYPES> = /* @__PURE__ */ freezeRegistry<ETH2_TYPES>({
   Slot,
   Epoch,
   CommitteeIndex,
@@ -1400,20 +2200,31 @@ export const ETH2_TYPES = /* @__PURE__ */ (() => ({
   DepositRequest,
   WithdrawalRequest,
   ConsolidationRequest,
+  SingleAttestation,
+  PendingDeposit,
   PendingBalanceDeposit,
   PendingPartialWithdrawal,
   PendingConsolidation,
-}))();
+}) as TRet<ETH2_TYPES>;
 
-// EIP-7688
-const MAX_ATTESTATION_FIELDS = 8;
-const MAX_INDEXED_ATTESTATION_FIELDS = 8;
-const MAX_EXECUTION_PAYLOAD_FIELDS = 64;
-const MAX_BEACON_BLOCK_BODY_FIELDS = 64;
-const MAX_BEACON_STATE_FIELDS = 128;
-const MAX_EXECUTION_REQUESTS_FIELDS = 16;
+const progressiveFields = <T extends Record<string, SSZCoder<any>>>(
+  fields: T
+): TRet<ProgressiveContainerCoder<T>> =>
+  progressiveContainer(
+    // simple-serialize.md §Illegal types bans inactive trailing slots, so current consensus containers use only live fields.
+    Object.keys(fields).map(() => true),
+    fields
+  );
 
-const StableAttestation = /* @__PURE__ */ stableContainer(MAX_ATTESTATION_FIELDS, {
+// Progressive attestation mirrors the Electra attestation field order under EIP-7688 progressive merkleization.
+const ProgressiveAttestation: TRet<
+  ProgressiveContainerCoder<{
+    aggregation_bits: BitListType;
+    data: typeof AttestationData;
+    signature: typeof BLSSignature;
+    committee_bits: BitVectorType;
+  }>
+> = /* @__PURE__ */ progressiveFields({
   aggregation_bits: /* @__PURE__ */ bitlist(
     /* @__PURE__ */ (() => MAX_VALIDATORS_PER_COMMITTEE * MAX_COMMITTEES_PER_SLOT)()
   ),
@@ -1421,7 +2232,14 @@ const StableAttestation = /* @__PURE__ */ stableContainer(MAX_ATTESTATION_FIELDS
   signature: BLSSignature,
   committee_bits: /* @__PURE__ */ bitvector(MAX_COMMITTEES_PER_SLOT),
 });
-const StableIndexedAttestation = /* @__PURE__ */ stableContainer(MAX_INDEXED_ATTESTATION_FIELDS, {
+// Progressive indexed attestation mirrors the Electra slashable-evidence shape while widening `attesting_indices`.
+const ProgressiveIndexedAttestation: TRet<
+  ProgressiveContainerCoder<{
+    attesting_indices: ListType<SSZValue<typeof ValidatorIndex>>;
+    data: typeof AttestationData;
+    signature: typeof BLSSignature;
+  }>
+> = /* @__PURE__ */ progressiveFields({
   attesting_indices: /* @__PURE__ */ list(
     /* @__PURE__ */ (() => MAX_VALIDATORS_PER_COMMITTEE * MAX_COMMITTEES_PER_SLOT)(),
     ValidatorIndex
@@ -1429,11 +2247,20 @@ const StableIndexedAttestation = /* @__PURE__ */ stableContainer(MAX_INDEXED_ATT
   data: AttestationData,
   signature: BLSSignature,
 });
-const StableAttesterSlashing = /* @__PURE__ */ container({
-  attestation_1: StableIndexedAttestation,
-  attestation_2: StableIndexedAttestation,
+// Progressive attester slashing keeps the Electra slashable-evidence pair on widened indexed attestations without outer committee data.
+const ProgressiveAttesterSlashing: ContainerCoder<{
+  attestation_1: typeof ProgressiveIndexedAttestation;
+  attestation_2: typeof ProgressiveIndexedAttestation;
+}> = /* @__PURE__ */ container({
+  attestation_1: ProgressiveIndexedAttestation,
+  attestation_2: ProgressiveIndexedAttestation,
 });
-const StableExecutionRequests = /* @__PURE__ */ stableContainer(MAX_EXECUTION_REQUESTS_FIELDS, {
+// Consensus-specs Electra ExecutionRequests uses these short SSZ field names; the EIP request names are not the container API keys.
+const ProgressiveExecutionRequests: ProgressiveContainerCoder<{
+  deposits: ListType<SSZValue<typeof DepositRequest>>;
+  withdrawals: ListType<SSZValue<typeof WithdrawalRequest>>;
+  consolidations: ListType<SSZValue<typeof ConsolidationRequest>>;
+}> = /* @__PURE__ */ progressiveFields({
   deposits: /* @__PURE__ */ list(MAX_DEPOSIT_REQUESTS_PER_PAYLOAD, DepositRequest), // [New in Electra:EIP6110]
   withdrawals: /* @__PURE__ */ list(MAX_WITHDRAWAL_REQUESTS_PER_PAYLOAD, WithdrawalRequest), // [New in Electra:EIP7002:EIP7251]
   consolidations: /* @__PURE__ */ list(
@@ -1441,7 +2268,26 @@ const StableExecutionRequests = /* @__PURE__ */ stableContainer(MAX_EXECUTION_RE
     ConsolidationRequest
   ), // [New in Electra:EIP7251]
 });
-const StableExecutionPayload = /* @__PURE__ */ stableContainer(MAX_EXECUTION_PAYLOAD_FIELDS, {
+// Electra carries execution requests beside the payload; future Gloas keeps that separation in ExecutionPayloadEnvelope.
+const ProgressiveExecutionPayload: ProgressiveContainerCoder<{
+  parent_hash: typeof Hash32;
+  fee_recipient: typeof ExecutionAddress;
+  state_root: typeof Bytes32;
+  receipts_root: typeof Bytes32;
+  logs_bloom: ByteVectorType;
+  prev_randao: typeof Bytes32;
+  block_number: typeof uint64;
+  gas_limit: typeof uint64;
+  gas_used: typeof uint64;
+  timestamp: typeof uint64;
+  extra_data: ByteListType;
+  base_fee_per_gas: typeof uint256;
+  block_hash: typeof Hash32;
+  transactions: ListType<SSZValue<typeof Transaction>>;
+  withdrawals: ListType<SSZValue<typeof Withdrawal>>;
+  blob_gas_used: typeof uint64;
+  excess_blob_gas: typeof uint64;
+}> = /* @__PURE__ */ progressiveFields({
   parent_hash: Hash32,
   fee_recipient: ExecutionAddress,
   state_root: Bytes32,
@@ -1459,14 +2305,27 @@ const StableExecutionPayload = /* @__PURE__ */ stableContainer(MAX_EXECUTION_PAY
   withdrawals: /* @__PURE__ */ list(MAX_WITHDRAWALS_PER_PAYLOAD, Withdrawal), // [New in Capella]
   blob_gas_used: uint64,
   excess_blob_gas: uint64,
-  deposit_requests: /* @__PURE__ */ list(MAX_DEPOSIT_REQUESTS_PER_PAYLOAD, DepositRequest), // [New in Electra:EIP6110]
-  withdrawal_requests: /* @__PURE__ */ list(MAX_WITHDRAWAL_REQUESTS_PER_PAYLOAD, WithdrawalRequest), // [New in Electra:EIP7002:EIP7251]
-  consolidation_requests: /* @__PURE__ */ list(
-    MAX_CONSOLIDATION_REQUESTS_PER_PAYLOAD,
-    ConsolidationRequest
-  ), // [New in Electra:EIP7251]
 });
-const StableExecutionPayloadHeader = /* @__PURE__ */ stableContainer(MAX_EXECUTION_PAYLOAD_FIELDS, {
+// Request commitments are not split into per-request roots on ExecutionPayloadHeader; future Gloas will use a separate bid field.
+const ProgressiveExecutionPayloadHeader: ProgressiveContainerCoder<{
+  parent_hash: typeof Hash32;
+  fee_recipient: typeof ExecutionAddress;
+  state_root: typeof Bytes32;
+  receipts_root: typeof Bytes32;
+  logs_bloom: ByteVectorType;
+  prev_randao: typeof Bytes32;
+  block_number: typeof uint64;
+  gas_limit: typeof uint64;
+  gas_used: typeof uint64;
+  timestamp: typeof uint64;
+  extra_data: ByteListType;
+  base_fee_per_gas: typeof uint256;
+  block_hash: typeof Hash32;
+  transactions_root: typeof Root;
+  withdrawals_root: typeof Root;
+  blob_gas_used: typeof uint64;
+  excess_blob_gas: typeof uint64;
+}> = /* @__PURE__ */ progressiveFields({
   parent_hash: Hash32,
   fee_recipient: ExecutionAddress,
   state_root: Bytes32,
@@ -1484,29 +2343,83 @@ const StableExecutionPayloadHeader = /* @__PURE__ */ stableContainer(MAX_EXECUTI
   withdrawals_root: Root, // [New in Capella]
   blob_gas_used: uint64, // [New in Deneb:EIP4844]
   excess_blob_gas: uint64, // [New in Deneb:EIP4844]
-  deposit_requests_root: Root, // [New in Electra:EIP6110]
-  withdrawal_requests_root: Root, // [New in Electra:EIP7002:EIP7251]
-  consolidation_requests_root: Root, // [New in Electra:EIP7251]
 });
-const StableBeaconBlockBody = /* @__PURE__ */ stableContainer(MAX_BEACON_BLOCK_BODY_FIELDS, {
+const ProgressiveBeaconBlockBody: ProgressiveContainerCoder<{
+  randao_reveal: typeof BLSSignature;
+  eth1_data: typeof Eth1Data;
+  graffiti: typeof Bytes32;
+  proposer_slashings: ListType<SSZValue<typeof ProposerSlashing>>;
+  attester_slashings: ListType<SSZValue<typeof ProgressiveAttesterSlashing>>;
+  attestations: ListType<SSZValue<typeof ProgressiveAttestation>>;
+  deposits: ListType<SSZValue<typeof Deposit>>;
+  voluntary_exits: ListType<SSZValue<typeof SignedVoluntaryExit>>;
+  sync_aggregate: typeof SyncAggregate;
+  execution_payload: typeof ProgressiveExecutionPayload;
+  bls_to_execution_changes: ListType<SSZValue<typeof SignedBLSToExecutionChange>>;
+  blob_kzg_commitments: ListType<SSZValue<typeof KZGCommitment>>;
+  execution_requests: typeof ProgressiveExecutionRequests;
+}> = /* @__PURE__ */ progressiveFields({
   randao_reveal: BLSSignature,
+  // EIP-8015 later removes eth1_data/deposits after EIP-6110 finalization; Electra keeps them.
   eth1_data: Eth1Data,
   graffiti: Bytes32,
   proposer_slashings: /* @__PURE__ */ list(MAX_PROPOSER_SLASHINGS, ProposerSlashing),
-  attester_slashings: /* @__PURE__ */ list(MAX_ATTESTER_SLASHINGS_ELECTRA, StableAttesterSlashing), // [Modified in Electra:EIP7549]
-  attestations: /* @__PURE__ */ list(MAX_ATTESTATIONS_ELECTRA, StableAttestation), // [Modified in Electra:EIP7549]
+  attester_slashings: /* @__PURE__ */ list(
+    MAX_ATTESTER_SLASHINGS_ELECTRA,
+    ProgressiveAttesterSlashing
+  ), // [Modified in Electra:EIP7549]
+  attestations: /* @__PURE__ */ list(MAX_ATTESTATIONS_ELECTRA, ProgressiveAttestation), // [Modified in Electra:EIP7549]
   deposits: /* @__PURE__ */ list(MAX_DEPOSITS, Deposit),
   voluntary_exits: /* @__PURE__ */ list(MAX_VOLUNTARY_EXITS, SignedVoluntaryExit),
   sync_aggregate: SyncAggregate,
-  execution_payload: StableExecutionPayload,
+  // This will change in Gloas: execution_payload/blob_kzg_commitments/execution_requests move out of BeaconBlockBody.
+  execution_payload: ProgressiveExecutionPayload,
   bls_to_execution_changes: /* @__PURE__ */ list(
     MAX_BLS_TO_EXECUTION_CHANGES,
     SignedBLSToExecutionChange
   ),
   blob_kzg_commitments: /* @__PURE__ */ list(MAX_BLOB_COMMITMENTS_PER_BLOCK, KZGCommitment),
-  execution_requests: StableExecutionRequests,
+  execution_requests: ProgressiveExecutionRequests,
 });
-const StableBeaconState = /* @__PURE__ */ stableContainer(MAX_BEACON_STATE_FIELDS, {
+const ProgressiveBeaconState: ProgressiveContainerCoder<{
+  genesis_time: typeof uint64;
+  genesis_validators_root: typeof Root;
+  slot: typeof Slot;
+  fork: typeof Fork;
+  latest_block_header: typeof BeaconBlockHeader;
+  block_roots: VectorType<SSZValue<typeof Root>>;
+  state_roots: VectorType<SSZValue<typeof Root>>;
+  historical_roots: ListType<SSZValue<typeof Root>>;
+  eth1_data: typeof Eth1Data;
+  eth1_data_votes: ListType<SSZValue<typeof Eth1Data>>;
+  eth1_deposit_index: typeof uint64;
+  validators: ListType<SSZValue<typeof Validator>>;
+  balances: ListType<SSZValue<typeof Gwei>>;
+  randao_mixes: VectorType<SSZValue<typeof Bytes32>>;
+  slashings: VectorType<SSZValue<typeof Gwei>>;
+  previous_epoch_participation: ListType<SSZValue<typeof ParticipationFlags>>;
+  current_epoch_participation: ListType<SSZValue<typeof ParticipationFlags>>;
+  justification_bits: BitVectorType;
+  previous_justified_checkpoint: typeof Checkpoint;
+  current_justified_checkpoint: typeof Checkpoint;
+  finalized_checkpoint: typeof Checkpoint;
+  inactivity_scores: ListType<SSZValue<typeof uint64>>;
+  current_sync_committee: typeof SyncCommittee;
+  next_sync_committee: typeof SyncCommittee;
+  latest_execution_payload_header: typeof ProgressiveExecutionPayloadHeader;
+  next_withdrawal_index: typeof WithdrawalIndex;
+  next_withdrawal_validator_index: typeof ValidatorIndex;
+  historical_summaries: ListType<SSZValue<typeof HistoricalSummary>>;
+  deposit_requests_start_index: typeof uint64;
+  deposit_balance_to_consume: typeof Gwei;
+  exit_balance_to_consume: typeof Gwei;
+  earliest_exit_epoch: typeof Epoch;
+  consolidation_balance_to_consume: typeof Gwei;
+  earliest_consolidation_epoch: typeof Epoch;
+  pending_deposits: ListType<SSZValue<typeof PendingDeposit>>;
+  pending_partial_withdrawals: ListType<SSZValue<typeof PendingPartialWithdrawal>>;
+  pending_consolidations: ListType<SSZValue<typeof PendingConsolidation>>;
+}> = /* @__PURE__ */ progressiveFields({
   genesis_time: uint64,
   genesis_validators_root: Root,
   slot: Slot,
@@ -1534,7 +2447,8 @@ const StableBeaconState = /* @__PURE__ */ stableContainer(MAX_BEACON_STATE_FIELD
   inactivity_scores: /* @__PURE__ */ list(VALIDATOR_REGISTRY_LIMIT, uint64),
   current_sync_committee: SyncCommittee,
   next_sync_committee: SyncCommittee,
-  latest_execution_payload_header: StableExecutionPayloadHeader,
+  // Kept for compatibility with the existing Electra surface; this will change in Gloas to latest_execution_payload_bid.
+  latest_execution_payload_header: ProgressiveExecutionPayloadHeader,
   next_withdrawal_index: WithdrawalIndex,
   next_withdrawal_validator_index: ValidatorIndex,
   historical_summaries: /* @__PURE__ */ list(HISTORICAL_ROOTS_LIMIT, HistoricalSummary),
@@ -1544,10 +2458,7 @@ const StableBeaconState = /* @__PURE__ */ stableContainer(MAX_BEACON_STATE_FIELD
   earliest_exit_epoch: Epoch, // [New in Electra:EIP7251]
   consolidation_balance_to_consume: Gwei, // [New in Electra:EIP7251]
   earliest_consolidation_epoch: Epoch, // [New in Electra:EIP7251]
-  pending_balance_deposits: /* @__PURE__ */ list(
-    PENDING_BALANCE_DEPOSITS_LIMIT,
-    PendingBalanceDeposit
-  ), // [New in Electra:EIP7251]
+  pending_deposits: /* @__PURE__ */ list(PENDING_DEPOSITS_LIMIT, PendingDeposit), // [New in Electra:EIP7251]
   pending_partial_withdrawals: /* @__PURE__ */ list(
     PENDING_PARTIAL_WITHDRAWALS_LIMIT,
     PendingPartialWithdrawal
@@ -1555,32 +2466,69 @@ const StableBeaconState = /* @__PURE__ */ stableContainer(MAX_BEACON_STATE_FIELD
   pending_consolidations: /* @__PURE__ */ list(PENDING_CONSOLIDATIONS_LIMIT, PendingConsolidation), // [New in Electra:EIP7251]
 });
 
+type ETH2_CONSENSUS = {
+  ProgressiveAttestation: typeof ProgressiveAttestation;
+  ProgressiveIndexedAttestation: typeof ProgressiveIndexedAttestation;
+  ProgressiveAttesterSlashing: typeof ProgressiveAttesterSlashing;
+  ProgressiveExecutionPayload: typeof ProgressiveExecutionPayload;
+  ProgressiveExecutionRequests: typeof ProgressiveExecutionRequests;
+  ProgressiveExecutionPayloadHeader: typeof ProgressiveExecutionPayloadHeader;
+  ProgressiveBeaconBlockBody: typeof ProgressiveBeaconBlockBody;
+  ProgressiveBeaconState: typeof ProgressiveBeaconState;
+};
 /** Ethereum consensus-message SSZ coders. */
-export const ETH2_CONSENSUS = /* @__PURE__ */ (() => ({
-  StableAttestation,
-  StableIndexedAttestation,
-  StableAttesterSlashing,
-  StableExecutionPayload,
-  StableExecutionRequests,
-  StableExecutionPayloadHeader,
-  StableBeaconBlockBody,
-  StableBeaconState,
-}))();
+export const ETH2_CONSENSUS: TRet<ETH2_CONSENSUS> = /* @__PURE__ */ freezeRegistry<ETH2_CONSENSUS>({
+  ProgressiveAttestation,
+  ProgressiveIndexedAttestation,
+  ProgressiveAttesterSlashing,
+  ProgressiveExecutionPayload,
+  ProgressiveExecutionRequests,
+  ProgressiveExecutionPayloadHeader,
+  ProgressiveBeaconBlockBody,
+  ProgressiveBeaconState,
+}) as TRet<ETH2_CONSENSUS>;
 
 // Tests (electra profiles): https://github.com/ethereum/consensus-specs/pull/3844#issuecomment-2239285376
 // NOTE: these are different from EIP-7688 by some reasons, but since nothing is merged/completed in eth side, we just trying
 // to pass these tests for now.
-const IndexedAttestationElectra = /* @__PURE__ */ profile(
-  StableIndexedAttestation,
+const IndexedAttestationElectra: ProfileType<
+  typeof ProgressiveIndexedAttestation,
+  never,
+  'attesting_indices' | 'data' | 'signature'
+> = /* @__PURE__ */ profile(
+  ProgressiveIndexedAttestation,
   [],
   ['attesting_indices', 'data', 'signature']
 );
-const AttesterSlashingElectra = /* @__PURE__ */ container({
+const AttesterSlashingElectra: ContainerCoder<{
+  attestation_1: typeof IndexedAttestationElectra;
+  attestation_2: typeof IndexedAttestationElectra;
+}> = /* @__PURE__ */ container({
   attestation_1: IndexedAttestationElectra,
   attestation_2: IndexedAttestationElectra,
 });
-const ExecutionPayloadHeaderElectra = /* @__PURE__ */ profile(
-  StableExecutionPayloadHeader,
+const ExecutionPayloadHeaderElectra: ProfileType<
+  typeof ProgressiveExecutionPayloadHeader,
+  never,
+  | 'parent_hash'
+  | 'fee_recipient'
+  | 'state_root'
+  | 'receipts_root'
+  | 'logs_bloom'
+  | 'prev_randao'
+  | 'block_number'
+  | 'gas_limit'
+  | 'gas_used'
+  | 'timestamp'
+  | 'extra_data'
+  | 'base_fee_per_gas'
+  | 'block_hash'
+  | 'transactions_root'
+  | 'withdrawals_root'
+  | 'blob_gas_used'
+  | 'excess_blob_gas'
+> = /* @__PURE__ */ profile(
+  ProgressiveExecutionPayloadHeader,
   [],
   [
     'parent_hash',
@@ -1602,18 +2550,62 @@ const ExecutionPayloadHeaderElectra = /* @__PURE__ */ profile(
     'excess_blob_gas',
   ]
 );
-const ExecutionRequests = /* @__PURE__ */ profile(
-  StableExecutionRequests,
+const ExecutionRequests: ProfileType<
+  typeof ProgressiveExecutionRequests,
+  never,
+  'deposits' | 'withdrawals' | 'consolidations'
+> = /* @__PURE__ */ profile(
+  ProgressiveExecutionRequests,
   [],
   ['deposits', 'withdrawals', 'consolidations']
 );
-const AttestationElectra = /* @__PURE__ */ profile(
-  StableAttestation,
+const AttestationElectra: ProfileType<
+  typeof ProgressiveAttestation,
+  never,
+  'aggregation_bits' | 'data' | 'signature' | 'committee_bits'
+> = /* @__PURE__ */ profile(
+  ProgressiveAttestation,
   [],
   ['aggregation_bits', 'data', 'signature', 'committee_bits']
 );
-const ExecutionPayloadElectra = /* @__PURE__ */ profile(
-  StableExecutionPayload,
+const AggregateAndProofElectra: ContainerCoder<{
+  aggregator_index: typeof ValidatorIndex;
+  aggregate: typeof AttestationElectra;
+  selection_proof: typeof BLSSignature;
+}> = /* @__PURE__ */ container({
+  aggregator_index: ValidatorIndex,
+  aggregate: AttestationElectra,
+  selection_proof: BLSSignature,
+});
+const SignedAggregateAndProofElectra: ContainerCoder<{
+  message: typeof AggregateAndProofElectra;
+  signature: typeof BLSSignature;
+}> = /* @__PURE__ */ container({
+  message: AggregateAndProofElectra,
+  signature: BLSSignature,
+});
+const ExecutionPayloadElectra: ProfileType<
+  typeof ProgressiveExecutionPayload,
+  never,
+  | 'parent_hash'
+  | 'fee_recipient'
+  | 'state_root'
+  | 'receipts_root'
+  | 'logs_bloom'
+  | 'prev_randao'
+  | 'block_number'
+  | 'gas_limit'
+  | 'gas_used'
+  | 'timestamp'
+  | 'extra_data'
+  | 'base_fee_per_gas'
+  | 'block_hash'
+  | 'transactions'
+  | 'withdrawals'
+  | 'blob_gas_used'
+  | 'excess_blob_gas'
+> = /* @__PURE__ */ profile(
+  ProgressiveExecutionPayload,
   [],
   [
     'parent_hash',
@@ -1635,95 +2627,395 @@ const ExecutionPayloadElectra = /* @__PURE__ */ profile(
     'excess_blob_gas',
   ]
 );
-/** Ethereum consensus profile coders. */
-export const ETH2_PROFILES = /* @__PURE__ */ (() => ({
+const BeaconBlockBodyElectra: ProfileType<
+  typeof ProgressiveBeaconBlockBody,
+  never,
+  | 'randao_reveal'
+  | 'eth1_data'
+  | 'graffiti'
+  | 'proposer_slashings'
+  | 'attester_slashings'
+  | 'attestations'
+  | 'deposits'
+  | 'voluntary_exits'
+  | 'sync_aggregate'
+  | 'execution_payload'
+  | 'bls_to_execution_changes'
+  | 'blob_kzg_commitments'
+  | 'execution_requests'
+> = /* @__PURE__ */ profile(
+  ProgressiveBeaconBlockBody,
+  [],
+  [
+    'randao_reveal',
+    'eth1_data',
+    'graffiti',
+    'proposer_slashings',
+    'attester_slashings',
+    'attestations',
+    'deposits',
+    'voluntary_exits',
+    'sync_aggregate',
+    'execution_payload',
+    'bls_to_execution_changes',
+    'blob_kzg_commitments',
+    'execution_requests',
+  ],
+  {
+    attester_slashings: /* @__PURE__ */ list(
+      MAX_ATTESTER_SLASHINGS_ELECTRA,
+      AttesterSlashingElectra
+    ),
+    attestations: /* @__PURE__ */ list(MAX_ATTESTATIONS_ELECTRA, AttestationElectra),
+    execution_payload: ExecutionPayloadElectra,
+    execution_requests: ExecutionRequests,
+  }
+);
+const BeaconBlockElectra: ContainerCoder<{
+  slot: typeof Slot;
+  proposer_index: typeof ValidatorIndex;
+  parent_root: typeof Root;
+  state_root: typeof Root;
+  body: typeof BeaconBlockBodyElectra;
+}> = /* @__PURE__ */ container({
+  slot: Slot,
+  proposer_index: ValidatorIndex,
+  parent_root: Root,
+  state_root: Root,
+  body: BeaconBlockBodyElectra,
+});
+const SignedBeaconBlockElectra: ContainerCoder<{
+  message: typeof BeaconBlockElectra;
+  signature: typeof BLSSignature;
+}> = /* @__PURE__ */ container({
+  message: BeaconBlockElectra,
+  signature: BLSSignature,
+});
+const BeaconStateElectra: ProfileType<
+  typeof ProgressiveBeaconState,
+  never,
+  | 'genesis_time'
+  | 'genesis_validators_root'
+  | 'slot'
+  | 'fork'
+  | 'latest_block_header'
+  | 'block_roots'
+  | 'state_roots'
+  | 'historical_roots'
+  | 'eth1_data'
+  | 'eth1_data_votes'
+  | 'eth1_deposit_index'
+  | 'validators'
+  | 'balances'
+  | 'randao_mixes'
+  | 'slashings'
+  | 'previous_epoch_participation'
+  | 'current_epoch_participation'
+  | 'justification_bits'
+  | 'previous_justified_checkpoint'
+  | 'current_justified_checkpoint'
+  | 'finalized_checkpoint'
+  | 'inactivity_scores'
+  | 'current_sync_committee'
+  | 'next_sync_committee'
+  | 'latest_execution_payload_header'
+  | 'next_withdrawal_index'
+  | 'next_withdrawal_validator_index'
+  | 'historical_summaries'
+  | 'deposit_requests_start_index'
+  | 'deposit_balance_to_consume'
+  | 'exit_balance_to_consume'
+  | 'earliest_exit_epoch'
+  | 'consolidation_balance_to_consume'
+  | 'earliest_consolidation_epoch'
+  | 'pending_deposits'
+  | 'pending_partial_withdrawals'
+  | 'pending_consolidations'
+> = /* @__PURE__ */ profile(
+  ProgressiveBeaconState,
+  [],
+  [
+    'genesis_time',
+    'genesis_validators_root',
+    'slot',
+    'fork',
+    'latest_block_header',
+    'block_roots',
+    'state_roots',
+    'historical_roots',
+    'eth1_data',
+    'eth1_data_votes',
+    'eth1_deposit_index',
+    'validators',
+    'balances',
+    'randao_mixes',
+    'slashings',
+    'previous_epoch_participation',
+    'current_epoch_participation',
+    'justification_bits',
+    'previous_justified_checkpoint',
+    'current_justified_checkpoint',
+    'finalized_checkpoint',
+    'inactivity_scores',
+    'current_sync_committee',
+    'next_sync_committee',
+    'latest_execution_payload_header',
+    'next_withdrawal_index',
+    'next_withdrawal_validator_index',
+    'historical_summaries',
+    'deposit_requests_start_index',
+    'deposit_balance_to_consume',
+    'exit_balance_to_consume',
+    'earliest_exit_epoch',
+    'consolidation_balance_to_consume',
+    'earliest_consolidation_epoch',
+    'pending_deposits',
+    'pending_partial_withdrawals',
+    'pending_consolidations',
+  ],
+  {
+    latest_execution_payload_header: ExecutionPayloadHeaderElectra,
+  }
+);
+const LightClientHeaderElectra: ContainerCoder<{
+  beacon: typeof BeaconBlockHeader;
+  execution: typeof ExecutionPayloadHeaderElectra;
+  execution_branch: VectorType<SSZValue<typeof Bytes32>>;
+}> = /* @__PURE__ */ container({
+  beacon: BeaconBlockHeader,
+  execution: ExecutionPayloadHeaderElectra,
+  execution_branch: /* @__PURE__ */ vector(BLOCK_BODY_EXECUTION_PAYLOAD_DEPTH, Bytes32),
+});
+const LightClientBootstrapElectra: ContainerCoder<{
+  header: typeof LightClientHeaderElectra;
+  current_sync_committee: typeof SyncCommittee;
+  current_sync_committee_branch: VectorType<SSZValue<typeof Bytes32>>;
+}> = /* @__PURE__ */ container({
+  header: LightClientHeaderElectra,
+  current_sync_committee: SyncCommittee,
+  current_sync_committee_branch: /* @__PURE__ */ vector(ELECTRA_SYNC_COMMITTEE_DEPTH, Bytes32),
+});
+const LightClientUpdateElectra: ContainerCoder<{
+  attested_header: typeof LightClientHeaderElectra;
+  next_sync_committee: typeof SyncCommittee;
+  next_sync_committee_branch: VectorType<SSZValue<typeof Bytes32>>;
+  finalized_header: typeof LightClientHeaderElectra;
+  finality_branch: VectorType<SSZValue<typeof Bytes32>>;
+  sync_aggregate: typeof SyncAggregate;
+  signature_slot: typeof Slot;
+}> = /* @__PURE__ */ container({
+  attested_header: LightClientHeaderElectra,
+  next_sync_committee: SyncCommittee,
+  next_sync_committee_branch: /* @__PURE__ */ vector(ELECTRA_SYNC_COMMITTEE_DEPTH, Bytes32),
+  finalized_header: LightClientHeaderElectra,
+  finality_branch: /* @__PURE__ */ vector(ELECTRA_FINALIZED_ROOT_DEPTH, Bytes32),
+  sync_aggregate: SyncAggregate,
+  signature_slot: Slot,
+});
+const LightClientFinalityUpdateElectra: ContainerCoder<{
+  attested_header: typeof LightClientHeaderElectra;
+  finalized_header: typeof LightClientHeaderElectra;
+  finality_branch: VectorType<SSZValue<typeof Bytes32>>;
+  sync_aggregate: typeof SyncAggregate;
+  signature_slot: typeof Slot;
+}> = /* @__PURE__ */ container({
+  attested_header: LightClientHeaderElectra,
+  finalized_header: LightClientHeaderElectra,
+  finality_branch: /* @__PURE__ */ vector(ELECTRA_FINALIZED_ROOT_DEPTH, Bytes32),
+  sync_aggregate: SyncAggregate,
+  signature_slot: Slot,
+});
+const LightClientOptimisticUpdateElectra: ContainerCoder<{
+  attested_header: typeof LightClientHeaderElectra;
+  sync_aggregate: typeof SyncAggregate;
+  signature_slot: typeof Slot;
+}> = /* @__PURE__ */ container({
+  attested_header: LightClientHeaderElectra,
+  sync_aggregate: SyncAggregate,
+  signature_slot: Slot,
+});
+type ETH2_PROFILES = {
   electra: {
+    SingleAttestation: typeof SingleAttestation;
+    Attestation: typeof AttestationElectra;
+    AggregateAndProof: typeof AggregateAndProofElectra;
+    SignedAggregateAndProof: typeof SignedAggregateAndProofElectra;
+    AttesterSlashing: typeof AttesterSlashingElectra;
+    IndexedAttestation: typeof IndexedAttestationElectra;
+    ExecutionRequests: typeof ExecutionRequests;
+    ExecutionPayloadHeader: typeof ExecutionPayloadHeaderElectra;
+    ExecutionPayload: typeof ExecutionPayloadElectra;
+    BeaconBlockBody: typeof BeaconBlockBodyElectra;
+    BeaconBlock: typeof BeaconBlockElectra;
+    SignedBeaconBlock: typeof SignedBeaconBlockElectra;
+    BeaconState: typeof BeaconStateElectra;
+    LightClientHeader: typeof LightClientHeaderElectra;
+    LightClientBootstrap: typeof LightClientBootstrapElectra;
+    LightClientUpdate: typeof LightClientUpdateElectra;
+    LightClientFinalityUpdate: typeof LightClientFinalityUpdateElectra;
+    LightClientOptimisticUpdate: typeof LightClientOptimisticUpdateElectra;
+  };
+};
+/** Ethereum consensus profile coders. */
+export const ETH2_PROFILES: TRet<ETH2_PROFILES> = /* @__PURE__ */ freezeRegistry<ETH2_PROFILES>({
+  electra: {
+    SingleAttestation,
     Attestation: AttestationElectra,
+    AggregateAndProof: AggregateAndProofElectra,
+    SignedAggregateAndProof: SignedAggregateAndProofElectra,
     AttesterSlashing: AttesterSlashingElectra,
     IndexedAttestation: IndexedAttestationElectra,
     ExecutionRequests,
     ExecutionPayloadHeader: ExecutionPayloadHeaderElectra,
     ExecutionPayload: ExecutionPayloadElectra,
-    BeaconBlockBody: /* @__PURE__ */ profile(
-      StableBeaconBlockBody,
-      [],
-      [
-        'randao_reveal',
-        'eth1_data',
-        'graffiti',
-        'proposer_slashings',
-        'attester_slashings',
-        'attestations',
-        'deposits',
-        'voluntary_exits',
-        'sync_aggregate',
-        'execution_payload',
-        'bls_to_execution_changes',
-        'blob_kzg_commitments',
-        'execution_requests',
-      ],
-      {
-        attester_slashings: /* @__PURE__ */ list(
-          MAX_ATTESTER_SLASHINGS_ELECTRA,
-          AttesterSlashingElectra
-        ),
-        attestations: /* @__PURE__ */ list(MAX_ATTESTATIONS_ELECTRA, AttestationElectra),
-        execution_payload: ExecutionPayloadElectra,
-        execution_requests: ExecutionRequests,
-      }
-    ),
-    BeaconState: /* @__PURE__ */ profile(
-      StableBeaconState,
-      [],
-      [
-        'genesis_time',
-        'genesis_validators_root',
-        'slot',
-        'fork',
-        'latest_block_header',
-        'block_roots',
-        'state_roots',
-        'historical_roots',
-        'eth1_data',
-        'eth1_data_votes',
-        'eth1_deposit_index',
-        'validators',
-        'balances',
-        'randao_mixes',
-        'slashings',
-        'previous_epoch_participation',
-        'current_epoch_participation',
-        'justification_bits',
-        'previous_justified_checkpoint',
-        'current_justified_checkpoint',
-        'finalized_checkpoint',
-        'inactivity_scores',
-        'current_sync_committee',
-        'next_sync_committee',
-        'latest_execution_payload_header',
-        'next_withdrawal_index',
-        'next_withdrawal_validator_index',
-        'historical_summaries',
-        'deposit_requests_start_index',
-        'deposit_balance_to_consume',
-        'exit_balance_to_consume',
-        'earliest_exit_epoch',
-        'consolidation_balance_to_consume',
-        'earliest_consolidation_epoch',
-        'pending_balance_deposits',
-        'pending_partial_withdrawals',
-        'pending_consolidations',
-      ],
-      {
-        latest_execution_payload_header: ExecutionPayloadHeaderElectra,
-      }
-    ),
+    BeaconBlockBody: BeaconBlockBodyElectra,
+    BeaconBlock: BeaconBlockElectra,
+    SignedBeaconBlock: SignedBeaconBlockElectra,
+    BeaconState: BeaconStateElectra,
+    LightClientHeader: LightClientHeaderElectra,
+    LightClientBootstrap: LightClientBootstrapElectra,
+    LightClientUpdate: LightClientUpdateElectra,
+    LightClientFinalityUpdate: LightClientFinalityUpdateElectra,
+    LightClientOptimisticUpdate: LightClientOptimisticUpdateElectra,
   },
-}))();
+}) as TRet<ETH2_PROFILES>;
+
+type ForkBeaconBlock<Body extends SSZCoder<any>> = TRet<
+  ContainerCoder<{
+    slot: typeof Slot;
+    proposer_index: typeof ValidatorIndex;
+    parent_root: typeof Root;
+    state_root: typeof Root;
+    body: Body;
+  }>
+>;
+type SignedMessage<Message extends SSZCoder<any>> = TRet<
+  ContainerCoder<{
+    message: Message;
+    signature: typeof BLSSignature;
+  }>
+>;
+type Phase0BeaconBlockBodyFields = {
+  randao_reveal: typeof BLSSignature;
+  eth1_data: typeof Eth1Data;
+  graffiti: typeof Bytes32;
+  proposer_slashings: ListType<SSZValue<typeof ProposerSlashing>>;
+  attester_slashings: ListType<SSZValue<typeof AttesterSlashing>>;
+  attestations: ListType<SSZValue<typeof Attestation>>;
+  deposits: ListType<SSZValue<typeof Deposit>>;
+  voluntary_exits: ListType<SSZValue<typeof SignedVoluntaryExit>>;
+};
+type AltairBeaconBlockBodyFields = Phase0BeaconBlockBodyFields & {
+  sync_aggregate: typeof SyncAggregate;
+};
+type PayloadBeaconBlockBodyFields<ExecutionPayload extends SSZCoder<any>> =
+  AltairBeaconBlockBodyFields & {
+    execution_payload: ExecutionPayload;
+    bls_to_execution_changes: ListType<SSZValue<typeof SignedBLSToExecutionChange>>;
+  };
+type AltairBeaconStateFields = {
+  genesis_time: typeof uint64;
+  genesis_validators_root: typeof Root;
+  slot: typeof Slot;
+  fork: typeof Fork;
+  latest_block_header: typeof BeaconBlockHeader;
+  block_roots: VectorType<SSZValue<typeof Root>>;
+  state_roots: VectorType<SSZValue<typeof Root>>;
+  historical_roots: ListType<SSZValue<typeof Root>>;
+  eth1_data: typeof Eth1Data;
+  eth1_data_votes: ListType<SSZValue<typeof Eth1Data>>;
+  eth1_deposit_index: typeof uint64;
+  validators: ListType<SSZValue<typeof Validator>>;
+  balances: ListType<SSZValue<typeof Gwei>>;
+  randao_mixes: VectorType<SSZValue<typeof Bytes32>>;
+  slashings: VectorType<SSZValue<typeof Gwei>>;
+  previous_epoch_participation: ListType<SSZValue<typeof ParticipationFlags>>;
+  current_epoch_participation: ListType<SSZValue<typeof ParticipationFlags>>;
+  justification_bits: BitVectorType;
+  previous_justified_checkpoint: typeof Checkpoint;
+  current_justified_checkpoint: typeof Checkpoint;
+  finalized_checkpoint: typeof Checkpoint;
+  inactivity_scores: ListType<SSZValue<typeof uint64>>;
+  current_sync_committee: typeof SyncCommittee;
+  next_sync_committee: typeof SyncCommittee;
+};
+type Phase0BeaconStateFields = {
+  genesis_time: typeof uint64;
+  genesis_validators_root: typeof Root;
+  slot: typeof Slot;
+  fork: typeof Fork;
+  latest_block_header: typeof BeaconBlockHeader;
+  block_roots: VectorType<SSZValue<typeof Root>>;
+  state_roots: VectorType<SSZValue<typeof Root>>;
+  historical_roots: ListType<SSZValue<typeof Root>>;
+  eth1_data: typeof Eth1Data;
+  eth1_data_votes: ListType<SSZValue<typeof Eth1Data>>;
+  eth1_deposit_index: typeof uint64;
+  validators: ListType<SSZValue<typeof Validator>>;
+  balances: ListType<SSZValue<typeof Gwei>>;
+  randao_mixes: VectorType<SSZValue<typeof Bytes32>>;
+  slashings: VectorType<SSZValue<typeof Gwei>>;
+  previous_epoch_attestations: ListType<SSZValue<typeof PendingAttestation>>;
+  current_epoch_attestations: ListType<SSZValue<typeof PendingAttestation>>;
+  justification_bits: BitVectorType;
+  previous_justified_checkpoint: typeof Checkpoint;
+  current_justified_checkpoint: typeof Checkpoint;
+  finalized_checkpoint: typeof Checkpoint;
+};
+type CapellaExecutionPayloadFields = {
+  parent_hash: typeof ETH2_TYPES.Hash32;
+  fee_recipient: typeof ETH2_TYPES.ExecutionAddress;
+  state_root: typeof ETH2_TYPES.Bytes32;
+  receipts_root: typeof ETH2_TYPES.Bytes32;
+  logs_bloom: ByteVectorType;
+  prev_randao: typeof ETH2_TYPES.Bytes32;
+  block_number: typeof uint64;
+  gas_limit: typeof uint64;
+  gas_used: typeof uint64;
+  timestamp: typeof uint64;
+  extra_data: ByteListType;
+  base_fee_per_gas: typeof uint256;
+  block_hash: typeof ETH2_TYPES.Hash32;
+  transactions: ListType<SSZValue<typeof ETH2_TYPES.Transaction>>;
+  withdrawals: ListType<SSZValue<typeof ETH2_TYPES.Withdrawal>>;
+};
+type CapellaExecutionPayloadHeaderFields = Omit<
+  CapellaExecutionPayloadFields,
+  'transactions' | 'withdrawals'
+> & {
+  transactions_root: typeof ETH2_TYPES.Root;
+  withdrawals_root: typeof ETH2_TYPES.Root;
+};
+type BellatrixExecutionPayloadFields = Omit<CapellaExecutionPayloadFields, 'withdrawals'>;
+type BellatrixExecutionPayloadHeaderFields = Omit<
+  CapellaExecutionPayloadHeaderFields,
+  'withdrawals_root'
+>;
 
 /** Capella Types */
-/** SSZ coder for the Capella execution payload header. */
-export const CapellaExecutionPayloadHeader = /* @__PURE__ */ (() =>
+// Capella block bodies embed the full payload; only BeaconState.latest_execution_payload_header stores the header form.
+const CapellaExecutionPayload: TRet<ContainerCoder<CapellaExecutionPayloadFields>> =
+  /* @__PURE__ */ (() =>
+    container({
+      parent_hash: ETH2_TYPES.Hash32,
+      fee_recipient: ETH2_TYPES.ExecutionAddress,
+      state_root: ETH2_TYPES.Bytes32,
+      receipts_root: ETH2_TYPES.Bytes32,
+      logs_bloom: /* @__PURE__ */ bytevector(BYTES_PER_LOGS_BLOOM),
+      prev_randao: ETH2_TYPES.Bytes32,
+      block_number: uint64,
+      gas_limit: uint64,
+      gas_used: uint64,
+      timestamp: uint64,
+      extra_data: /* @__PURE__ */ bytelist(MAX_EXTRA_DATA_BYTES),
+      base_fee_per_gas: uint256,
+      block_hash: ETH2_TYPES.Hash32,
+      transactions: /* @__PURE__ */ list(MAX_TRANSACTIONS_PER_PAYLOAD, ETH2_TYPES.Transaction),
+      withdrawals: /* @__PURE__ */ list(MAX_WITHDRAWALS_PER_PAYLOAD, ETH2_TYPES.Withdrawal),
+    }))();
+const _CapellaExecutionPayloadHeader = (): TRet<
+  ContainerCoder<CapellaExecutionPayloadHeaderFields>
+> =>
   container({
     parent_hash: ETH2_TYPES.Hash32,
     fee_recipient: ETH2_TYPES.ExecutionAddress,
@@ -1740,9 +3032,25 @@ export const CapellaExecutionPayloadHeader = /* @__PURE__ */ (() =>
     block_hash: ETH2_TYPES.Hash32,
     transactions_root: ETH2_TYPES.Root,
     withdrawals_root: ETH2_TYPES.Root,
-  }))();
+  });
+type CapellaExecutionPayloadHeader = ReturnType<typeof _CapellaExecutionPayloadHeader>;
+/**
+ * SSZ coder for the Capella execution payload header.
+ * @returns Capella execution payload header coder.
+ * @example
+ * Access the default Capella execution payload header.
+ * ```ts
+ * import { CapellaExecutionPayloadHeader } from 'micro-eth-signer/advanced/ssz.js';
+ * CapellaExecutionPayloadHeader.default;
+ * ```
+ */
+export const CapellaExecutionPayloadHeader: TRet<CapellaExecutionPayloadHeader> =
+  /* @__PURE__ */ _CapellaExecutionPayloadHeader();
 
-const CapellaBeaconBlockBody = /* @__PURE__ */ (() =>
+type CapellaBeaconBlockBody = TRet<
+  ContainerCoder<PayloadBeaconBlockBodyFields<typeof CapellaExecutionPayload>>
+>;
+const CapellaBeaconBlockBody: CapellaBeaconBlockBody = /* @__PURE__ */ (() =>
   container({
     randao_reveal: ETH2_TYPES.BLSSignature,
     eth1_data: ETH2_TYPES.Eth1Data,
@@ -1753,31 +3061,45 @@ const CapellaBeaconBlockBody = /* @__PURE__ */ (() =>
     deposits: /* @__PURE__ */ list(MAX_DEPOSITS, ETH2_TYPES.Deposit),
     voluntary_exits: /* @__PURE__ */ list(MAX_VOLUNTARY_EXITS, ETH2_TYPES.SignedVoluntaryExit),
     sync_aggregate: ETH2_TYPES.SyncAggregate,
-    execution_payload: CapellaExecutionPayloadHeader,
+    execution_payload: CapellaExecutionPayload,
     bls_to_execution_changes: /* @__PURE__ */ list(
       MAX_BLS_TO_EXECUTION_CHANGES,
       ETH2_TYPES.SignedBLSToExecutionChange
     ),
-  }))();
-/** SSZ coder for a Capella beacon block. */
-export const CapellaBeaconBlock = /* @__PURE__ */ (() =>
+  }) as CapellaBeaconBlockBody)();
+type CapellaBeaconBlock = ForkBeaconBlock<typeof CapellaBeaconBlockBody>;
+const _CapellaBeaconBlock = (): TRet<CapellaBeaconBlock> =>
   container({
     slot: ETH2_TYPES.Slot,
     proposer_index: ETH2_TYPES.ValidatorIndex,
     parent_root: ETH2_TYPES.Root,
     state_root: ETH2_TYPES.Root,
     body: CapellaBeaconBlockBody,
-  }))();
+  }) as TRet<CapellaBeaconBlock>;
+/** SSZ coder for a Capella beacon block. */
+export const CapellaBeaconBlock: TRet<CapellaBeaconBlock> = /* @__PURE__ */ _CapellaBeaconBlock();
 
-/** SSZ coder for a signed Capella beacon block. */
-export const CapellaSignedBeaconBlock = /* @__PURE__ */ (() =>
+type CapellaSignedBeaconBlock = SignedMessage<CapellaBeaconBlock>;
+const _CapellaSignedBeaconBlock = (): TRet<CapellaSignedBeaconBlock> =>
   container({
     message: CapellaBeaconBlock,
     signature: ETH2_TYPES.BLSSignature,
-  }))();
+  }) as TRet<CapellaSignedBeaconBlock>;
+/** SSZ coder for a signed Capella beacon block. */
+export const CapellaSignedBeaconBlock: TRet<CapellaSignedBeaconBlock> =
+  /* @__PURE__ */ _CapellaSignedBeaconBlock();
 
-/** SSZ coder for a Capella beacon state. */
-export const CapellaBeaconState = /* @__PURE__ */ (() =>
+type CapellaBeaconState = TRet<
+  ContainerCoder<
+    AltairBeaconStateFields & {
+      latest_execution_payload_header: typeof CapellaExecutionPayloadHeader;
+      next_withdrawal_index: typeof uint64;
+      next_withdrawal_validator_index: typeof uint64;
+      historical_summaries: ListType<SSZValue<typeof ETH2_TYPES.HistoricalSummary>>;
+    }
+  >
+>;
+const _CapellaBeaconState = (): TRet<CapellaBeaconState> =>
   container({
     genesis_time: uint64,
     genesis_validators_root: ETH2_TYPES.Root,
@@ -1819,11 +3141,33 @@ export const CapellaBeaconState = /* @__PURE__ */ (() =>
       HISTORICAL_ROOTS_LIMIT,
       ETH2_TYPES.HistoricalSummary
     ),
-  }))();
+  }) as TRet<CapellaBeaconState>;
+/** SSZ coder for a Capella beacon state. */
+export const CapellaBeaconState: TRet<CapellaBeaconState> = /* @__PURE__ */ _CapellaBeaconState();
 
 /** Bellatrix Types */
-/** SSZ coder for the Bellatrix execution payload header. */
-export const BellatrixExecutionPayloadHeader = /* @__PURE__ */ (() =>
+// Bellatrix block bodies embed the full payload; only BeaconState.latest_execution_payload_header stores the header form.
+const BellatrixExecutionPayload: TRet<ContainerCoder<BellatrixExecutionPayloadFields>> =
+  /* @__PURE__ */ (() =>
+    container({
+      parent_hash: ETH2_TYPES.Hash32,
+      fee_recipient: ETH2_TYPES.ExecutionAddress,
+      state_root: ETH2_TYPES.Bytes32,
+      receipts_root: ETH2_TYPES.Bytes32,
+      logs_bloom: /* @__PURE__ */ bytevector(BYTES_PER_LOGS_BLOOM),
+      prev_randao: ETH2_TYPES.Bytes32,
+      block_number: uint64,
+      gas_limit: uint64,
+      gas_used: uint64,
+      timestamp: uint64,
+      extra_data: /* @__PURE__ */ bytelist(MAX_EXTRA_DATA_BYTES),
+      base_fee_per_gas: uint256,
+      block_hash: ETH2_TYPES.Hash32,
+      transactions: /* @__PURE__ */ list(MAX_TRANSACTIONS_PER_PAYLOAD, ETH2_TYPES.Transaction),
+    }))();
+const _BellatrixExecutionPayloadHeader = (): TRet<
+  ContainerCoder<BellatrixExecutionPayloadHeaderFields>
+> =>
   container({
     parent_hash: ETH2_TYPES.Hash32,
     fee_recipient: ETH2_TYPES.ExecutionAddress,
@@ -1839,9 +3183,25 @@ export const BellatrixExecutionPayloadHeader = /* @__PURE__ */ (() =>
     base_fee_per_gas: uint256,
     block_hash: ETH2_TYPES.Hash32,
     transactions_root: ETH2_TYPES.Root,
-  }))();
+  });
+type BellatrixExecutionPayloadHeader = ReturnType<typeof _BellatrixExecutionPayloadHeader>;
+/**
+ * SSZ coder for the Bellatrix execution payload header.
+ * @returns Bellatrix execution payload header coder.
+ * @example
+ * Access the default Bellatrix execution payload header.
+ * ```ts
+ * import { BellatrixExecutionPayloadHeader } from 'micro-eth-signer/advanced/ssz.js';
+ * BellatrixExecutionPayloadHeader.default;
+ * ```
+ */
+export const BellatrixExecutionPayloadHeader: TRet<BellatrixExecutionPayloadHeader> =
+  /* @__PURE__ */ _BellatrixExecutionPayloadHeader();
 
-const BellatrixBeaconBlockBody = /* @__PURE__ */ (() =>
+type BellatrixBeaconBlockBody = TRet<
+  ContainerCoder<PayloadBeaconBlockBodyFields<typeof BellatrixExecutionPayload>>
+>;
+const BellatrixBeaconBlockBody: BellatrixBeaconBlockBody = /* @__PURE__ */ (() =>
   container({
     randao_reveal: ETH2_TYPES.BLSSignature,
     eth1_data: ETH2_TYPES.Eth1Data,
@@ -1852,31 +3212,43 @@ const BellatrixBeaconBlockBody = /* @__PURE__ */ (() =>
     deposits: /* @__PURE__ */ list(MAX_DEPOSITS, ETH2_TYPES.Deposit),
     voluntary_exits: /* @__PURE__ */ list(MAX_VOLUNTARY_EXITS, ETH2_TYPES.SignedVoluntaryExit),
     sync_aggregate: ETH2_TYPES.SyncAggregate,
-    execution_payload: BellatrixExecutionPayloadHeader,
+    execution_payload: BellatrixExecutionPayload,
     bls_to_execution_changes: /* @__PURE__ */ list(
       MAX_BLS_TO_EXECUTION_CHANGES,
       ETH2_TYPES.SignedBLSToExecutionChange
     ),
-  }))();
-/** SSZ coder for a Bellatrix beacon block. */
-export const BellatrixBeaconBlock = /* @__PURE__ */ (() =>
+  }) as BellatrixBeaconBlockBody)();
+type BellatrixBeaconBlock = ForkBeaconBlock<typeof BellatrixBeaconBlockBody>;
+const _BellatrixBeaconBlock = (): TRet<BellatrixBeaconBlock> =>
   container({
     slot: ETH2_TYPES.Slot,
     proposer_index: ETH2_TYPES.ValidatorIndex,
     parent_root: ETH2_TYPES.Root,
     state_root: ETH2_TYPES.Root,
     body: BellatrixBeaconBlockBody,
-  }))();
+  }) as TRet<BellatrixBeaconBlock>;
+/** SSZ coder for a Bellatrix beacon block. */
+export const BellatrixBeaconBlock: TRet<BellatrixBeaconBlock> =
+  /* @__PURE__ */ _BellatrixBeaconBlock();
 
-/** SSZ coder for a signed Bellatrix beacon block. */
-export const BellatrixSignedBeaconBlock = /* @__PURE__ */ (() =>
+type BellatrixSignedBeaconBlock = SignedMessage<BellatrixBeaconBlock>;
+const _BellatrixSignedBeaconBlock = (): TRet<BellatrixSignedBeaconBlock> =>
   container({
     message: BellatrixBeaconBlock,
     signature: ETH2_TYPES.BLSSignature,
-  }))();
+  }) as TRet<BellatrixSignedBeaconBlock>;
+/** SSZ coder for a signed Bellatrix beacon block. */
+export const BellatrixSignedBeaconBlock: TRet<BellatrixSignedBeaconBlock> =
+  /* @__PURE__ */ _BellatrixSignedBeaconBlock();
 
-/** SSZ coder for a Bellatrix beacon state. */
-export const BellatrixBeaconState = /* @__PURE__ */ (() =>
+type BellatrixBeaconState = TRet<
+  ContainerCoder<
+    AltairBeaconStateFields & {
+      latest_execution_payload_header: typeof BellatrixExecutionPayloadHeader;
+    }
+  >
+>;
+const _BellatrixBeaconState = (): TRet<BellatrixBeaconState> =>
   container({
     genesis_time: uint64,
     genesis_validators_root: ETH2_TYPES.Root,
@@ -1912,10 +3284,14 @@ export const BellatrixBeaconState = /* @__PURE__ */ (() =>
     current_sync_committee: ETH2_TYPES.SyncCommittee,
     next_sync_committee: ETH2_TYPES.SyncCommittee,
     latest_execution_payload_header: BellatrixExecutionPayloadHeader,
-  }))();
+  }) as TRet<BellatrixBeaconState>;
+/** SSZ coder for a Bellatrix beacon state. */
+export const BellatrixBeaconState: TRet<BellatrixBeaconState> =
+  /* @__PURE__ */ _BellatrixBeaconState();
 
 /** Altair Types */
-const AltairBeaconBlockBody = /* @__PURE__ */ (() =>
+type AltairBeaconBlockBody = TRet<ContainerCoder<AltairBeaconBlockBodyFields>>;
+const AltairBeaconBlockBody: AltairBeaconBlockBody = /* @__PURE__ */ (() =>
   container({
     randao_reveal: ETH2_TYPES.BLSSignature,
     eth1_data: ETH2_TYPES.Eth1Data,
@@ -1926,26 +3302,31 @@ const AltairBeaconBlockBody = /* @__PURE__ */ (() =>
     deposits: /* @__PURE__ */ list(MAX_DEPOSITS, ETH2_TYPES.Deposit),
     voluntary_exits: /* @__PURE__ */ list(MAX_VOLUNTARY_EXITS, ETH2_TYPES.SignedVoluntaryExit),
     sync_aggregate: ETH2_TYPES.SyncAggregate,
-  }))();
-/** SSZ coder for an Altair beacon block. */
-export const AltairBeaconBlock = /* @__PURE__ */ (() =>
+  }) as AltairBeaconBlockBody)();
+type AltairBeaconBlock = ForkBeaconBlock<typeof AltairBeaconBlockBody>;
+const _AltairBeaconBlock = (): TRet<AltairBeaconBlock> =>
   container({
     slot: ETH2_TYPES.Slot,
     proposer_index: ETH2_TYPES.ValidatorIndex,
     parent_root: ETH2_TYPES.Root,
     state_root: ETH2_TYPES.Root,
     body: AltairBeaconBlockBody,
-  }))();
+  }) as TRet<AltairBeaconBlock>;
+/** SSZ coder for an Altair beacon block. */
+export const AltairBeaconBlock: TRet<AltairBeaconBlock> = /* @__PURE__ */ _AltairBeaconBlock();
 
-/** SSZ coder for a signed Altair beacon block. */
-export const AltairSignedBeaconBlock = /* @__PURE__ */ (() =>
+type AltairSignedBeaconBlock = SignedMessage<AltairBeaconBlock>;
+const _AltairSignedBeaconBlock = (): TRet<AltairSignedBeaconBlock> =>
   container({
     message: AltairBeaconBlock,
     signature: ETH2_TYPES.BLSSignature,
-  }))();
+  }) as TRet<AltairSignedBeaconBlock>;
+/** SSZ coder for a signed Altair beacon block. */
+export const AltairSignedBeaconBlock: TRet<AltairSignedBeaconBlock> =
+  /* @__PURE__ */ _AltairSignedBeaconBlock();
 
-/** SSZ coder for an Altair beacon state. */
-export const AltairBeaconState = /* @__PURE__ */ (() =>
+type AltairBeaconState = TRet<ContainerCoder<AltairBeaconStateFields>>;
+const _AltairBeaconState = (): TRet<AltairBeaconState> =>
   container({
     genesis_time: uint64,
     genesis_validators_root: ETH2_TYPES.Root,
@@ -1980,10 +3361,13 @@ export const AltairBeaconState = /* @__PURE__ */ (() =>
     inactivity_scores: /* @__PURE__ */ list(VALIDATOR_REGISTRY_LIMIT, uint64),
     current_sync_committee: ETH2_TYPES.SyncCommittee,
     next_sync_committee: ETH2_TYPES.SyncCommittee,
-  }))();
+  }) as TRet<AltairBeaconState>;
+/** SSZ coder for an Altair beacon state. */
+export const AltairBeaconState: TRet<AltairBeaconState> = /* @__PURE__ */ _AltairBeaconState();
 
 /** Phase0 Types */
-const Phase0BeaconBlockBody = /* @__PURE__ */ (() =>
+type Phase0BeaconBlockBody = TRet<ContainerCoder<Phase0BeaconBlockBodyFields>>;
+const Phase0BeaconBlockBody: Phase0BeaconBlockBody = /* @__PURE__ */ (() =>
   container({
     randao_reveal: ETH2_TYPES.BLSSignature,
     eth1_data: ETH2_TYPES.Eth1Data,
@@ -1993,25 +3377,31 @@ const Phase0BeaconBlockBody = /* @__PURE__ */ (() =>
     attestations: /* @__PURE__ */ list(MAX_ATTESTATIONS, ETH2_TYPES.Attestation),
     deposits: /* @__PURE__ */ list(MAX_DEPOSITS, ETH2_TYPES.Deposit),
     voluntary_exits: /* @__PURE__ */ list(MAX_VOLUNTARY_EXITS, ETH2_TYPES.SignedVoluntaryExit),
-  }))();
-/** SSZ coder for a Phase0 beacon block. */
-export const Phase0BeaconBlock = /* @__PURE__ */ (() =>
+  }) as Phase0BeaconBlockBody)();
+type Phase0BeaconBlock = ForkBeaconBlock<typeof Phase0BeaconBlockBody>;
+const _Phase0BeaconBlock = (): TRet<Phase0BeaconBlock> =>
   container({
     slot: ETH2_TYPES.Slot,
     proposer_index: ETH2_TYPES.ValidatorIndex,
     parent_root: ETH2_TYPES.Root,
     state_root: ETH2_TYPES.Root,
     body: Phase0BeaconBlockBody,
-  }))();
+  }) as TRet<Phase0BeaconBlock>;
+/** SSZ coder for a Phase0 beacon block. */
+export const Phase0BeaconBlock: TRet<Phase0BeaconBlock> = /* @__PURE__ */ _Phase0BeaconBlock();
 
-/** SSZ coder for a signed Phase0 beacon block. */
-export const Phase0SignedBeaconBlock = /* @__PURE__ */ (() =>
+type Phase0SignedBeaconBlock = SignedMessage<Phase0BeaconBlock>;
+const _Phase0SignedBeaconBlock = (): TRet<Phase0SignedBeaconBlock> =>
   container({
     message: Phase0BeaconBlock,
     signature: ETH2_TYPES.BLSSignature,
-  }))();
-/** SSZ coder for a Phase0 beacon state. */
-export const Phase0BeaconState = /* @__PURE__ */ (() =>
+  }) as TRet<Phase0SignedBeaconBlock>;
+/** SSZ coder for a signed Phase0 beacon block. */
+export const Phase0SignedBeaconBlock: TRet<Phase0SignedBeaconBlock> =
+  /* @__PURE__ */ _Phase0SignedBeaconBlock();
+
+type Phase0BeaconState = TRet<ContainerCoder<Phase0BeaconStateFields>>;
+const _Phase0BeaconState = (): TRet<Phase0BeaconState> =>
   container({
     genesis_time: uint64,
     genesis_validators_root: ETH2_TYPES.Root,
@@ -2031,16 +3421,19 @@ export const Phase0BeaconState = /* @__PURE__ */ (() =>
     balances: /* @__PURE__ */ list(VALIDATOR_REGISTRY_LIMIT, ETH2_TYPES.Gwei),
     randao_mixes: /* @__PURE__ */ vector(EPOCHS_PER_HISTORICAL_VECTOR, ETH2_TYPES.Bytes32),
     slashings: /* @__PURE__ */ vector(EPOCHS_PER_SLASHINGS_VECTOR, ETH2_TYPES.Gwei),
-    previous_epoch_participation: /* @__PURE__ */ list(
-      VALIDATOR_REGISTRY_LIMIT,
-      ETH2_TYPES.ParticipationFlags
+    // Phase0 predates Altair participation flags and keeps pending attestation queues in state.
+    previous_epoch_attestations: /* @__PURE__ */ list(
+      /* @__PURE__ */ (() => MAX_ATTESTATIONS * SLOTS_PER_EPOCH)(),
+      ETH2_TYPES.PendingAttestation
     ),
-    current_epoch_participation: /* @__PURE__ */ list(
-      VALIDATOR_REGISTRY_LIMIT,
-      ETH2_TYPES.ParticipationFlags
+    current_epoch_attestations: /* @__PURE__ */ list(
+      /* @__PURE__ */ (() => MAX_ATTESTATIONS * SLOTS_PER_EPOCH)(),
+      ETH2_TYPES.PendingAttestation
     ),
     justification_bits: /* @__PURE__ */ bitvector(JUSTIFICATION_BITS_LENGTH),
     previous_justified_checkpoint: ETH2_TYPES.Checkpoint,
     current_justified_checkpoint: ETH2_TYPES.Checkpoint,
     finalized_checkpoint: ETH2_TYPES.Checkpoint,
-  }))();
+  }) as TRet<Phase0BeaconState>;
+/** SSZ coder for a Phase0 beacon state. */
+export const Phase0BeaconState: TRet<Phase0BeaconState> = /* @__PURE__ */ _Phase0BeaconState();

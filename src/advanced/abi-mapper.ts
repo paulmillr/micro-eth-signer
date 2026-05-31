@@ -1,4 +1,5 @@
 import * as P from 'micro-packed';
+import { type TRet } from '../utils.ts';
 
 // prettier-ignore
 type IntIdxType = ''    | '8'   | '16'  | '24'  | '32'  | '40'  | '48'  | '56'  |
@@ -79,15 +80,34 @@ export type GetType<T extends string> =
   T extends ByteType ? Uint8Array :
   unknown; // default
 
-export const ARRAY_RE = /(.+)(\[(\d+)?\])$/; // TODO: is this correct?
+// Peel one trailing ABI array suffix at a time so nested types recurse from the right:
+// address[][2] -> address[] + [2], then address + [].
+export const ARRAY_RE = /(.+)(\[(\d+)?\])$/;
 
+// ABI words are 32 bytes, so shorter fixed-width scalars and pointers get zero-left-padded into one slot.
 function EPad<T>(p: P.CoderType<T>) {
   return P.padLeft(32, p, P.ZeroPad);
 }
-const PTR = EPad(P.U32BE);
-const U256BE_LEN = PTR;
+const MAX_SAFE = BigInt(Number.MAX_SAFE_INTEGER);
+const U256BE_SAFE = P.wrap({
+  size: 32,
+  encodeStream: (w: P.Writer, value: number) => {
+    if (!Number.isSafeInteger(value) || value < 0)
+      throw new Error(`ABI word: expected safe uint, got ${value}`);
+    P.U256BE.encodeStream(w, BigInt(value));
+  },
+  decodeStream: (r: P.Reader): number => {
+    const value = P.U256BE.decodeStream(r);
+    // Offsets and lengths are uint256 ABI words, but JS readers need bounded numbers.
+    if (value > MAX_SAFE) throw new Error(`ABI word: expected safe uint, got ${value}`);
+    return Number(value);
+  },
+});
+const PTR = U256BE_SAFE;
+const U256BE_LEN = U256BE_SAFE;
 
-// Main difference between regular array: length stored outside and offsets calculated without length
+// ABI dynamic arrays encode as len || tuple(elements), so nested element offsets are based from
+// the post-length tuple head instead of the length word itself.
 function ethArray<T>(inner: P.CoderType<T>): P.CoderType<T[]> {
   return P.wrap({
     size: undefined,
@@ -105,6 +125,8 @@ const ethInt = (bits: number, signed = false) => {
   if (!Number.isSafeInteger(bits) || bits <= 0 || bits % 8 !== 0 || bits > 256)
     throw new Error('ethInt: invalid numeric type');
   const _bits = BigInt(bits);
+  // ABI ints always occupy one 32-byte word on the wire; the declared bit width only constrains
+  // the accepted numeric range inside that slot.
   const inner = P.bigint(32, false, signed);
   return P.validate(
     P.wrap({
@@ -114,7 +136,12 @@ const ethInt = (bits: number, signed = false) => {
     }),
     (value) => {
       // TODO: validate useful for narrowing types, need to add support in types?
-      if (typeof value === 'number') value = BigInt(value);
+      // Numeric ABI values are typed as bigint; accept only unambiguous JS numbers at runtime.
+      if (typeof value === 'number') {
+        if (!Number.isSafeInteger(value))
+          throw new Error(`ethInt: expected safe integer, got ${value}`);
+        value = BigInt(value);
+      }
       P.utils.checkBounds(value, _bits, !!signed);
       return value;
     }
@@ -123,6 +150,8 @@ const ethInt = (bits: number, signed = false) => {
 
 // Ugly hack, because tuple of pointers considered "dynamic" without any reason.
 function isDyn<T>(args: P.CoderType<T>[] | Record<string, P.CoderType<T>>) {
+  // In this mapper, ABI-dynamic children keep `size === undefined` even when their head slot is a
+  // 32-byte pointer, so tuples with any such child must be wrapped in an outer pointer too.
   let res = false;
   if (Array.isArray(args)) {
     for (let arg of args) if (arg.size === undefined) res = true;
@@ -133,7 +162,9 @@ function isDyn<T>(args: P.CoderType<T>[] | Record<string, P.CoderType<T>>) {
 }
 
 // NOTE: we need as const if we want to access string as values inside types :(
-export function mapComponent<T extends BaseComponent>(c: T): P.CoderType<MapType<Writable<T>>> {
+export function mapComponent<T extends BaseComponent>(
+  c: T
+): TRet<P.CoderType<MapType<Writable<T>>>> {
   // Arrays (should be first one, since recursive)
   let m;
   if ((m = ARRAY_RE.exec(c.type))) {
@@ -155,6 +186,9 @@ export function mapComponent<T extends BaseComponent>(c: T): P.CoderType<MapType
   }
   if (c.type === 'tuple') {
     const components: (Component<string> & { name?: string })[] = (c as any).components;
+    // Empty tuples are pointless in supported built-in ABIs, and arrays of ZSTs can DoS decoding.
+    if (!components || !components.length)
+      throw new Error('mapComponent: zero-size tuple disabled');
     let hasNames = true;
     const args: P.CoderType<any>[] = [];
     for (let comp of components) {
@@ -164,9 +198,12 @@ export function mapComponent<T extends BaseComponent>(c: T): P.CoderType<MapType
     let out: any;
     // If there is names for all fields -- return struct, otherwise tuple
     if (hasNames) {
-      const struct: Record<string, P.CoderType<unknown>> = {};
+      // Named tuples expose object-form values keyed by the ABI field names.
+      // ABI field names like toString are valid keys; only own properties are duplicates.
+      const struct: Record<string, P.CoderType<unknown>> = Object.create(null);
       for (const arg of components) {
-        if (struct[arg.name!]) throw new Error(`mapType: same field name=${arg.name}`);
+        if (Object.hasOwn(struct, arg.name!))
+          throw new Error(`mapType: same field name=${arg.name}`);
         struct[arg.name!] = mapComponent(arg);
       }
       out = P.struct(struct);
@@ -195,16 +232,18 @@ export function mapComponent<T extends BaseComponent>(c: T): P.CoderType<MapType
 // TODO: try merge with mapComponent
 export function mapArgs<T extends ArrLike<Component<string>>>(
   args: T
-): P.CoderType<ArgsType<Writable<T>>> {
+): TRet<P.CoderType<ArgsType<Writable<T>>>> {
   // More ergonomic input/output
   if (args.length === 1) return mapComponent(args[0] as any) as any;
   let hasNames = true;
   for (const arg of args) if (!arg.name) hasNames = false;
   if (hasNames) {
-    const out: Record<string, P.CoderType<unknown>> = {};
+    // Multi-argument object form is only available when every ABI input has a name.
+    // ABI input names like toString are valid keys; only own properties are duplicates.
+    const out: Record<string, P.CoderType<unknown>> = Object.create(null);
     for (const arg of args) {
       const name = (arg as any).name;
-      if (out[name]) throw new Error(`mapArgs: same field name=${name}`);
+      if (Object.hasOwn(out, name)) throw new Error(`mapArgs: same field name=${name}`);
       out[name] = mapComponent(arg as any) as any;
     }
     return P.struct(out) as any;

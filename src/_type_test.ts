@@ -1,11 +1,14 @@
 import * as P from 'micro-packed';
 import * as abic from './advanced/abi-decoder.ts';
 import * as abi from './advanced/abi-mapper.ts';
+import * as ssz from './advanced/ssz.ts';
 import * as typed from './core/typed-data.ts';
 // Should not be included in npm package, just for test of typescript compilation
 const assertType = <T>(_value: T) => {};
 const BytesVal = Uint8Array.of();
 const BigIntVal = BigInt(0);
+const _1n = /* @__PURE__ */ BigInt(1);
+const _100n = /* @__PURE__ */ BigInt(100);
 const StringVal = 'string';
 StringVal;
 export type Bytes = Uint8Array;
@@ -248,6 +251,52 @@ assertType<{
   };
 }>(abic.events(TRANSFER_EVENT));
 
+const SINGLE_NAMED_EVENT = [
+  {
+    anonymous: false,
+    inputs: [{ indexed: true, name: 'value', type: 'uint256' }],
+    name: 'SingleNamed',
+    type: 'event',
+  },
+] as const;
+
+assertType<(values: { value: bigint | null }) => (string | null)[]>(
+  abic.events(SINGLE_NAMED_EVENT).SingleNamed.topics
+);
+
+const SINGLE_UNNAMED_EVENT = [
+  {
+    anonymous: false,
+    inputs: [{ indexed: true, type: 'uint256' }],
+    name: 'SingleUnnamed',
+    type: 'event',
+  },
+] as const;
+
+assertType<(values: [bigint | null]) => (string | null)[]>(
+  abic.events(SINGLE_UNNAMED_EVENT).SingleUnnamed.topics
+);
+
+const SINGLE_NAMED_TUPLE_EVENT = [
+  {
+    anonymous: false,
+    inputs: [
+      {
+        indexed: true,
+        name: 'value',
+        type: 'tuple',
+        components: [{ type: 'uint256' }, { type: 'address' }],
+      },
+    ],
+    name: 'SingleNamedTuple',
+    type: 'event',
+  },
+] as const;
+
+assertType<(values: { value: [bigint, string] | null }) => (string | null)[]>(
+  abic.events(SINGLE_NAMED_TUPLE_EVENT).SingleNamedTuple.topics
+);
+
 // Typed data
 const types = {
   Person: [
@@ -334,13 +383,31 @@ assertType<{
   children: (NodeType | undefined)[];
 }>(1 as any as typed.GetType<typeof recursiveTypes, 'Node'>);
 
-// const e = typed.encoder(types);
-// e.encodeData('Person', { name: 'test', wallet: 'x' });
-// e.sign({ primaryType: 'Person', message: { name: 'test', wallet: 'x' }, domain: {} }, '');
+assertType<typed.EIP712Domain>({});
+assertType<typed.EIP712Domain>({ name: 'Ether Mail' });
+assertType<typed.EIP712Domain>({
+  chainId: _1n,
+  salt: new Uint8Array(32),
+});
 
-// e.encodeData('Person', { name: 'test', wallet: 1n }); // should fail
-// e.sign({ primaryType: 'Person', message: {name: 'test'}, domain: {} }, ''); // should fail
-// e.sign({ primaryType: 'Person', message: {name: 'test', wallet: '', s: 3}, domain: {} }, ''); // should fail
+// SSZ exported registries must stay precise; broad `SSZCoder<any>` annotations make these
+// invalid values type-check and hide consensus-shape mistakes from callers.
+ssz.ETH2_TYPES.Checkpoint.encode({ epoch: _1n, root: new Uint8Array(32) });
+// @ts-expect-error checkpoint values must contain epoch/root, not arbitrary object data.
+ssz.ETH2_TYPES.Checkpoint.encode({ nope: true });
+// @ts-expect-error Capella blocks must include the full fork-specific block shape.
+ssz.CapellaBeaconBlock.encode({ slot: _1n });
+
+const e = typed.encoder(types, {});
+e.encodeData('Person', { name: 'test', wallet: 'x' });
+e.sign('Person', { name: 'test', wallet: 'x' }, '');
+
+// @ts-expect-error wallet must match the EIP-712 `address` field type.
+e.encodeData('Person', { name: 'test', wallet: _1n });
+// @ts-expect-error message is missing the required `wallet` field.
+e.sign('Person', { name: 'test' }, '');
+// @ts-expect-error message contains an unknown `s` field.
+e.sign('Person', { name: 'test', wallet: '', s: 3 }, '');
 
 // constructor
 
@@ -348,14 +415,13 @@ abic.deployContract(
   [{ type: 'constructor', inputs: [], stateMutability: 'nonpayable' }] as const,
   '0x00'
 );
-abic.deployContract([{ type: 'constructor', stateMutability: 'nonpayable' }] as const, '0x00');
-// abic.deployContract(
-//   [{ type: 'constructor', stateMutability: 'nonpayable' }] as const,
-//   '0x00',
-//   undefined
-// ); // should fail!
+const emptyConstructor = [{ type: 'constructor', stateMutability: 'nonpayable' }] as const;
+abic.deployContract(emptyConstructor, '0x00');
+// @ts-expect-error exact constructorless ABI must not require a third argument.
+abic.deployContract(emptyConstructor, '0x00', undefined);
 
-abic.deployContract([{ type: 'constructor', stateMutability: 'nonpayable' }], '0x00', undefined); // if we cannot infer type - it will be 'unknown' (and user forced to provide any argument, undefined is ok)
+// If we cannot infer type, it becomes `unknown`; user must provide an argument.
+abic.deployContract([{ type: 'constructor', stateMutability: 'nonpayable' }], '0x00', undefined);
 
 abic.deployContract(
   [
@@ -366,7 +432,7 @@ abic.deployContract(
     },
   ] as const,
   '0x00',
-  BigInt(100)
+  _100n
 );
 
 abic.deployContract(
@@ -378,5 +444,5 @@ abic.deployContract(
     },
   ],
   '0x00',
-  BigInt(100)
+  _100n
 );

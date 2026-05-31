@@ -7,8 +7,9 @@ Minimal library for Ethereum transactions, addresses and smart contracts.
 - 🔍 Reliable: 150MB of test vectors from EIPs, ethers and viem
 - ✍️ Transactions, addresses, messages
 - 🦺 Type-safe ABI, RLP, SSZ, KZG, PeerDAS
+- 👓 Clear Signing
 - 🌍 Archive node connector
-- 🪶 28KB (gzipped) for core+deps: 4x smaller than alternatives
+- 🪶 32KB (gzipped) for core+deps: 4x smaller than alternatives
 
 _Check out all web3 utility libraries:_ [ETH](https://github.com/paulmillr/micro-eth-signer), [BTC](https://github.com/paulmillr/scure-btc-signer), [SOL](https://github.com/paulmillr/micro-sol-signer)
 
@@ -29,8 +30,7 @@ If you don't like NPM, a standalone [eth-signer.js](https://github.com/paulmillr
   - [Messages: sign, verify](#messages-sign-verify)
 - Advanced
   - [Type-safe ABI parsing](#type-safe-abi-parsing)
-  - [Readable transaction hints](#readable-transaction-hints)
-  - [Readable event hints](#readable-event-hints)
+  - [Clear Signing](#clear-signing)
   - [RLP & SSZ](#rlp--ssz)
   - [KZG & PeerDAS](#kzg--peerdas)
 - Archive node connector
@@ -239,9 +239,11 @@ import { Web3Provider } from 'micro-eth-signer/net.js';
 
 const prov = new Web3Provider(jsonrpc(fetch, 'http://localhost:8545'));
 const addr = '0xd8da6bf26964af9d7eed9e03e53415d37aa96045';
-const block = await prov.blockInfo(await prov.height());
-console.log('current block', block.number, block.timestamp, block.baseFeePerGas);
-console.log('info for addr', addr, await prov.unspent(addr));
+async function main() {
+  const block = await prov.blockInfo(await prov.height());
+  console.log('current block', block.number, block.timestamp, block.baseFeePerGas);
+  console.log('info for addr', addr, await prov.unspent(addr));
+}
 
 // Other methods of Web3Provider:
 // blockInfo(block: number): Promise<BlockInfo>; // {baseFeePerGas, hash, timestamp...}
@@ -268,9 +270,11 @@ import { Chainlink, Web3Provider } from 'micro-eth-signer/net.js';
 
 const prov = new Web3Provider(jsonrpc(fetch, 'http://localhost:8545'));
 const link = new Chainlink(prov);
-const btc = await link.coinPrice('BTC');
-const bat = await link.tokenPrice('BAT');
-console.log({ btc, bat }); // BTC 19188.68870991, BAT 0.39728989 in USD
+async function main() {
+  const btc = await link.coinPrice('BTC');
+  const bat = await link.tokenPrice('BAT');
+  console.log({ btc, bat }); // BTC 19188.68870991, BAT 0.39728989 in USD
+}
 ```
 
 ### Resolve ENS address
@@ -281,7 +285,9 @@ import { ENS, Web3Provider } from 'micro-eth-signer/net.js';
 
 const prov = new Web3Provider(jsonrpc(fetch, 'http://localhost:8545'));
 const ens = new ENS(prov);
-const vitalikAddr = await ens.nameToAddress('vitalik.eth');
+async function main() {
+  const vitalikAddr = await ens.nameToAddress('vitalik.eth');
+}
 ```
 
 ### Swap tokens with Uniswap
@@ -304,10 +310,12 @@ const BAT = tokenFromSymbol('BAT');
 const u3 = new UniswapV3(prov); // or new UniswapV2(provider)
 const fromAddress = '0xd8da6bf26964af9d7eed9e03e53415d37aa96045';
 const toAddress = '0xd8da6bf26964af9d7eed9e03e53415d37aa96045';
-const swap = await u3.swap(USDT, BAT, '12.12', { slippagePercent: 0.5, ttl: 30 * 60 });
-if (!swap) throw new Error('No swap route found');
-const swapData = await swap.tx(fromAddress, toAddress);
-console.log(swapData.amount, swapData.expectedAmount, swapData.allowance);
+async function main() {
+  const swap = await u3.swap(USDT, BAT, '12.12', { slippagePercent: 0.5, ttl: 30 * 60 });
+  if (!swap) throw new Error('No swap route found');
+  const swapData = await swap.tx(fromAddress, toAddress);
+  console.log(swapData.amount, swapData.expectedAmount, swapData.allowance);
+}
 ```
 
 ## Advanced
@@ -369,7 +377,17 @@ There are following limitations:
 
 Check out [`src/net/ens.ts`](./src/net/ens.ts) for type-safe contract execution example.
 
-### Readable transaction hints
+### Clear Signing
+
+The library supports [Clear Signing](https://clearsigning.org) initiative with two mechanisms:
+
+1. Transaction hints
+2. Event hints
+
+So, a user will see `Transfer 22588 USDT to 0xdac17f958d2ee523a2206206994597c13d831ec7` instead of
+`0xf8a901851d1a94a20082c12a94dac17f958d2ee523a2206206994597c13d831ec780b844a9059cbb000000000000000000000000dac17f958d2ee523a2206206994597c13d831ec7000000000000000000000000000000000000000000000000000000054259870025a066fcb560b50e577f6dc8c8b2e3019f760da78b4c04021382ba490c572a303a42a0078f5af8ac7e11caba9b7dc7a64f7bdc3b4ce1a6ab0a1246771d7cc3524a7200`.
+
+#### Transaction hints
 
 The transaction sent ERC-20 USDT token between addresses. The library produces a following hint:
 
@@ -438,7 +456,7 @@ deepStrictEqual(decodeData(to, data, value, { customContracts }), {
 });
 ```
 
-### Readable event hints
+#### Event hints
 
 Decoding the event produces the following hint:
 
@@ -463,7 +481,7 @@ console.log(einfo);
 [packed](https://github.com/paulmillr/micro-packed) allows us to implement
 RLP in just 100 lines of code, and SSZ in 1500 lines.
 
-SSZ includes [EIP-7495](https://eips.ethereum.org/EIPS/eip-7495) stable containers.
+SSZ includes [EIP-7688](https://eips.ethereum.org/EIPS/eip-7688) progressive containers.
 
 ```ts
 import { RLP } from 'micro-eth-signer/core/rlp.js';
@@ -478,8 +496,8 @@ import * as ssz from 'micro-eth-signer/advanced/ssz.js';
 
 ### KZG & PeerDAS
 
-Allows to create & verify KZG EIP-4844 proofs.
-Supports PeerDAS from EIP-7594.
+Allows to create & verify KZG [EIP-4844](https://eips.ethereum.org/EIPS/eip-4844) proofs.
+Supports PeerDAS from [EIP-7594](https://eips.ethereum.org/EIPS/eip-7594).
 
 > `npm install @paulmillr/trusted-setups`
 

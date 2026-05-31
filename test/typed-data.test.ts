@@ -111,13 +111,8 @@ describe('typedData (EIP-712)', () => {
         type: 'dynamic',
         isArray: true,
       });
-      deepStrictEqual(parseType('bytes32]'), {
-        base: 'bytes32]',
-        item: 'bytes32]',
-        arrayLen: undefined,
-        type: 'struct',
-        isArray: false,
-      });
+      throws(() => parseType('bytes32]'));
+      throws(() => parseType('Person]'));
       deepStrictEqual(parseType('Person'), {
         base: 'Person',
         item: 'Person',
@@ -167,6 +162,14 @@ describe('typedData (EIP-712)', () => {
 
       throws(() => parseType('string[abc]'));
       throws(() => parseType('string[0xab]'));
+      throws(() =>
+        typed.encodeData({
+          types: { EIP712Domain: [], 'bytes32]': [{ name: 'value', type: 'string' }] },
+          primaryType: 'bytes32]',
+          domain: {},
+          message: { value: 'ok' },
+        })
+      );
     });
     should('getDependencies', () => {
       deepStrictEqual(
@@ -337,6 +340,37 @@ describe('typedData (EIP-712)', () => {
         }
       );
     });
+    should('getDomainType', () => {
+      const domain = Object.assign(Object.create({ chainId: 1n }), {
+        name: 'Ether Mail',
+      });
+      deepStrictEqual(typed.getDomainType(domain), [{ name: 'name', type: 'string' }]);
+    });
+    should('validateTyped', () => {
+      const types = Object.create({
+        Mail: [{ name: 'contents', type: 'string' }],
+      });
+      throws(
+        () =>
+          typed.encodeData({
+            types,
+            primaryType: 'Mail',
+            domain: {},
+            message: { contents: 'Hello' },
+          }),
+        /wrong primaryType/
+      );
+      throws(
+        () =>
+          typed.recoverPublicKeyTyped('0x' + '00'.repeat(65), {
+            types: {},
+            primaryType: 'Mail',
+            domain: {},
+            message: { contents: 'Hello' },
+          }),
+        /wrong primaryType/
+      );
+    });
     should('encoder', () => {
       const e = encoder(typedData.types, typedData.domain);
       deepStrictEqual(
@@ -410,7 +444,10 @@ describe('typedData (EIP-712)', () => {
         const sig = typed.eip191Signer.sign(t.message, t.key, false);
         deepStrictEqual(sig, t.signature);
         deepStrictEqual(typed.eip191Signer.verify(sig, t.message, t.address), true);
-        deepStrictEqual(typed.eip191Signer.recoverPublicKey(sig, t.message).toLowerCase(), t.address);
+        deepStrictEqual(
+          typed.eip191Signer.recoverPublicKey(sig, t.message).toLowerCase(),
+          t.address
+        );
       }
     });
   });

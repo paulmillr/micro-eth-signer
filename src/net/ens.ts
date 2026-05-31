@@ -1,13 +1,16 @@
 import { keccak_256 } from '@noble/hashes/sha3.js';
 import { concatBytes, utf8ToBytes } from '@noble/hashes/utils.js';
 import { createContract } from '../advanced/abi-decoder.ts';
-import { type Bytes, type IWeb3Provider, strip0x } from '../utils.ts';
-// No support for IDN names
-export function namehash(address: string): Uint8Array {
-  let res: Bytes = new Uint8Array(32);
+import { type IWeb3Provider, strip0x, type TRet } from '../utils.ts';
+// ENS requires UTS-46 normalization before hashing; this only supports ASCII
+// case-folding, not IDN names.
+export function namehash(address: string): TRet<Uint8Array> {
+  let res = new Uint8Array(32) as TRet<Uint8Array>;
   if (!address) return res;
   for (let label of address.split('.').reverse())
-    res = keccak_256(concatBytes(res, keccak_256(utf8ToBytes(label))));
+    res = keccak_256(
+      concatBytes(res, keccak_256(utf8ToBytes(label.toLowerCase())))
+    ) as TRet<Uint8Array>;
   return res;
 }
 
@@ -69,7 +72,8 @@ export default class ENS {
     // To be certain the claim is accurate, you must always perform a forward
     // resolution for the returned name and check whether it matches the original address.
     const realAddr = await this.nameToAddress(name);
-    if (realAddr !== address) return;
+    // ERC-181 reverse nodes use lowercase address hex; ERC-55 checksum casing is the same bytes.
+    if (!realAddr || strip0x(realAddr).toLowerCase() !== strip0x(address).toLowerCase()) return;
     return name;
   }
 }

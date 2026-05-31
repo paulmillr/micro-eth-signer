@@ -1,7 +1,14 @@
+import { deepFreeze } from '../utils.ts';
+
 // Non-Fungible Token Standard: https://eips.ethereum.org/EIPS/eip-721
+// Field names are observable here: named wrappers and event decoders reuse them as object keys.
+// Keep established event names such as spender for API compatibility; parameter names
+// do not affect selectors.
 // prettier-ignore
-const ABI = [
+const _abi = () => [
   {type:"function",name:"approve",inputs:[{name:"approved",type:"address"},{name:"tokenId",type:"uint256"}]},{type:"function",name:"balanceOf",inputs:[{name:"owner",type:"address"}],outputs:[{type:"uint256"}]},{type:"function",name:"ownerOf",inputs:[{name:"tokenId",type:"uint256"}],outputs:[{name:"owner",type:"address"}]},{type:"function",name:"getApproved",inputs:[{name:"tokenId",type:"uint256"}],outputs:[{type:"address"}]},{type:"function",name:"isApprovedForAll",inputs:[{name:"owner",type:"address"},{name:"operator",type:"address"}],outputs:[{type:"bool"}]},{type:"function",name:"safeTransferFrom",inputs:[{name:"from",type:"address"},{name:"to",type:"address"},{name:"tokenId",type:"uint256"}]},{type:"function",name:"safeTransferFrom",inputs:[{name:"from",type:"address"},{name:"to",type:"address"},{name:"tokenId",type:"uint256"},{name:"data",type:"bytes"}]},{type:"function",name:"setApprovalForAll",inputs:[{name:"operator",type:"address"},{name:"approved",type:"bool"}]},{type:"function",name:"supportsInterface",inputs:[{name:"interfaceID",type:"bytes4"}],outputs:[{type:"bool"}]},{type:"function",name:"transferFrom",inputs:[{name:"from",type:"address"},{name:"to",type:"address"},{name:"tokenId",type:"uint256"}]},{type:"function",name:"tokenByIndex",inputs:[{name:"index",type:"uint256"}],outputs:[{type:"uint256"}]},{type:"function",name:"tokenOfOwnerByIndex",inputs:[{name:"owner",type:"address"},{name:"index",type:"uint256"}],outputs:[{type:"uint256"}]},{type:"function",name:"totalSupply",outputs:[{type:"uint256"}]},{type:"function",name:"name",outputs:[{name:"name",type:"string"}]},{type:"function",name:"symbol",outputs:[{name:"symbol",type:"string"}]},{type:"function",name:"tokenURI",inputs:[{name:"tokenId",type:"uint256"}],outputs:[{type:"string"}]},{name:"Transfer",type:"event",inputs:[{indexed:true,name:"from",type:"address"},{indexed:true,name:"to",type:"address"},{indexed:true,name:"tokenId",type:"uint256"}]},{name:"Approval",type:"event",inputs:[{indexed:true,name:"owner",type:"address"},{indexed:true,name:"spender",type:"address"},{indexed:true,name:"tokenId",type:"uint256"}]},{name:"ApprovalForAll",type:"event",inputs:[{indexed:true,name:"owner",type:"address"},{indexed:true,name:"spender",type:"address"},{indexed:false,name:"approved",type:"bool"}]}
 ] as const;
+type ABI = ReturnType<typeof _abi>;
+const ABI: ABI = /* @__PURE__ */ deepFreeze(/* @__PURE__ */ _abi());
 
 export default ABI;

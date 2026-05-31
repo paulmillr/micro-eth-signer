@@ -26,6 +26,26 @@ describe('RLP', () => {
     should('decode invalid', () => {
       for (const t of INVALID) throws(() => RLP.decode(ethHexNoLeadingZero.decode(t)));
     });
+    should('encode 0x-prefixed byte strings', () => {
+      deepStrictEqual(
+        [
+          ethHex.encode(RLP.encode('0x')),
+          ethHex.encode(RLP.encode('0x00')),
+          ethHex.encode(RLP.encode('0x7f')),
+          ethHex.encode(RLP.encode('0x80')),
+          ethHex.encode(RLP.encode('0x1234')),
+        ],
+        ['0x80', '0x00', '0x7f', '0x8180', '0x821234']
+      );
+      throws(() => RLP.encode('0x0'));
+      throws(() => RLP.encode('0xzz'));
+    });
+    should('encode integer zero consistently', () => {
+      deepStrictEqual(
+        [ethHex.encode(RLP.encode(0)), ethHex.encode(RLP.encode(0n))],
+        ['0x80', '0x80']
+      );
+    });
     describe('ethereum-tests', () => {
       describe('RLP test', () => {
         for (const [k, v] of Object.entries(RLP_TEST)) {
@@ -95,21 +115,22 @@ describe('RLP', () => {
       should('all vectors', () => {
         for (const i of getEthersVectors('rlp.json.gz')) {
           // should(i.name, () => {
-            const [encoded, decoded] = mapEthers([i.encoded, i.decoded]);
-            deepStrictEqual(RLP.encode(decoded), encoded, 'encode');
-            deepStrictEqual(RLP.decode(encoded), decoded, 'encode');
+          const encoded = ethHex.decode(i.encoded);
+          const decoded = mapEthers(i.decoded);
+          deepStrictEqual(RLP.encode(i.decoded), encoded, 'encode');
+          deepStrictEqual(RLP.decode(encoded), decoded, 'decode');
           // });
         }
-      })
+      });
     });
     // 60 MB of gzipped json
     should('viem rlp tests', () => {
       const mapViem = (t) => (Array.isArray(t) ? t.map(mapViem) : hexToBytes(t.replace('0x', '')));
       for (const t of getViemVectors('rlp.json.gz')) {
         let { encoded, decoded } = t;
-        decoded = mapViem(decoded);
+        const value = mapViem(decoded);
         encoded = hexToBytes(encoded.replace('0x', ''));
-        deepStrictEqual(RLP.decode(encoded), decoded);
+        deepStrictEqual(RLP.decode(encoded), value);
         deepStrictEqual(RLP.encode(decoded), encoded);
       }
     });

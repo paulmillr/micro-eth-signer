@@ -2,7 +2,20 @@ import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { keccak_256 } from '@noble/hashes/sha3.js';
 import { concatBytes } from '@noble/hashes/utils.js';
 import * as P from 'micro-packed';
-import { amounts, astr, ethHex, initSig, isBytes, isObject, sign, type Bytes } from '../utils.ts';
+import {
+  amounts,
+  astr,
+  deepFreeze,
+  ethHex,
+  initSig,
+  isBytes,
+  isObject,
+  sign,
+  strip0x,
+  type Bytes,
+  type TArg,
+  type TRet,
+} from '../utils.ts';
 import { addr } from './address.ts';
 import { RLP } from './rlp.ts';
 
@@ -25,6 +38,8 @@ export type TxCoder<T extends TxType> = P.UnwrapCoder<(typeof TxVersions)[T]>;
 
 const createTxMap = <T extends AnyCoderStream>(versions: T): P.CoderType<VersionType<T>> => {
   const ent = Object.entries(versions);
+  // Typed transaction bytes come from TxVersions insertion order, so that object must stay aligned
+  // with the EIP-assigned 0x01/0x02/0x03/0x04 values for eip2930/eip1559/eip4844/eip7702.
   // 'legacy' => {type, ver, coder}
   const typeMap = Object.fromEntries(ent.map(([type, coder], ver) => [type, { type, ver, coder }]));
   // '0' => {type, ver, coder}
@@ -64,16 +79,18 @@ const isOptBig = (a: unknown) => a === undefined || typeof a === 'bigint';
 const isNullOr0 = (a: unknown) => a === undefined || a === BigInt(0);
 
 function assertYParityValid(elm: number) {
+  // All current callers use secp256k1 recovery parity, so only recovery ids 0 and 1 are valid here.
   // TODO: is this correct? elm = 0 default?
   if (elm === undefined) elm = 0;
   if (elm !== 0 && elm !== 1) throw new Error(`yParity wrong value=${elm} (${typeof elm})`);
 }
 // We don't know chainId when specific field coded yet.
+// Address length/checksum validation lives in field validators; this alias only preserves raw RLP bytes as hex.
 const addrCoder = ethHex;
 // Bytes32: VersionedHash, AccessListKey
-function ensure32(b: Uint8Array): Uint8Array {
+function ensure32(b: TArg<Uint8Array>): TRet<Uint8Array> {
   if (!isBytes(b) || b.length !== 32) throw new Error('expected 32 bytes');
-  return b;
+  return b as TRet<Uint8Array>;
 }
 const Bytes32: P.Coder<Bytes, string> = {
   encode: (from) => ethHex.encode(ensure32(from)),
@@ -110,7 +127,7 @@ export const legacySig = /* @__PURE__ */ (() => ({
     if (!isOptBig(r)) throw new Error(`wrong r type=${typeof r}`);
     if (!isOptBig(s)) throw new Error(`wrong s type=${typeof s}`);
     if (yParity !== undefined && typeof yParity !== 'number')
-      throw new Error(`wrong yParity type=${typeof chainId}`);
+      throw new Error(`wrong yParity type=${typeof yParity}`);
     if (yParity === undefined) {
       if (chainId !== undefined) {
         if ((r !== undefined && r !== _0n) || (s !== undefined && s !== _0n))
@@ -133,22 +150,35 @@ export const legacySig = /* @__PURE__ */ (() => ({
   },
 }))() as P.Coder<VRS, YRS>;
 
-const U64BE = P.coders.reverse(P.bigint(8, false, false, false));
-const U256BE = P.coders.reverse(P.bigint(32, false, false, false));
+type BytesBigintCoder = P.Coder<Bytes, bigint>;
+type BytesNumberCoder = P.Coder<Bytes, number>;
+const U64BE: BytesBigintCoder = P.coders.reverse(P.bigint(8, false, false, false));
+const U256BE: BytesBigintCoder = P.coders.reverse(P.bigint(32, false, false, false));
 
 // Small coder utils
 // TODO: seems generic enought for packed? or RLP (seems useful for structured encoding/decoding of RLP stuff)
 // Basic array coder
-const array = <F, T>(coder: P.Coder<F, T>): P.Coder<F[], T[]> => ({
-  encode(from: F[]) {
-    if (!Array.isArray(from)) throw new Error('expected array');
-    return from.map((i) => coder.encode(i));
-  },
-  decode(to: T[]) {
-    if (!Array.isArray(to)) throw new Error('expected array');
-    return to.map((i) => coder.decode(i));
-  },
-});
+const array = <F, T>(coder: P.Coder<F, T>): P.Coder<F[], T[]> => {
+  const map = <I, O>(items: I[], fn: (item: I) => O): O[] => {
+    const res: O[] = [];
+    for (let i = 0; i < items.length; i++) {
+      // Array.prototype.map skips holes; tx list coders must validate every position.
+      if (!Object.hasOwn(items, i)) throw new Error(`missing array item ${i}`);
+      res.push(fn(items[i]));
+    }
+    return res;
+  };
+  return {
+    encode(from: F[]) {
+      if (!Array.isArray(from)) throw new Error('expected array');
+      return map(from, (i) => coder.encode(i));
+    },
+    decode(to: T[]) {
+      if (!Array.isArray(to)) throw new Error('expected array');
+      return map(to, (i) => coder.decode(i));
+    },
+  };
+};
 // tuple -> struct
 const struct = <
   Fields extends Record<string, P.Coder<any, any>>,
@@ -161,6 +191,7 @@ const struct = <
 ): P.Coder<FromTuple, ToObject> => ({
   encode(from: FromTuple) {
     if (!Array.isArray(from)) throw new Error('expected array');
+    // Tuple order is the insertion order of `fields`, so callers must build it in exact on-wire order.
     const fNames = Object.keys(fields);
     if (from.length !== fNames.length) throw new Error('wrong array length');
     return Object.fromEntries(fNames.map((f, i) => [f, fields[f].encode(from[i])])) as ToObject;
@@ -173,33 +204,62 @@ const struct = <
 });
 
 // treeshake: authorization-only bundles should not keep extra tx coder locals alive.
-const mkYParityCoder = /* @__PURE__ */ () =>
+const mkYParityCoder = /* @__PURE__ */ (): TRet<BytesNumberCoder> =>
   P.coders.reverse(
     P.validate(P.int(1, false, false, false), (elm) => {
       assertYParityValid(elm);
       return elm;
     })
-  );
+  ) as TRet<BytesNumberCoder>;
 type CoderOutput<F> = F extends P.Coder<any, infer T> ? T : never;
 
-const mkAccessListItem = /* @__PURE__ */ () =>
-  struct({ address: addrCoder, storageKeys: array(Bytes32) });
+type AccessListItemCoder = P.Coder<
+  [Bytes, Bytes[]],
+  {
+    address: string;
+    storageKeys: string[];
+  }
+>;
+const mkAccessListItem = /* @__PURE__ */ (): TRet<AccessListItemCoder> =>
+  struct({ address: addrCoder, storageKeys: array(Bytes32) }) as TRet<AccessListItemCoder>;
 export type AccessList = CoderOutput<ReturnType<typeof mkAccessListItem>>[];
 
-export const authorizationRequest: P.Coder<
-  Bytes[],
-  {
-    chainId: bigint;
-    address: string;
-    nonce: bigint;
-  }
+export const authorizationRequest: TRet<
+  P.Coder<
+    Bytes[],
+    {
+      chainId: bigint;
+      address: string;
+      nonce: bigint;
+    }
+  >
 > = /* @__PURE__ */ struct({
   chainId: U256BE,
   address: addrCoder,
   nonce: U64BE,
-});
+}) as TRet<
+  P.Coder<
+    Bytes[],
+    {
+      chainId: bigint;
+      address: string;
+      nonce: bigint;
+    }
+  >
+>;
 // [chain_id, address, nonce, y_parity, r, s]
-const mkAuthorizationItem = /* @__PURE__ */ () =>
+type AuthorizationItemCoder = P.Coder<
+  [Bytes, Bytes, Bytes, Bytes, Bytes, Bytes],
+  {
+    chainId: bigint;
+    address: string;
+    nonce: bigint;
+    yParity: number;
+    r: bigint;
+    s: bigint;
+  }
+>;
+const mkAuthorizationItem = /* @__PURE__ */ (): TRet<AuthorizationItemCoder> =>
   struct({
     chainId: U256BE,
     address: addrCoder,
@@ -207,12 +267,33 @@ const mkAuthorizationItem = /* @__PURE__ */ () =>
     yParity: mkYParityCoder(),
     r: U256BE,
     s: U256BE,
-  });
+  }) as TRet<AuthorizationItemCoder>;
 export type AuthorizationItem = CoderOutput<ReturnType<typeof mkAuthorizationItem>>;
 export type AuthorizationRequest = CoderOutput<typeof authorizationRequest>;
 
+type AccessListItemWire = [Bytes, Bytes[]];
+type AuthorizationItemWire = [Bytes, Bytes, Bytes, Bytes, Bytes, Bytes];
+type TxCoders = {
+  chainId: BytesBigintCoder;
+  nonce: BytesBigintCoder;
+  gasPrice: BytesBigintCoder;
+  maxPriorityFeePerGas: BytesBigintCoder;
+  maxFeePerGas: BytesBigintCoder;
+  gasLimit: BytesBigintCoder;
+  to: typeof ethHex;
+  value: BytesBigintCoder;
+  data: typeof ethHex;
+  accessList: P.Coder<AccessListItemWire[], AccessList>;
+  maxFeePerBlobGas: BytesBigintCoder;
+  blobVersionedHashes: P.Coder<Bytes[], string[]>;
+  yParity: BytesNumberCoder;
+  v: BytesBigintCoder;
+  r: BytesBigintCoder;
+  s: BytesBigintCoder;
+  authorizationList: P.Coder<AuthorizationItemWire[], AuthorizationItem[]>;
+};
 /** Field types, matching geth. Either u64 or u256. */
-const coders = /* @__PURE__ */ (() => ({
+const coders: TxCoders = /* @__PURE__ */ (() => ({
   chainId: U256BE, // Can fit into u64 (curr max is 0x57a238f93bf), but geth uses bigint
   nonce: U64BE,
   gasPrice: U256BE,
@@ -231,7 +312,7 @@ const coders = /* @__PURE__ */ (() => ({
   s: U256BE,
   authorizationList: array(mkAuthorizationItem()),
 }))();
-type Coders = typeof coders;
+type Coders = TxCoders;
 type CoderName = keyof Coders;
 const signatureFields = new Set(['v', 'yParity', 'r', 's'] as const);
 
@@ -244,6 +325,9 @@ type FieldCoder<C> = P.CoderType<C> & {
   optionalFields: CoderName[];
   setOfAllFields: Set<CoderName | 'type'>;
 };
+type TxFieldCoder<T extends readonly CoderName[], ST extends readonly CoderName[]> = FieldCoder<
+  OptFields<{ [K in T[number]]: FieldType<Coders[K]> }, { [K in ST[number]]: FieldType<Coders[K]> }>
+>;
 
 // Mutates raw. Make sure to copy it in advance
 export function removeSig(raw: TxCoder<any>): TxCoder<any> {
@@ -263,9 +347,7 @@ export function removeSig(raw: TxCoder<any>): TxCoder<any> {
 const txStruct = <T extends readonly CoderName[], ST extends readonly CoderName[]>(
   reqf: T,
   optf: ST
-): FieldCoder<
-  OptFields<{ [K in T[number]]: FieldType<Coders[K]> }, { [K in ST[number]]: FieldType<Coders[K]> }>
-> => {
+): TRet<TxFieldCoder<T, ST>> => {
   const allFields = reqf.concat(optf);
   // Check that all fields have known coders
   allFields.forEach((f) => {
@@ -283,7 +365,7 @@ const txStruct = <T extends readonly CoderName[], ST extends readonly CoderName[
   const fcoder: any = P.wrap({
     encodeStream(w, raw: Record<string, any>) {
       // If at least one optional key is present, we add whole optional block
-      const hasOptional = optf.some((f) => raw.hasOwnProperty(f));
+      const hasOptional = optf.some((f) => Object.hasOwn(raw, f));
       const sCoder = hasOptional ? allS : reqS;
       RLP.encodeStream(w, sCoder.decode(raw));
     },
@@ -304,7 +386,7 @@ const txStruct = <T extends readonly CoderName[], ST extends readonly CoderName[
   fcoder.fields = reqf;
   fcoder.optionalFields = optf;
   fcoder.setOfAllFields = new Set(allFields.concat(['type'] as any));
-  return fcoder;
+  return fcoder as TRet<TxFieldCoder<T, ST>>;
 };
 
 // prettier-ignore
@@ -327,7 +409,7 @@ const legacyInternal: FieldCoder<OptFields<{
 type LegacyInternal = P.UnwrapCoder<typeof legacyInternal>;
 type Legacy = Omit<LegacyInternal, 'v'> & { chainId?: bigint; yParity?: number };
 
-const legacy = /* @__PURE__ */ (() => {
+const legacy: FieldCoder<Legacy> = /* @__PURE__ */ (() => {
   const res = P.apply(legacyInternal, {
     decode: (data: Legacy) => Object.assign({}, data, legacySig.decode(data)),
     encode: (data: LegacyInternal) => {
@@ -350,21 +432,33 @@ const legacy = /* @__PURE__ */ (() => {
 })();
 
 // prettier-ignore
-const eip2930 = /* @__PURE__ */ txStruct([
+const eip2930: TxFieldCoder<
+  readonly ['chainId', 'nonce', 'gasPrice', 'gasLimit', 'to', 'value', 'data', 'accessList'],
+  readonly ['yParity', 'r', 's']
+> = /* @__PURE__ */ txStruct([
   'chainId', 'nonce', 'gasPrice', 'gasLimit', 'to', 'value', 'data', 'accessList'] as const,
   ['yParity', 'r', 's'] as const);
 
 // prettier-ignore
-const eip1559 = /* @__PURE__ */ txStruct([
+const eip1559: TxFieldCoder<
+  readonly ['chainId', 'nonce', 'maxPriorityFeePerGas', 'maxFeePerGas', 'gasLimit', 'to', 'value', 'data', 'accessList'],
+  readonly ['yParity', 'r', 's']
+> = /* @__PURE__ */ txStruct([
   'chainId', 'nonce', 'maxPriorityFeePerGas', 'maxFeePerGas', 'gasLimit', 'to', 'value', 'data', 'accessList'] as const,
   ['yParity', 'r', 's'] as const);
 // prettier-ignore
-const eip4844 = /* @__PURE__ */ txStruct([
+const eip4844: TxFieldCoder<
+  readonly ['chainId', 'nonce', 'maxPriorityFeePerGas', 'maxFeePerGas', 'gasLimit', 'to', 'value', 'data', 'accessList', 'maxFeePerBlobGas', 'blobVersionedHashes'],
+  readonly ['yParity', 'r', 's']
+> = /* @__PURE__ */ txStruct([
   'chainId', 'nonce', 'maxPriorityFeePerGas', 'maxFeePerGas', 'gasLimit', 'to', 'value', 'data', 'accessList',
   'maxFeePerBlobGas', 'blobVersionedHashes'] as const,
   ['yParity', 'r', 's'] as const);
 // prettier-ignore
-const eip7702 = /* @__PURE__ */ txStruct([
+const eip7702: TxFieldCoder<
+  readonly ['chainId', 'nonce', 'maxPriorityFeePerGas', 'maxFeePerGas', 'gasLimit', 'to', 'value', 'data', 'accessList', 'authorizationList'],
+  readonly ['yParity', 'r', 's']
+> = /* @__PURE__ */ txStruct([
   'chainId', 'nonce', 'maxPriorityFeePerGas', 'maxFeePerGas', 'gasLimit', 'to', 'value', 'data', 'accessList',
   'authorizationList'] as const,
   ['yParity', 'r', 's'] as const);
@@ -403,11 +497,18 @@ export const RawTx = /* @__PURE__ */ (() =>
  * Unchecked TX for debugging. Returns raw Uint8Array-s.
  * Handles versions - plain RLP will crash on it.
  */
-export const RlpTx: P.CoderType<{
-  type: string;
-  data: import('./rlp.ts').RLPInput;
-}> = /* @__PURE__ */ (() =>
-  createTxMap(Object.fromEntries(Object.keys(TxVersions).map((k) => [k, RLP]))))();
+export const RlpTx: TRet<
+  P.CoderType<{
+    type: string;
+    data: import('./rlp.ts').RLPInput;
+  }>
+> = /* @__PURE__ */ (() =>
+  createTxMap(Object.fromEntries(Object.keys(TxVersions).map((k) => [k, RLP]))))() as TRet<
+  P.CoderType<{
+    type: string;
+    data: import('./rlp.ts').RLPInput;
+  }>
+>;
 
 // Field-related utils
 export type TxType = keyof typeof TxVersions;
@@ -422,7 +523,9 @@ function abig(val: bigint) {
   if (typeof val !== 'bigint') throw new Error('value must be bigint');
 }
 function aobj(val: Record<string, any>) {
-  if (typeof val !== 'object' || val == null) throw new Error('object expected');
+  // JS has proxies/classes/null-prototype objects, so this only rejects common accidental containers.
+  if (typeof val !== 'object' || val == null || Array.isArray(val) || isBytes(val))
+    throw new Error('object expected');
 }
 function minmax(val: bigint, min: bigint, max: bigint, err?: string): void;
 function minmax(val: number, min: number, max: number, err?: string): void;
@@ -435,6 +538,40 @@ function minmax(
   if (!err) err = `>= ${min} and <= ${max}`;
   if (Number.isNaN(val) || val < min || val > max) throw new Error(`must be ${err}, not ${val}`);
 }
+export const calcIntrinsicGas = (type: TxType, data: Record<string, any>): bigint => {
+  let gas = amounts.minGasLimit;
+  if (typeof data.data === 'string') {
+    let bytes: Uint8Array | undefined;
+    try {
+      bytes = ethHex.decode(data.data);
+    } catch {
+      // Let the data coder report malformed hex instead of surfacing it as a gas-limit error.
+    }
+    if (bytes) {
+      for (const byte of bytes) {
+        // EIP-2930 §Specification: intrinsic calldata cost is 4 gas for zero bytes and 16 for non-zero bytes.
+        gas += byte === 0 ? BigInt(4) : BigInt(16);
+      }
+      if (data.to === '0x') {
+        // EIP-3860 §Specification: create-transaction intrinsic gas includes 2 gas per 32-byte initcode word.
+        gas += BigInt(Math.ceil(bytes.length / 32) * 2);
+      }
+    }
+  }
+  if (type !== 'legacy' && Array.isArray(data.accessList)) {
+    // EIP-2930 §Specification access-list gas charge: 2400 per address and 1900 per storage key.
+    gas += BigInt(data.accessList.length) * BigInt(2400);
+    for (const item of data.accessList) {
+      if (item && Array.isArray(item.storageKeys))
+        gas += BigInt(item.storageKeys.length) * BigInt(1900);
+    }
+  }
+  if (type === 'eip7702' && Array.isArray(data.authorizationList)) {
+    // EIP-7702 §Gas Costs: add PER_EMPTY_ACCOUNT_COST * authorization list length; PER_EMPTY_ACCOUNT_COST = 25000.
+    gas += BigInt(data.authorizationList.length) * BigInt(25000);
+  }
+  return gas;
+};
 
 // strict=true validates if human-entered value in UI is "sort of" valid
 // for some new TX. For example, it's unlikely that the nonce would be 14 million.
@@ -448,28 +585,42 @@ const validators: Record<string, (num: any, { strict, type, data }: ValidationOp
   nonce(num: bigint, { strict }: ValidationOpts) {
     abig(num);
     if (strict) minmax(num, _0n, amounts.maxNonce);
-    else minmax(BigInt(num), _0n, BigInt(Number.MAX_SAFE_INTEGER)); // amounts.maxUint64
+    // EIP-2681 §Specification: transactions are invalid when nonce >= 2**64 - 1.
+    else minmax(num, _0n, amounts.maxUint64 - BigInt(1));
   },
-  maxFeePerGas(num: bigint, { strict }: ValidationOpts) {
+  maxFeePerGas(num: bigint, { strict, data }: ValidationOpts) {
     abig(num);
     if (strict) minmax(num, BigInt(1), amounts.maxGasPrice, '>= 1 wei and < 10000 gwei');
-    else minmax(num, _0n, amounts.maxUint64);
+    else minmax(num, _0n, amounts.maxUint256);
+    // EIP-1559 §Reference implementation validity checks bounds fee caps as uint256,
+    // while tx validity still rejects gasLimit * maxFeePerGas overflow.
+    if (typeof data.gasLimit === 'bigint' && data.gasLimit * num > amounts.maxUint256)
+      throw new Error('gasLimit * maxFeePerGas overflows uint256');
   },
   maxPriorityFeePerGas(num: bigint, { strict, data }: ValidationOpts) {
     abig(num);
     if (strict) minmax(num, _0n, amounts.maxGasPrice, '>= 1 wei and < 10000 gwei');
-    else minmax(num, _0n, amounts.maxUint64, '>= 1 wei and < 10000 gwei');
-    if (strict && data && typeof data.maxFeePerGas === 'bigint' && data.maxFeePerGas < num) {
+    // EIP-1559 §Reference implementation validity checks bounds priority fee as uint256.
+    else minmax(num, _0n, amounts.maxUint256);
+    if (data && typeof data.maxFeePerGas === 'bigint' && data.maxFeePerGas < num) {
       throw new Error(`cannot be bigger than maxFeePerGas=${data.maxFeePerGas}`);
     }
   },
-  gasLimit(num: bigint, { strict }: ValidationOpts) {
+  gasLimit(num: bigint, { strict, type, data }: ValidationOpts) {
     abig(num);
-    if (strict) minmax(num, amounts.minGasLimit, amounts.maxGasLimit);
-    else minmax(num, _0n, amounts.maxUint64);
+    if (strict) {
+      minmax(num, amounts.minGasLimit, amounts.maxGasLimit);
+      // EIP-1559 §Specification uses the EIP-2930 intrinsic-gas formula for typed tx validity.
+      const min = calcIntrinsicGas(type, data);
+      if (num < min) throw new Error(`intrinsic gas too low: ${num} < ${min}`);
+    } else minmax(num, _0n, amounts.maxUint64);
   },
-  to(address: string, { strict, data }: ValidationOpts) {
+  to(address: string, { strict, type, data }: ValidationOpts) {
     if (!addr.isValid(address, true)) throw new Error('address checksum does not match');
+    // EIP-4844 §Blob transaction: `to` MUST NOT be nil and must be a 20-byte address.
+    // EIP-7702 §Set code transaction imports the same destination semantics.
+    if ((type === 'eip4844' || type === 'eip7702') && address === '0x')
+      throw new Error(`${type} transaction destination must not be empty`);
     if (strict && address === '0x' && !data.data)
       throw new Error('Empty address (0x) without contract deployment code');
   },
@@ -482,15 +633,23 @@ const validators: Record<string, (num: any, { strict, type, data }: ValidationOp
     if (strict) {
       if (val.length > amounts.maxDataSize) throw new Error('data is too big: ' + val.length);
     }
-    // NOTE: data is hex here
-    if (data.to === '0x' && val.length > 2 * amounts.maxInitDataSize)
-      throw new Error(`initcode is too big: ${val.length}`);
+    // EIP-3860/EIP-7907 limit initcode bytes; the optional 0x prefix is not initcode.
+    const initcodeHexLen = strip0x(val).length;
+    if (data.to === '0x' && initcodeHexLen > 2 * amounts.maxInitDataSize)
+      throw new Error(`initcode is too big: ${initcodeHexLen}`);
   },
-  chainId(num: bigint, { strict, type }: ValidationOpts) {
+  chainId(num: bigint, { strict, type, data }: ValidationOpts) {
     // chainId is optional for legacy transactions
     if (type === 'legacy' && num === undefined) return;
     abig(num);
-    if (strict) minmax(num, BigInt(1), amounts.maxChainId, '>= 1 and <= 2**32-1');
+    if (strict) {
+      // Signed legacy chainId is inferred from EIP-155 v; keep the existing strict cap so invalid-v vectors still fail.
+      const max =
+        type === 'legacy' && (data.yParity === 0 || data.yParity === 1)
+          ? amounts.maxChainId
+          : amounts.maxUint256;
+      minmax(num, BigInt(1), max);
+    }
   },
   accessList(list: AccessList) {
     // NOTE: we cannot handle this validation in coder, since it requires chainId to calculate correct checksum
@@ -498,12 +657,29 @@ const validators: Record<string, (num: any, { strict, type, data }: ValidationOp
       if (!addr.isValid(address)) throw new Error('address checksum does not match');
     }
   },
+  blobVersionedHashes(list: string[], { strict }: ValidationOpts) {
+    if (!Array.isArray(list)) return;
+    // EIP-4844 block validity requires at least one blob and version byte 0x01.
+    // Empty lists stay non-strict so codec vectors with syntactic type-3 txs can roundtrip.
+    if (strict && list.length === 0) throw new Error('must contain at least one versioned hash');
+    for (let i = 0; i < list.length; i++) {
+      if (!Object.hasOwn(list, i)) continue;
+      const hash = list[i];
+      if (typeof hash !== 'string') continue;
+      const hex = hash[0] === '0' && (hash[1] === 'x' || hash[1] === 'X') ? hash.slice(2) : hash;
+      const firstByte = hex.length & 1 ? `0${hex[0] || ''}` : hex.slice(0, 2);
+      if (firstByte.toLowerCase() !== '01') throw new Error('versioned hash must start with 0x01');
+    }
+  },
   authorizationList(list: AuthorizationItem[], opts: ValidationOpts) {
+    // EIP-7702 §Set code transaction / Non-empty authorization list required: length zero is invalid.
+    if (Array.isArray(list) && list.length === 0)
+      throw new Error('must contain at least one authorization');
     for (const { address, nonce, chainId } of list) {
       if (!addr.isValid(address)) throw new Error('address checksum does not match');
-      // chainId in authorization list can be zero (==allow any chain)
+      // EIP-7702 uses auth chain_id = 0 as the any-chain sentinel; non-zero ids are uint256-bound.
       abig(chainId);
-      if (opts.strict) minmax(chainId, _0n, amounts.maxChainId, '>= 0 and <= 2**32-1');
+      if (opts.strict) minmax(chainId, _0n, amounts.maxUint256, '>= 0 and < 2**256');
       this.nonce(nonce, opts);
     }
   },
@@ -532,13 +708,17 @@ export function validateFields(
   const txType = TxVersions[type];
   const dataFields = new Set(Object.keys(data));
   const dataHas = (field: string) => dataFields.has(field);
-  function checkField(field: CoderName) {
-    if (!dataHas(field))
+  function checkField(field: TArg<CoderName>) {
+    if (!dataHas(field)) {
+      // Legacy transactions can be pre-EIP-155, where chainId is absent instead of undefined.
+      if (type === 'legacy' && field === 'chainId') return;
       return { field, error: `field "${field}" must be present for tx type=${type}` };
+    }
     const val = data[field];
     try {
       if (validators.hasOwnProperty(field)) validators[field](val, { data, strict, type });
-      if (field === 'chainId') return; // chainId is validated, but can't be decoded
+      // Pre-EIP-155 legacy txs can carry explicit `chainId: undefined`; real ids still need U256 bounds.
+      if (type === 'legacy' && field === 'chainId' && val === undefined) return;
       coders[field].decode(val as never); // decoding may throw an error
     } catch (error) {
       // No early-return: when multiple fields have error, we should show them all.
@@ -555,11 +735,12 @@ export function validateFields(
   const unexpErrs = Object.keys(data).map((field) => {
     if (!txType.setOfAllFields.has(field as any))
       return { field, error: `unknown field "${field}" for tx type=${type}` };
-    if (!allowSignatureFields && signatureFields.has(field as any))
+    if (!allowSignatureFields && signatureFields.has(field as any)) {
       return {
         field,
         error: `field "${field}" is sig-related and must not be user-specified`,
       };
+    }
     return;
   });
   const errors = (reqErrs as (ErrObj | undefined)[])
@@ -579,11 +760,17 @@ const sortedFieldOrder = [
 // TODO: remove any
 export function sortRawData(raw: TxCoder<any>): any {
   const sortedRaw: Record<string, any> = {};
-  sortedFieldOrder
-    .filter((field) => raw.hasOwnProperty(field))
-    .forEach((field) => {
-      sortedRaw[field] = raw[field];
-    });
+  const sorted = new Set<string>();
+  for (const field of sortedFieldOrder) {
+    if (!Object.hasOwn(raw, field)) continue;
+    sortedRaw[field] = raw[field];
+    sorted.add(field);
+  }
+  // Preserve unknown own fields so validateFields can reject them instead of prepare dropping them.
+  for (const field of Object.keys(raw)) {
+    if (sorted.has(field)) continue;
+    sortedRaw[field] = raw[field];
+  }
   return sortedRaw;
 }
 
@@ -592,8 +779,13 @@ export function decodeLegacyV(raw: TxCoder<any>): bigint | undefined {
 }
 
 /** EIP-7702 Authorizations. */
-export const authorization = {
-  _getHash(req: AuthorizationRequest): Uint8Array {
+type AuthorizationHelpers = {
+  _getHash: (req: AuthorizationRequest) => TRet<Uint8Array>;
+  sign: (req: AuthorizationRequest, privateKey: string) => AuthorizationItem;
+  getAuthority: (item: AuthorizationItem) => string;
+};
+export const authorization: TRet<AuthorizationHelpers> = /* @__PURE__ */ deepFreeze({
+  _getHash(req: AuthorizationRequest): TRet<Uint8Array> {
     const msg = RLP.encode(authorizationRequest.decode(req));
     return keccak_256(concatBytes(new Uint8Array([0x05]), msg));
   },
@@ -610,7 +802,7 @@ export const authorization = {
     const bytes = secp256k1.recoverPublicKey(sig.toBytes('recovered'), hash, { prehash: false });
     return addr.fromPublicKey(bytes);
   },
-};
+});
 
 // NOTE: for tests only, don't use
 export const __tests: any = { legacySig, TxVersions };

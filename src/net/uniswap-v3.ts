@@ -1,4 +1,4 @@
-import { concatBytes } from '@noble/hashes/utils.js';
+import { concatBytes, type TArg, type TRet } from '@noble/hashes/utils.js';
 import { type ContractInfo, createContract } from '../advanced/abi-decoder.ts';
 import {
   default as UNISWAP_V3_ROUTER,
@@ -60,7 +60,13 @@ export const Fee: Record<string, number> = {
   HIGH: 10000,
 };
 
-type Route = { path?: Uint8Array; fee?: number; amountIn?: bigint; amountOut?: bigint; p?: any };
+type Route = {
+  path?: TArg<Uint8Array>;
+  fee?: number;
+  amountIn?: bigint;
+  amountOut?: bigint;
+  p?: any;
+};
 
 function basePaths(a: string, b: string, exactOutput: boolean = false) {
   let res: Route[] = [];
@@ -93,10 +99,12 @@ async function bestPath(
   if ((amountIn && amountOut) || (!amountIn && !amountOut))
     throw new Error('uniswapV3.bestPath: provide only one amount');
   const quoter = createContract(QUOTER_ABI, net, QUOTER_ADDRESS);
-  let paths = basePaths(a, b, !!amountOut);
+  const tokenIn = uni.wrapContract(a);
+  const tokenOut = uni.wrapContract(b);
+  let paths = basePaths(tokenIn, tokenOut, !!amountOut);
   for (let i of paths) {
     if (!i.path && !i.fee) continue;
-    const opt = { ...i, tokenIn: a, tokenOut: b, amountIn, amountOut, sqrtPriceLimitX96: 0 };
+    const opt = { ...i, tokenIn, tokenOut, amountIn, amountOut, sqrtPriceLimitX96: 0 };
     const method = 'quoteExact' + (amountIn ? 'Input' : 'Output') + (i.path ? '' : 'Single');
     // TODO: remove any
     i[amountIn ? 'amountOut' : 'amountIn'] = (quoter as any)[method].call(opt);
@@ -124,27 +132,28 @@ export function txData(
   to: string,
   input: string,
   output: string,
-  route: Route,
+  route: TArg<Route>,
   amountIn?: bigint,
   amountOut?: bigint,
   opt: TxOpt = uni.DEFAULT_SWAP_OPT
-): {
+): TRet<{
   to: string;
   value: bigint;
-  data: Uint8Array;
+  data: TRet<Uint8Array>;
   allowance:
     | {
         token: string;
         amount: bigint;
       }
     | undefined;
-} {
+}> {
   opt = { ...uni.DEFAULT_SWAP_OPT, ...opt };
   const err = 'Uniswap v3: ';
   if (!uni.isValidUniAddr(input)) throw new Error(err + 'invalid input address');
   if (!uni.isValidUniAddr(output)) throw new Error(err + 'invalid output address');
   if (!uni.isValidEthAddr(to)) throw new Error(err + 'invalid to address');
-  if (opt.fee && !uni.isValidUniAddr(opt.fee.to))
+  // Fee recipient is encoded as an ABI address; the `eth` alias only belongs to swap tokens.
+  if (opt.fee && !uni.isValidEthAddr(opt.fee.to))
     throw new Error(err + 'invalid fee recepient addresss');
   if (input === 'eth' && output === 'eth')
     throw new Error(err + 'both input and output cannot be eth');
@@ -154,11 +163,24 @@ export function txData(
     (amountIn && !route.amountOut) ||
     (amountOut && !route.amountIn) ||
     (!route.fee && !route.path)
-  )
+  ) {
     throw new Error(err + 'invalid route');
+  }
   if (route.path && opt.sqrtPriceLimitX96)
     throw new Error(err + 'sqrtPriceLimitX96 on multi-hop trade');
-  const deadline = opt.deadline || Math.floor(Date.now() / 1000);
+  if (route.path) {
+    if (route.path.length < 43 || (route.path.length - 20) % 23 !== 0)
+      throw new Error(err + 'invalid route');
+    const first = ethHex.encode(route.path.slice(0, 20)).toLowerCase();
+    const last = ethHex.encode(route.path.slice(-20)).toLowerCase();
+    const wantFirst = uni.wrapContract(amountIn ? input : output);
+    const wantLast = uni.wrapContract(amountIn ? output : input);
+    if (first !== wantFirst)
+      throw new Error(err + `${amountIn ? 'input' : 'output'} token does not match path`);
+    if (last !== wantLast)
+      throw new Error(err + `${amountIn ? 'output' : 'input'} token does not match path`);
+  }
+  const deadline = opt.deadline || Math.floor(Date.now() / 1000) + opt.ttl;
   // flags for whether funds should be send first to the router
   const routerMustCustody = output === 'eth' || !!opt.fee;
   // TODO: remove "as bigint"
@@ -205,7 +227,7 @@ export function txData(
     input !== 'eth'
       ? { token: input, amount: amountIn ? amountIn : args.amountInMaximum }
       : undefined;
-  return { to: UNISWAP_V3_ROUTER_CONTRACT, value, data, allowance };
+  return { to: UNISWAP_V3_ROUTER_CONTRACT, value, data: data as TRet<Uint8Array>, allowance };
 }
 
 // Here goes Exchange API. Everything above is SDK.

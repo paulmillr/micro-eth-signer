@@ -1,7 +1,7 @@
 import { ERC1155, ERC20, ERC721, WETH, createContract, events } from '../advanced/abi.ts';
 import { TxVersions, legacySig, type AccessList } from '../core/tx-internal.ts';
 import { Transaction } from '../core/tx.ts';
-import { amounts, ethHex, hexToNumber, type IWeb3Provider, type Web3CallArgs } from '../utils.ts';
+import { amounts, ethHex, ethHexNum, type IWeb3Provider, type Web3CallArgs } from '../utils.ts';
 
 /*
 Methods to fetch list of transactions from any ETH node RPC.
@@ -17,19 +17,21 @@ The network is not directly called: `ArchiveNodeProvider#rpc` calls `Web3Provide
 - `trace_filter` is slow: it not only finds the transaction, but also executes them
 - It's good that it allows to get internal transactions
 - The whole thing could be 10x simpler if there was an event in logs for ETH transfer
-- For most cases, we only need to see last transactions and know blocks of last txs, which is 20x faster
-- This creates a lot of requests to node (2 per tx, 1 per block, and some more depends on block range limits)
+- For most cases, we only need last transactions and their blocks, which is 20x faster
+- This creates many node requests: 2 per tx, 1 per block, and more with block range limits
 
 Recommended software:
 
 - eth-nodes-for-rent are bad, because of their limits and timeouts
 - erigon nodes are fast, taking ~15 seconds per batch
-- reth has 100-block limit for trace_filter, requiring 190k requests just get transactions
+- reth has 100-block trace_filter limit, requiring 190k requests to get transactions
 */
 
 // Utils
-const ethNum = (n: number | bigint | undefined) =>
-  `0x${!n ? '0' : n.toString(16).replace(/^0+/, '')}`;
+const ethNum = (n: number | bigint | undefined) => ethHexNum.encode(n === undefined ? 0 : n);
+// EIP-1474 transaction hashes are Data values for 32-byte hashes; validate before
+// RPC transport errors.
+const txHashRe = /^0x[0-9a-fA-F]{64}$/;
 
 const ERC_TRANSFER = /* @__PURE__ */ (() => events(ERC20).Transfer)();
 const WETH_DEPOSIT = /* @__PURE__ */ (() => events(WETH).Deposit)();
@@ -37,6 +39,18 @@ const WETH_WITHDRAW = /* @__PURE__ */ (() => events(WETH).Withdrawal)();
 const ERC721_TRANSFER = /* @__PURE__ */ (() => events(ERC721).Transfer)();
 const ERC1155_SINGLE = /* @__PURE__ */ (() => events(ERC1155).TransferSingle)();
 const ERC1155_BATCH = /* @__PURE__ */ (() => events(ERC1155).TransferBatch)();
+const _0n = /* @__PURE__ */ BigInt(0);
+const _1n = /* @__PURE__ */ BigInt(1);
+const TOKEN_TRANSFER_TOPICS = /* @__PURE__ */ (() =>
+  new Set<string>(
+    [
+      ERC_TRANSFER.topics({ from: null, to: null, value: null })[0],
+      WETH_DEPOSIT.topics({ dst: null, wad: null })[0],
+      WETH_WITHDRAW.topics({ src: null, wad: null })[0],
+      ERC1155_SINGLE.topics({ operator: null, from: null, to: null, id: null, value: null })[0],
+      ERC1155_BATCH.topics({ operator: null, from: null, to: null, ids: null, values: null })[0],
+    ].map((i) => i as string)
+  ))();
 
 const ERC165 = [
   //     function supportsInterface(bytes4 interfaceID) external view returns (bool);
@@ -215,12 +229,27 @@ type ERC721Token = {
 };
 type ERC1155Token = { abi: 'ERC1155' };
 export type TokenInfo = { contract: string } & (ERC20Token | ERC721Token | ERC1155Token);
-// Main idea: there is broken contracts that behave strange, instead of crashing we return this error.
-// Separate error allows easily to discriminate between "strange contract" and "input invalid" | "network error"
-// We still want to crash on network errors, but if there is per-contract error it is better to continue batched request
-// like tokenTransfers
+// Some contracts behave strangely; return this error instead of crashing.
+// Separate error allows discriminating between strange contract, invalid input, and
+// network errors. Network errors still crash, but per-contract errors should let
+// batched requests like tokenTransfers continue.
 type TokenError = { contract: string; error: string };
 type TokenBalanceSingle = Map<bigint, bigint>;
+
+const isError = (token: unknown): token is TokenError => {
+  if (token === null || typeof token !== 'object') return false;
+  const t = token as Partial<TokenError>;
+  return typeof t.contract === 'string' && typeof t.error === 'string';
+};
+const validateToken = (token: unknown, name: string): TokenInfo => {
+  if (token === null || typeof token !== 'object') throw new Error(`${name}: wrong token`);
+  const t = token as Partial<TokenInfo & TokenError>;
+  if (typeof t.contract !== 'string') throw new Error(`${name}: wrong token`);
+  if ('error' in t) throw new Error(`${name}: wrong token`);
+  if (t.abi !== 'ERC20' && t.abi !== 'ERC721' && t.abi !== 'ERC1155')
+    throw new Error(`${name}: wrong token`);
+  return t as TokenInfo;
+};
 
 // This is unified type for ERC-20 | ERC-721 | ERC-1155
 // ERC20: Record<contractAddress, Map<1n, tokenValue>> - ERC-20 has only single tokenId (always!)
@@ -265,6 +294,9 @@ export type OtsSearch = {
   lastPage: boolean;
 };
 
+// These fixers intentionally normalize owned JSON-RPC response objects in place.
+// Public archive methods return the normalized shape, not raw+normalized pairs; avoiding
+// deep copies matters for large log/trace/search responses where fields mostly change type.
 const fixOtsSearch = (search: OtsSearchTransactionsRaw): OtsSearch => {
   const receipts: Record<string, TxReceipt> = {};
   for (const r of search.receipts) receipts[r.transactionHash] = fixTxReceipt(r);
@@ -381,7 +413,7 @@ function fixTxReceipt(receipt: TxReceipt) {
   return receipt;
 }
 function validateCallbacks(opts: Record<string, unknown>) {
-  for (const i of ['txCallback', 'blockCallback', 'contractCallback']) {
+  for (const i of ['txCallback', 'blockCallback', 'contractCallback', 'txInfoCallback']) {
     if (opts[i] !== undefined && typeof opts[i] !== 'function')
       throw new Error(`validateCallbacks: ${i} should be function`);
   }
@@ -389,19 +421,26 @@ function validateCallbacks(opts: Record<string, unknown>) {
 
 function validatePagination(opts: Record<string, unknown>) {
   for (const i of ['fromBlock', 'toBlock']) {
-    if (opts[i] === undefined || Number.isSafeInteger(opts[i])) continue;
+    const val = opts[i];
+    // EIP-1474 block parameters are Quantity|string; negative numbers encode to invalid RPC quantities.
+    if (val === undefined || (typeof val === 'number' && Number.isSafeInteger(val) && val >= 0))
+      continue;
     throw new Error(
-      `validatePagination: wrong field ${i}=${opts[i]}. Should be integer or undefined`
+      `validatePagination: wrong field ${i}=${opts[i]}. Should be non-negative integer or undefined`
     );
   }
 }
 
 function validateTraceOpts(opts: Record<string, unknown>) {
   validatePagination(opts);
-  for (const i of ['perRequest', 'limitTrace']) {
-    if (opts[i] === undefined || Number.isSafeInteger(opts[i])) continue;
+  // perRequestOTS is forwarded as the OtterScan pageSize; validate it with trace options first.
+  for (const i of ['perRequest', 'perRequestOTS', 'limitTrace']) {
+    const val = opts[i];
+    // These values are used as page sizes or batching loop steps; non-positive values cannot progress.
+    if (val === undefined || (typeof val === 'number' && Number.isSafeInteger(val) && val > 0))
+      continue;
     throw new Error(
-      `validateTraceOpts: wrong field ${i}=${opts[i]}. Should be integer or undefined`
+      `validateTraceOpts: wrong field ${i}=${opts[i]}. Should be positive integer or undefined`
     );
   }
   if (opts.limitTrace !== undefined) {
@@ -414,8 +453,13 @@ function validateTraceOpts(opts: Record<string, unknown>) {
 function validateLogOpts(opts: Record<string, unknown>) {
   validatePagination(opts);
   for (const i of ['limitLogs']) {
-    if (opts[i] === undefined || Number.isSafeInteger(opts[i])) continue;
-    throw new Error(`validateLogOpts: wrong field ${i}=${opts[i]}. Should be integer or undefined`);
+    const val = opts[i];
+    // limitLogs is used as a batching loop step; non-positive values can stall or invert progress.
+    if (val === undefined || (typeof val === 'number' && Number.isSafeInteger(val) && val > 0))
+      continue;
+    throw new Error(
+      `validateLogOpts: wrong field ${i}=${opts[i]}. Should be positive integer or undefined`
+    );
   }
   if (opts.limitLogs !== undefined) {
     if (opts.fromBlock === undefined || opts.toBlock === undefined)
@@ -466,7 +510,7 @@ export class Web3Provider implements IWeb3Provider {
     return this.rpc.call('eth_call', args, tag);
   }
   async estimateGas(args: Web3CallArgs, tag = 'latest'): Promise<bigint> {
-    return hexToNumber(await this.rpc.call('eth_estimateGas', args, tag));
+    return ethHexNum.decode(await this.rpc.call('eth_estimateGas', args, tag));
   }
 
   // Timestamp is available only inside blocks
@@ -497,26 +541,34 @@ export class Web3Provider implements IWeb3Provider {
   }
 
   async traceFilterSingle(address: string, opts: TraceOpts = {}): Promise<any> {
-    const res = await this.call('trace_filter', {
+    const params: Record<string, any> = {
       fromBlock: ethNum(opts.fromBlock),
-      toBlock: ethNum(opts.toBlock),
       toAddress: [address],
       fromAddress: [address],
-    });
+    };
+    // Erigon treats omitted toBlock as latest; ethNum(undefined) would incorrectly pin it to genesis.
+    if (opts.toBlock !== undefined) params.toBlock = ethNum(opts.toBlock);
+    const res = await this.call('trace_filter', params);
     for (const action of res) fixAction(action, opts);
     return res;
   }
 
   async ots_searchBefore(address: string, block: number, pageSize = 25): Promise<OtsSearch> {
     if (typeof address !== 'string') throw new Error('ots_searchBefore: wrong address');
-    if (!Number.isSafeInteger(block)) throw new Error('ots_searchBefore: wrong block');
-    if (!Number.isSafeInteger(pageSize)) throw new Error('ots_searchBefore: wrong pageSize');
+    // OtterScan search block arguments are chain heights; negative heights wrap badly server-side.
+    if (!Number.isSafeInteger(block) || block < 0) throw new Error('ots_searchBefore: wrong block');
+    // OtterScan pageSize is a pagination count; non-positive counts cannot make progress.
+    if (!Number.isSafeInteger(pageSize) || pageSize <= 0)
+      throw new Error('ots_searchBefore: wrong pageSize');
     return fixOtsSearch(await this.call('ots_searchTransactionsBefore', address, block, pageSize));
   }
   async ots_searchAfter(address: string, block: number, pageSize = 25): Promise<OtsSearch> {
     if (typeof address !== 'string') throw new Error('ots_searchAfter: wrong address');
-    if (!Number.isSafeInteger(block)) throw new Error('ots_searchAfter: wrong block');
-    if (!Number.isSafeInteger(pageSize)) throw new Error('ots_searchAfter: wrong pageSize');
+    // OtterScan search block arguments are chain heights; negative heights wrap badly server-side.
+    if (!Number.isSafeInteger(block) || block < 0) throw new Error('ots_searchAfter: wrong block');
+    // OtterScan pageSize is a pagination count; non-positive counts cannot make progress.
+    if (!Number.isSafeInteger(pageSize) || pageSize <= 0)
+      throw new Error('ots_searchAfter: wrong pageSize');
     return fixOtsSearch(await this.call('ots_searchTransactionsAfter', address, block, pageSize));
   }
   async ots_traceTransaction(txHash: string): Promise<ActionOts[]> {
@@ -528,7 +580,7 @@ export class Web3Provider implements IWeb3Provider {
    * OTS API. A bit broken: when >= 25 txs/block per tx, we can't get more than 25 = we will miss
    * information!
    */
-  async internalTransactionsOTS(address: string, opts: TraceOpts = {}) {
+  async internalTransactionsOTS(address: string, opts: TraceOpts = {}): Promise<Action[]> {
     if (typeof address !== 'string') throw new Error('internalTransactions: wrong address');
     validateTraceOpts(opts);
     // non-inclusive, which means we cannot access block=0?
@@ -543,10 +595,14 @@ export class Web3Provider implements IWeb3Provider {
       // FUN: this is slower than trace?
       const res = await this.ots_searchAfter(address, lastBlock, opts.perRequestOTS);
       res.txs.reverse(); // fix order into: from oldest block to newest
+      let reachedToBlock = false;
       for (const t of res.txs) {
         const hash = t.info.hash;
         const blockNumber = t.info.blockNumber;
-        if (opts.toBlock !== undefined && opts.toBlock < blockNumber) break;
+        if (opts.toBlock !== undefined && opts.toBlock < blockNumber) {
+          reachedToBlock = true;
+          break;
+        }
         const txInfo = this.txInfoRaw(t.info, t.receipt, opts);
         info[hash] = txInfo;
         // We already have info and receipt, no need to call txInfo in transfers
@@ -554,6 +610,8 @@ export class Web3Provider implements IWeb3Provider {
         if (!traces[hash]) traces[hash] = this.ots_traceTransaction(hash);
         lastBlock = Math.max(lastBlock, blockNumber);
       }
+      // OTS searchAfter has no toBlock parameter; once the sorted page crosses it, later pages are beyond range too.
+      if (reachedToBlock) break;
       if (res.firstPage) break; // "Awesome" API!
     }
     const tracesRes = await mapCache(traces);
@@ -570,11 +628,11 @@ export class Web3Provider implements IWeb3Provider {
             input: a.input,
             from: a.from,
             to: a.to,
-            gas: 0n,
-            value: a.value ? a.value : 0n,
+            gas: _0n,
+            value: a.value ? a.value : _0n,
             callType: a.type,
           },
-          result: { gasUsed: 0n, output: a.output },
+          result: { gasUsed: _0n, output: a.output },
           subtraces: 0,
           traceAddress: [],
           blockHash: currTx.info.blockHash,
@@ -596,9 +654,13 @@ export class Web3Provider implements IWeb3Provider {
     // For reth
     if (opts.limitTrace) {
       const promises = [];
-      for (let i = opts.fromBlock!; i <= opts.toBlock!; i += opts.limitTrace)
+      for (let i = opts.fromBlock!; i <= opts.toBlock!; i += opts.limitTrace + 1)
         promises.push(
-          this.traceFilterSingle(address, { fromBlock: i, toBlock: i + opts.limitTrace })
+          this.traceFilterSingle(address, {
+            fromBlock: i,
+            // trace_filter bounds are inclusive; the next batch starts after this upper bound.
+            toBlock: Math.min(i + opts.limitTrace, opts.toBlock!),
+          })
         );
       const out = [];
       for (const i of await Promise.all(promises)) out.push(...i);
@@ -658,6 +720,8 @@ export class Web3Provider implements IWeb3Provider {
   }
 
   async ethLogsSingle(topics: Topics, opts: LogOpts): Promise<Log[]> {
+    // Public direct wrapper: validate before encoding block quantities or accepting callbacks.
+    validateLogOpts(opts);
     const req: Record<string, any> = { topics, fromBlock: ethNum(opts.fromBlock || 0) };
     if (opts.toBlock !== undefined) req.toBlock = ethNum(opts.toBlock);
     const res = await this.call('eth_getLogs', req);
@@ -670,9 +734,24 @@ export class Web3Provider implements IWeb3Provider {
     if (!('limitLogs' in opts)) return this.ethLogsSingle(topics, opts);
     const promises = [];
     for (let i = fromBlock; i <= opts.toBlock; i += opts.limitLogs)
-      promises.push(this.ethLogsSingle(topics, { fromBlock: i, toBlock: i + opts.limitLogs }));
+      promises.push(
+        this.ethLogsSingle(topics, {
+          fromBlock: i,
+          // eth_getLogs bounds are inclusive; overlapping batch boundaries are deduped below.
+          toBlock: Math.min(i + opts.limitLogs, opts.toBlock),
+        })
+      );
     const out = [];
-    for (const i of await Promise.all(promises)) out.push(...i);
+    const seen = new Set<string>();
+    for (const i of await Promise.all(promises)) {
+      for (const log of i) {
+        // Batched eth_getLogs ranges intentionally share inclusive boundaries; don't surface duplicates.
+        const key = `${log.blockHash}:${log.logIndex}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(log);
+      }
+    }
     return out;
   }
   // NOTE: this is very low-level methods that return parts used for .transfers method,
@@ -687,7 +766,7 @@ export class Web3Provider implements IWeb3Provider {
     ]);
   }
   async wethTransfers(address: string, opts: LogOpts = {}): Promise<[Log[]]> {
-    if (typeof address !== 'string') throw new Error('tokenTransfers: wrong address');
+    if (typeof address !== 'string') throw new Error('wethTransfers: wrong address');
     validateLogOpts(opts);
     const depositTopic = WETH_DEPOSIT.topics({ dst: address, wad: null });
     const withdrawTopic = WETH_WITHDRAW.topics({ src: address, wad: null });
@@ -700,7 +779,7 @@ export class Web3Provider implements IWeb3Provider {
     address: string,
     opts: LogOpts = {}
   ): Promise<[Log[], Log[], Log[], Log[]]> {
-    if (typeof address !== 'string') throw new Error('tokenTransfers: wrong address');
+    if (typeof address !== 'string') throw new Error('erc1155Transfers: wrong address');
     validateLogOpts(opts);
     return await Promise.all([
       // Single
@@ -743,10 +822,14 @@ export class Web3Provider implements IWeb3Provider {
       if (info.accessList) rawData.accessList = info.accessList;
       if (info.maxFeePerBlobGas) rawData.maxFeePerBlobGas = info.maxFeePerBlobGas;
       if (info.blobVersionedHashes) rawData.blobVersionedHashes = info.blobVersionedHashes;
-      if (info.maxFeePerGas) {
+      // EIP-1559 serializes zero fee caps as real payload fields, not missing fields.
+      if (info.maxFeePerGas !== undefined) {
         rawData.maxFeePerGas = info.maxFeePerGas;
         rawData.maxPriorityFeePerGas = info.maxPriorityFeePerGas;
-      } else if (info.gasPrice) rawData.gasPrice = info.gasPrice;
+      } else if (info.gasPrice !== undefined) {
+        // Legacy/EIP-2930 gasPrice can also be zero.
+        rawData.gasPrice = info.gasPrice;
+      }
       if (type === 'legacy')
         Object.assign(rawData, legacySig.encode({ v: info.v, r: info.r, s: info.s }));
       const tx = new Transaction(type, rawData as any, false, true);
@@ -763,6 +846,8 @@ export class Web3Provider implements IWeb3Provider {
     return { type, info, receipt, raw };
   }
   async txInfo(txHash: string, opts: TxInfoOpts = {}): Promise<TxInfoFull> {
+    if (typeof txHash !== 'string' || !txHashRe.test(txHash))
+      throw new Error('txInfo: wrong txHash');
     const [info, receipt] = await Promise.all([
       this.call('eth_getTransactionByHash', txHash),
       this.call('eth_getTransactionReceipt', txHash),
@@ -807,7 +892,7 @@ export class Web3Provider implements IWeb3Provider {
       name: t.name,
       symbol: t.symbol,
       totalSupply: t.totalSupply,
-      decimals: t.decimals ? Number(t.decimals) : undefined,
+      decimals: t.decimals === undefined ? undefined : Number(t.decimals),
     };
   }
 
@@ -816,13 +901,15 @@ export class Web3Provider implements IWeb3Provider {
     token: TokenInfo | TokenError,
     tokenIds?: Set<bigint>
   ): Promise<TokenBalanceSingle | TokenError> {
-    if ('error' in token) return token;
+    if (isError(token)) return token;
+    token = validateToken(token, 'tokenBalanceSingle');
     if (token.abi === 'ERC20') {
+      if (tokenIds && tokenIds.size === 0) return new Map();
       const balance = await createContract(ERC20, this, token.contract).balanceOf.call(address);
-      if (tokenIds && (tokenIds.size > 1 || Array.from(tokenIds)[0] !== 1n)) {
+      if (tokenIds && (tokenIds.size > 1 || Array.from(tokenIds)[0] !== _1n)) {
         return { contract: token.contract, error: 'unexpected tokenIds for ERC20' };
       }
-      return new Map([[1n, balance]]);
+      return new Map([[_1n, balance]]);
     } else if (token.abi === 'ERC721') {
       const c = createContract(ERC721, this, token.contract);
       const balance = await c.balanceOf.call(address);
@@ -838,7 +925,7 @@ export class Web3Provider implements IWeb3Provider {
         const ids = Array.from(tokenIds);
         const owners = await Promise.all(ids.map((i) => c.ownerOf.call(i)));
         return new Map(
-          ids.map((i, j) => [i, owners[j].toLowerCase() === address.toLowerCase() ? 1n : 0n])
+          ids.map((i, j) => [i, owners[j].toLowerCase() === address.toLowerCase() ? _1n : _0n])
         );
       }
       // if we can fetch tokenIds: always do this
@@ -847,7 +934,7 @@ export class Web3Provider implements IWeb3Provider {
         p.push(c.tokenOfOwnerByIndex.call({ owner: address, index: BigInt(i) }));
       tokenIds = new Set(await Promise.all(p));
       const ids = Array.from(tokenIds!);
-      return new Map(ids.map((i) => [i, 1n]));
+      return new Map(ids.map((i) => [i, _1n]));
     } else if (token.abi === 'ERC1155') {
       // This is pretty bad standard, because it doesn't allow enumeration of tokenIds for owner
       if (!tokenIds)
@@ -866,7 +953,8 @@ export class Web3Provider implements IWeb3Provider {
     tokenId: bigint
   ): Promise<string | TokenError> {
     if (typeof token === 'string') token = await this.tokenInfo(token);
-    if ('error' in token) return token;
+    if (isError(token)) return token;
+    token = validateToken(token, 'tokenURI');
     if (token.abi === 'ERC721') {
       const c = createContract(ERC721, this, token.contract);
       if (!token.metadata) return { contract: token.contract, error: 'erc721 without metadata' };
@@ -888,6 +976,10 @@ export class Web3Provider implements IWeb3Provider {
     const _tokens = await Promise.all(
       tokens.map((i) => (typeof i === 'string' ? this.tokenInfo(i) : i))
     );
+    for (let i = 0; i < _tokens.length; i++) {
+      const token = _tokens[i];
+      if (!isError(token)) _tokens[i] = validateToken(token, 'tokenBalances');
+    }
     const balances = await Promise.all(
       _tokens.map((i) => this.tokenBalanceSingle(address, i, tokenIds && tokenIds[i.contract]))
     );
@@ -903,7 +995,7 @@ export class Web3Provider implements IWeb3Provider {
           contract: log.address,
           to: decoded.to,
           from: decoded.from,
-          tokens: new Map([[1n, decoded.value]]),
+          tokens: new Map([[_1n, decoded.value]]),
         };
       } catch (e) {}
       // Weth doesn't issue Transfer event on Deposit/Withdrawal
@@ -915,7 +1007,7 @@ export class Web3Provider implements IWeb3Provider {
           contract: log.address,
           from: log.address,
           to: decoded.dst,
-          tokens: new Map([[1n, decoded.wad]]),
+          tokens: new Map([[_1n, decoded.wad]]),
         };
       } catch (e) {}
       try {
@@ -925,7 +1017,7 @@ export class Web3Provider implements IWeb3Provider {
           contract: log.address,
           from: decoded.src,
           to: log.address,
-          tokens: new Map([[1n, decoded.wad]]),
+          tokens: new Map([[_1n, decoded.wad]]),
         };
       } catch (e) {}
     } else if (token.abi === 'ERC721') {
@@ -935,7 +1027,7 @@ export class Web3Provider implements IWeb3Provider {
           ...token,
           from: decoded.from,
           to: decoded.to,
-          tokens: new Map([[decoded.tokenId, 1n]]),
+          tokens: new Map([[decoded.tokenId, _1n]]),
         };
       } catch (e) {}
     } else if (token.abi === 'ERC1155') {
@@ -950,6 +1042,9 @@ export class Web3Provider implements IWeb3Provider {
       } catch (e) {}
       try {
         const decoded = ERC1155_BATCH.decode(log.topics, log.data);
+        // ERC-1155 TransferBatch pairs ids and values; spoofed logs can ABI-decode with mismatched arrays.
+        if (decoded.ids.length !== decoded.values.length)
+          throw new Error('wrong ERC1155 batch lengths');
         return {
           ...token,
           from: decoded.from,
@@ -972,6 +1067,10 @@ export class Web3Provider implements IWeb3Provider {
     const txCache: Record<string, any> = {};
     const blockCache: Record<number, any> = {};
     const tokenCache: Record<string, any> = {};
+    const loadToken = (contract: string) => {
+      if (tokenCache[contract]) return;
+      tokenCache[contract] = this.tokenInfo(contract);
+    };
     const _opts = {
       ...opts,
       txInfoCallback: (txHash: string, info: TxInfoFull) => {
@@ -986,10 +1085,7 @@ export class Web3Provider implements IWeb3Provider {
         if (blockCache[blockNumber]) return;
         blockCache[blockNumber] = this.blockInfo(blockNumber);
       },
-      contractCallback: (address: string) => {
-        if (tokenCache[address]) return;
-        tokenCache[address] = this.tokenInfo(address);
-      },
+      contractCallback: loadToken,
     };
     if (!_opts.fromBlock) _opts.fromBlock = 0;
     // This runs in parallel and executes callbacks
@@ -1005,6 +1101,12 @@ export class Web3Provider implements IWeb3Provider {
     // it is ok to do this sequentially, since promises already started and probably resolved at this point
     const blocks = await mapCache(blockCache);
     const tx = await mapCache(txCache);
+    for (const hash in tx) {
+      for (const log of tx[hash].receipt.logs) {
+        // Related transaction receipts can contain token movements discovered only after tx lookup.
+        if (TOKEN_TRANSFER_TOPICS.has(log.topics[0])) loadToken(log.address);
+      }
+    }
     const tokens = await mapCache(tokenCache);
     const actionPerTx = group(actions, 'transactionHash');
 
@@ -1049,6 +1151,7 @@ export class Web3Provider implements IWeb3Provider {
   }
 
   async allowances(address: string, opts: LogOpts = {}): Promise<TxAllowances> {
+    if (typeof address !== 'string') throw new Error('allowances: wrong address');
     const approval = events(ERC20).Approval;
     // ERC-721/ERC-1155: +ApprovalForAll
     // ERC-1761 Scoped Approval for partial with 1155/721?
@@ -1104,7 +1207,12 @@ export function calcTransfersDiff(transfers: TxTransfers[]): (TxTransfers & Bala
       balances: { ...balances },
       // deep copy
       tokenBalances: Object.fromEntries(
-        Object.entries(tokenBalances).map(([k, v]) => [k, { ...v }])
+        Object.entries(tokenBalances).map(([k, v]) => [
+          k,
+          Object.fromEntries(
+            Object.entries(v).map(([addr, balances]) => [addr, new Map(balances)])
+          ),
+        ])
       ),
     });
   }

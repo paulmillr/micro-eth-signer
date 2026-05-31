@@ -1,10 +1,11 @@
 import { addr } from '../core/address.ts';
 import { Transaction } from '../index.ts';
-import { ethHex } from '../utils.ts';
+import { deepFreeze, ethHex, type TArg, type TRet } from '../utils.ts';
 import {
   type ContractABI as _ContractABI,
   type ContractInfo as _ContractInfo,
   Decoder as _Decoder,
+  type SignatureInfo as _SignatureInfo,
   createContract as _createContract,
   deployContract as _deployContract,
   events as _events,
@@ -26,8 +27,8 @@ import {
 } from './abi-uniswap-v3.ts';
 import { default as _WETH, WETH_CONTRACT } from './abi-weth.ts';
 
-// We need to export raw contracts, because 'CONTRACTS' object requires to know address it is not static type
-// so it cannot be re-used in createContract with nice types.
+// We need to export raw contracts: CONTRACTS entries include addresses, so the
+// registry shape cannot be reused in createContract with nice types.
 /**
  * ERC-1155 ABI fragments used by the decoder helpers.
  * @example
@@ -106,6 +107,8 @@ export type ContractABI = _ContractABI;
  * Used in registries such as `CONTRACTS` and `TOKENS` to pair ABI fragments with token metadata.
  */
 export type ContractInfo = _ContractInfo;
+/** Decoded ABI signature information returned by decoder helpers. */
+export type SignatureInfo = _SignatureInfo;
 /**
  * Creates a typed contract wrapper from ABI fragments.
  * @param abi - Contract ABI fragments to map into callable methods.
@@ -172,7 +175,7 @@ type TokenInfo = { abi: 'ERC20'; symbol: string; decimals: number; price?: numbe
 
 /** Built-in ERC-20 metadata used by decoder and swap helpers. */
 export const TOKENS: Record<string, TokenInfo> = /* @__PURE__ */ (() =>
-  Object.freeze(
+  deepFreeze(
     Object.fromEntries(
       (
         [
@@ -196,8 +199,10 @@ export const TOKENS: Record<string, TokenInfo> = /* @__PURE__ */ (() =>
   ))();
 // <address, contractInfo>
 /** Built-in contract registry used by decode helpers. */
-export const CONTRACTS: Record<string, ContractInfo> = /* @__PURE__ */ (() =>
-  Object.freeze({
+export const CONTRACTS: TRet<Record<string, ContractInfo>> = /* @__PURE__ */ (() =>
+  // Public registries must be fully immutable; shallow freeze leaves ABI fragments
+  // and metadata rewritable.
+  deepFreeze({
     [UNISWAP_V2_ROUTER_CONTRACT]: { abi: UNISWAP_V2_ROUTER, name: 'UNISWAP V2 ROUTER' },
     [KYBER_NETWORK_PROXY_CONTRACT]: { abi: KYBER_NETWORK_PROXY, name: 'KYBER NETWORK PROXY' },
     [UNISWAP_V3_ROUTER_CONTRACT]: { abi: UNISWAP_V3_ROUTER, name: 'UNISWAP V3 ROUTER' },
@@ -221,19 +226,22 @@ export const tokenFromSymbol = (
 ): {
   contract: string;
 } & TokenInfo => {
-  for (let c in TOKENS) {
+  // Built-in registry lookup must ignore enumerable properties injected on Object.prototype.
+  for (const c of Object.keys(TOKENS)) {
     if (TOKENS[c].symbol === symbol) return Object.assign({ contract: c }, TOKENS[c]);
   }
   throw new Error('unknown token');
 };
 
-const getABI = (info: ContractInfo) => {
-  if (typeof info.abi === 'string') {
-    if (info.abi === 'ERC20') return ERC20;
-    else if (info.abi === 'ERC721') return ERC721;
-    else throw new Error(`getABI: unknown abi type=${info.abi}`);
+const getABI = (info: TArg<ContractInfo>) => {
+  const abi = (info as ContractInfo).abi;
+  if (typeof abi === 'string') {
+    if (abi === 'ERC20') return ERC20;
+    else if (abi === 'ERC721') return ERC721;
+    else if (abi === 'ERC1155') return ERC1155;
+    else throw new Error(`getABI: unknown abi type=${abi}`);
   }
-  return info.abi;
+  return abi;
 };
 
 /**
@@ -250,16 +258,18 @@ export type DecoderOpt = {
 // TODO: export? Seems useful enough
 // We cannot have this inside decoder itself,
 // since it will create dependencies on all default contracts
-const getDecoder = (opt: DecoderOpt = {}) => {
+const getDecoder = (opt: TArg<DecoderOpt> = {}) => {
   const decoder = new Decoder();
   const contracts: Record<string, ContractInfo> = {};
   // Add contracts
   if (!opt.noDefault) Object.assign(contracts, CONTRACTS);
   if (opt.customContracts) {
-    for (const k in opt.customContracts) contracts[k.toLowerCase()] = opt.customContracts[k];
+    // Caller registries may be plain objects; inherited keys must not become trusted contracts.
+    for (const k of Object.keys(opt.customContracts))
+      contracts[k.toLowerCase()] = opt.customContracts[k] as ContractInfo;
   }
   // Contract info validation
-  for (const k in contracts) {
+  for (const k of Object.keys(contracts)) {
     if (!addr.isValid(k)) throw new Error(`getDecoder: invalid contract address=${k}`);
     const c = contracts[k];
     if (c.symbol !== undefined && typeof c.symbol !== 'string')
@@ -301,7 +311,12 @@ const getDecoder = (opt: DecoderOpt = {}) => {
  * decodeData(to, data, 100000000000000000n);
  * ```
  */
-export const decodeData = (to: string, data: string, amount?: bigint, opt: DecoderOpt = {}) => {
+export const decodeData = (
+  to: string,
+  data: string,
+  amount?: bigint,
+  opt: TArg<DecoderOpt> = {}
+): SignatureInfo | SignatureInfo[] | undefined => {
   if (!addr.isValid(to)) throw new Error(`decodeData: wrong to=${to}`);
   if (amount !== undefined && typeof amount !== 'bigint')
     throw new Error(`decodeData: wrong amount=${amount}`);
@@ -330,8 +345,13 @@ export const decodeData = (to: string, data: string, amount?: bigint, opt: Decod
  * decodeTx(tx);
  * ```
  */
-export const decodeTx = (transaction: string, opt: DecoderOpt = {}) => {
+export const decodeTx = (
+  transaction: string,
+  opt: TArg<DecoderOpt> = {}
+): SignatureInfo | SignatureInfo[] | undefined => {
   const tx = Transaction.fromHex(transaction);
+  // Contract creation carries initcode, not runtime calldata for an addressed contract.
+  if (tx.raw.to === '0x') return;
   return decodeData(tx.raw.to, tx.raw.data, tx.raw.value, opt);
 };
 
@@ -357,7 +377,12 @@ export const decodeTx = (transaction: string, opt: DecoderOpt = {}) => {
  * decodeEvent(to, topics, data);
  * ```
  */
-export const decodeEvent = (to: string, topics: string[], data: string, opt: DecoderOpt = {}) => {
+export const decodeEvent = (
+  to: string,
+  topics: string[],
+  data: string,
+  opt: TArg<DecoderOpt> = {}
+): SignatureInfo | SignatureInfo[] | undefined => {
   if (!addr.isValid(to)) throw new Error(`decodeEvent: wrong to=${to}`);
   const { decoder, contracts } = getDecoder(opt);
   return decoder.decodeEvent(to, topics, data, {

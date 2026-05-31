@@ -1,9 +1,19 @@
 import { secp256k1 } from '@noble/curves/secp256k1.js';
-import { hexToBytes as _hexToBytes, isBytes as _isBytes, bytesToHex } from '@noble/hashes/utils.js';
+import {
+  hexToBytes as _hexToBytes,
+  isBytes as _isBytes,
+  bytesToHex,
+  type TArg,
+  type TRet,
+} from '@noble/hashes/utils.js';
 import { type Coder, coders } from 'micro-packed';
+
+export type { TArg, TRet } from '@noble/hashes/utils.js';
 
 /**
  * Checks whether a value is a byte array.
+ * @param a - Value to inspect.
+ * @returns True when the value is a `Uint8Array`.
  * @example
  * Accept raw `Uint8Array` values and reject non-byte inputs.
  * ```ts
@@ -97,23 +107,25 @@ export const amounts: {
   maxChainId: bigint;
   maxUint64: bigint;
   maxUint256: bigint;
-} = /* @__PURE__ */ (() => ({
-  GWEI_PRECISION,
-  ETH_PRECISION,
-  GWEI,
-  ETHER,
-  // Disabled with "strict=false"
-  maxAmount: BigInt(1_000_000) * ETHER, // 1M ether for testnets
-  minGasLimit: BigInt(21_000), // 21K wei is used at minimum. Possibly smaller gas limit in 4844 txs?
-  maxGasLimit: BigInt(30_000_000), // 30M wei. A block limit in 2024 is 30M
-  maxGasPrice: BigInt(10_000) * GWEI, // 10K gwei. Arbitrage HFT bots can use more
-  maxNonce: BigInt(131_072), // 2**17, but in spec it's actually 2**64-1
-  maxDataSize: 1_000_000, // Size of .data field. TODO: research
-  maxInitDataSize: 524_288, // EIP-7907
-  maxChainId: BigInt(2 ** 32 - 1),
-  maxUint64: BigInt(2) ** BigInt(64) - BigInt(1),
-  maxUint256: BigInt(2) ** BigInt(256) - BigInt(1),
-}))();
+} = /* @__PURE__ */ (() =>
+  deepFreeze({
+    GWEI_PRECISION,
+    ETH_PRECISION,
+    GWEI,
+    ETHER,
+    // Disabled with "strict=false"
+    maxAmount: BigInt(1_000_000) * ETHER,
+    // 21K wei is used at minimum. Possibly smaller gas limit in 4844 txs?
+    minGasLimit: BigInt(21_000),
+    maxGasLimit: BigInt(30_000_000), // 30M wei. A block limit in 2024 is 30M
+    maxGasPrice: BigInt(10_000) * GWEI, // 10K gwei. Arbitrage HFT bots can use more
+    maxNonce: BigInt(131_072), // 2**17 strict internal library limit
+    maxDataSize: 1_000_000, // Size of .data field. TODO: research
+    maxInitDataSize: 524_288, // EIP-7907
+    maxChainId: BigInt(2 ** 32 - 1),
+    maxUint64: BigInt(2) ** BigInt(64) - BigInt(1),
+    maxUint256: BigInt(2) ** BigInt(256) - BigInt(1),
+  }))();
 
 // For usage with other packed utils via apply
 // This format is pretty much arbitrary:
@@ -127,19 +139,21 @@ export const amounts: {
 // 0x data = Uint8Array([])
 // 0x num = BigInt(0)
 const leadingZerosRe = /^0+/;
-const genEthHex = (keepLeadingZero = true): Coder<Uint8Array, string> => ({
-  decode: (data: string): Uint8Array => {
-    if (typeof data !== 'string') throw new Error('hex data must be a string');
-    let hex = strip0x(data);
-    hex = hex.length & 1 ? `0${hex}` : hex;
-    return _hexToBytes(hex);
-  },
-  encode: (data: Uint8Array): string => {
-    let hex = bytesToHex(data);
-    if (!keepLeadingZero) hex = hex.replace(leadingZerosRe, '');
-    return add0x(hex);
-  },
-});
+const ethQuantityRe = /^0x(?:0|[1-9a-fA-F][0-9a-fA-F]*)$/;
+const genEthHex = (keepLeadingZero = true): TRet<Coder<Bytes, string>> =>
+  deepFreeze({
+    decode: (data: string): TRet<Uint8Array> => {
+      if (typeof data !== 'string') throw new Error('hex data must be a string');
+      let hex = strip0x(data);
+      hex = hex.length & 1 ? `0${hex}` : hex;
+      return _hexToBytes(hex);
+    },
+    encode: (data: TArg<Uint8Array>): string => {
+      let hex = bytesToHex(data);
+      if (!keepLeadingZero) hex = hex.replace(leadingZerosRe, '');
+      return add0x(hex);
+    },
+  }) as TRet<Coder<Bytes, string>>;
 /**
  * Hex coder that preserves encoded leading zero nibbles.
  * @example
@@ -148,7 +162,7 @@ const genEthHex = (keepLeadingZero = true): Coder<Uint8Array, string> => ({
  * ethHex.encode(new Uint8Array([1]));
  * ```
  */
-export const ethHex: Coder<Bytes, string> = /* @__PURE__ */ genEthHex(true);
+export const ethHex: TRet<Coder<Bytes, string>> = /* @__PURE__ */ genEthHex(true);
 /**
  * Hex coder that strips redundant leading zero nibbles on encode.
  * @example
@@ -157,7 +171,7 @@ export const ethHex: Coder<Bytes, string> = /* @__PURE__ */ genEthHex(true);
  * ethHexNoLeadingZero.encode(new Uint8Array([1]));
  * ```
  */
-export const ethHexNoLeadingZero: Coder<Bytes, string> = /* @__PURE__ */ genEthHex(false);
+export const ethHexNoLeadingZero: TRet<Coder<Bytes, string>> = /* @__PURE__ */ genEthHex(false);
 
 const ethHexStartRe = /^0[xX]/;
 /**
@@ -188,10 +202,40 @@ export function strip0x(hex: string): string {
   return hex.replace(ethHexStartRe, '');
 }
 
+type EthHexNum = {
+  decode: (hex: string) => bigint;
+  encode: (num: number | bigint) => string;
+};
 /**
- * Encodes a number as even-length Ethereum hex.
+ * Ethereum JSON-RPC quantity coder for bigint-like values.
+ * @example
+ * Round-trip a zero RPC quantity.
+ * ```ts
+ * ethHexNum.decode(ethHexNum.encode(0n));
+ * ```
+ */
+export const ethHexNum: TRet<EthHexNum> = /* @__PURE__ */ deepFreeze({
+  decode(hex: string): bigint {
+    if (typeof hex !== 'string')
+      throw new TypeError('expected RPC quantity string, got ' + typeof hex);
+    // EIP-1474 §Quantity: 0x-prefixed, fewest possible hex digits, and zero is 0x0.
+    if (!ethQuantityRe.test(hex)) throw new Error('invalid RPC quantity');
+    return BigInt(hex);
+  },
+  encode(num: number | bigint): string {
+    if (typeof num !== 'number' && typeof num !== 'bigint')
+      throw new TypeError('expected number or bigint, got ' + typeof num);
+    if (typeof num === 'number' && !Number.isSafeInteger(num))
+      throw new Error('invalid RPC quantity');
+    if (num < 0) throw new Error('invalid RPC quantity');
+    return add0x(num.toString(16));
+  },
+});
+
+/**
+ * Encodes a number as a minimal Ethereum RPC quantity.
  * @param num - Number or bigint to encode.
- * @returns Prefixed even-length hex string.
+ * @returns Prefixed minimal hex quantity string.
  * @example
  * Encode an integer as an Ethereum RPC quantity.
  * ```ts
@@ -199,9 +243,7 @@ export function strip0x(hex: string): string {
  * ```
  */
 export function numberTo0xHex(num: number | bigint): string {
-  const hex = num.toString(16);
-  const x2 = hex.length & 1 ? `0${hex}` : hex;
-  return add0x(x2);
+  return ethHexNum.encode(num);
 }
 
 /**
@@ -232,6 +274,28 @@ export function hexToNumber(hex: string): bigint {
  */
 export function isObject(item: unknown): item is Record<string, any> {
   return item != null && typeof item === 'object';
+}
+
+/**
+ * Recursively freezes an object graph in place.
+ * @param obj - Value to freeze.
+ * @returns The same value after freezing every reachable array or object value.
+ * @example
+ * Freeze registry-style constants before exporting them.
+ * ```ts
+ * deepFreeze({ a: [{ b: 1 }] });
+ * ```
+ */
+export function deepFreeze<T>(obj: T): T {
+  if (!isObject(obj)) return obj;
+  if (Object.isFrozen(obj)) return obj;
+  Object.freeze(obj);
+  if (Array.isArray(obj)) {
+    for (const item of obj) deepFreeze(item);
+  } else {
+    for (const value of Object.values(obj)) deepFreeze(value);
+  }
+  return obj;
 }
 
 /**
@@ -267,13 +331,13 @@ export function astr(str: unknown): void {
  * ```
  */
 export function sign(
-  hash: Uint8Array,
-  privKey: Uint8Array,
-  extraEntropy: boolean | Uint8Array = true
-) {
+  hash: TArg<Uint8Array>,
+  privKey: TArg<Uint8Array>,
+  extraEntropy: TArg<boolean | Uint8Array> = true
+): ReturnType<typeof secp256k1.Signature.fromBytes> {
   const sig = secp256k1.sign(hash, privKey, {
     prehash: false,
-    extraEntropy: extraEntropy,
+    extraEntropy: extraEntropy as boolean | Uint8Array,
     format: 'recovered',
   });
   // yellow paper page 26 bans recovery 2 or 3
@@ -309,7 +373,11 @@ export type RawSig = {
  * verify(sig.toBytes('compact'), hash, sig.recoverPublicKey(hash).toBytes());
  * ```
  */
-export function verify(sig: Uint8Array, hash: Uint8Array, publicKey: Uint8Array) {
+export function verify(
+  sig: TArg<Uint8Array>,
+  hash: TArg<Uint8Array>,
+  publicKey: TArg<Uint8Array>
+): boolean {
   return secp256k1.verify(sig, hash, publicKey, { prehash: false });
 }
 /**
@@ -317,6 +385,7 @@ export function verify(sig: Uint8Array, hash: Uint8Array, publicKey: Uint8Array)
  * @param sig - Compact signature bytes or a {@link RawSig} pair.
  * @param bit - Recovery bit used to reconstruct the public key.
  * @returns Recoverable secp256k1 signature instance.
+ * @throws If the recovery bit is not valid for Ethereum signatures. {@link Error}
  * @example
  * Rebuild a recoverable signature from compact bytes plus the recovery bit.
  * ```ts
@@ -328,7 +397,12 @@ export function verify(sig: Uint8Array, hash: Uint8Array, publicKey: Uint8Array)
  * initSig(sig.toBytes('compact'), sig.recovery!);
  * ```
  */
-export function initSig(sig: Uint8Array | RawSig, bit: number) {
+export function initSig(
+  sig: TArg<Uint8Array | RawSig>,
+  bit: number
+): ReturnType<typeof secp256k1.Signature.fromBytes> {
+  // Ethereum signatures use y-parity recovery bits 0/1; noble also supports raw secp256k1 ids 2/3.
+  if (bit !== 0 && bit !== 1) throw new Error('invalid recovery bit');
   const s = isBytes(sig)
     ? secp256k1.Signature.fromBytes(sig, 'compact')
     : new secp256k1.Signature(sig.r, sig.s);
@@ -352,11 +426,11 @@ export function cloneDeep<T>(obj: T): T {
     return obj.map(cloneDeep) as unknown as T;
   } else if (typeof obj === 'bigint') {
     return BigInt(obj) as unknown as T;
-  } else if (typeof obj === 'object') {
+  } else if (obj !== null && typeof obj === 'object') {
     // should be last, so it won't catch other types
     let res: any = {};
-    // TODO: hasOwnProperty?
-    for (let key in obj) res[key] = cloneDeep(obj[key]);
+    // Clone only owned fields; inherited enumerable data is not part of the object's shape.
+    for (let key in obj) if (Object.hasOwn(obj, key)) res[key] = cloneDeep(obj[key]);
     return res;
   } else return obj;
 }
@@ -366,6 +440,7 @@ export function cloneDeep<T>(obj: T): T {
  * @param obj - Object to copy.
  * @param keys - Keys removed from the returned object.
  * @returns Copy of `obj` without the selected keys.
+ * @throws If the input is not a plain object. {@link Error}
  * @example
  * Drop fields before reusing a partially signed payload.
  * ```ts
@@ -376,6 +451,9 @@ export function omit<T extends object, K extends Extract<keyof T, string>>(
   obj: T,
   ...keys: K[]
 ): Omit<T, K> {
+  // Plain-object helper only: arrays and byte arrays carry positional data, not removable fields.
+  if (obj === null || Array.isArray(obj) || isBytes(obj))
+    throw new Error('omit: expected plain object');
   let res: any = Object.assign({}, obj);
   for (let key of keys) delete res[key];
   return res;
@@ -386,6 +464,7 @@ export function omit<T extends object, K extends Extract<keyof T, string>>(
  * @param a - First array.
  * @param b - Second array.
  * @returns Tuple list aligned by index.
+ * @throws If the arrays have different lengths. {@link Error}
  * @example
  * Pair related values by index.
  * ```ts
@@ -393,8 +472,9 @@ export function omit<T extends object, K extends Extract<keyof T, string>>(
  * ```
  */
 export function zip<A, B>(a: A[], b: B[]): [A, B][] {
+  if (a.length !== b.length) throw new Error('zip: length mismatch');
   let res: [A, B][] = [];
-  for (let i = 0; i < Math.max(a.length, b.length); i++) res.push([a[i], b[i]]);
+  for (let i = 0; i < a.length; i++) res.push([a[i], b[i]]);
   return res;
 }
 
@@ -419,7 +499,9 @@ export const createDecimal = (precision: number, round?: boolean): Coder<bigint,
  * weieth.decode('1');
  * ```
  */
-export const weieth: Coder<bigint, string> = /* @__PURE__ */ createDecimal(ETH_PRECISION);
+export const weieth: Coder<bigint, string> = /* @__PURE__ */ deepFreeze(
+  /* @__PURE__ */ createDecimal(ETH_PRECISION)
+);
 /**
  * Decimal coder for gwei strings.
  * @example
@@ -428,7 +510,9 @@ export const weieth: Coder<bigint, string> = /* @__PURE__ */ createDecimal(ETH_P
  * weigwei.decode('1');
  * ```
  */
-export const weigwei: Coder<bigint, string> = /* @__PURE__ */ createDecimal(GWEI_PRECISION);
+export const weigwei: Coder<bigint, string> = /* @__PURE__ */ deepFreeze(
+  /* @__PURE__ */ createDecimal(GWEI_PRECISION)
+);
 
 // legacy. TODO: remove
 /**
@@ -450,6 +534,11 @@ export const ethDecimal = weieth satisfies typeof weieth as typeof weieth;
  */
 export const gweiDecimal = weigwei satisfies typeof weigwei as typeof weigwei;
 
+type Formatters = {
+  perCentDecimal: (precision: number, price: number) => bigint;
+  formatBigint: (amount: bigint, base: bigint, precision: number, fixed?: boolean) => string;
+  fromWei: (wei: string | number | bigint) => string;
+};
 /**
  * Miscellaneous number-formatting helpers used by wallet UIs.
  * @example
@@ -458,10 +547,14 @@ export const gweiDecimal = weigwei satisfies typeof weigwei as typeof weigwei;
  * formatters.fromWei(1n);
  * ```
  */
-export const formatters = {
+export const formatters: TRet<Formatters> = /* @__PURE__ */ deepFreeze({
   // returns decimal that costs exactly $0.01 in given precision (using price)
   // formatDecimal(perCentDecimal(prec, price), prec) * price == '0.01'
   perCentDecimal(precision: number, price: number): bigint {
+    if (!Number.isSafeInteger(precision) || precision <= 0)
+      throw new Error('perCentDecimal: wrong precision');
+    // Zero price has no finite one-cent amount; reject before the bigint division.
+    if (!Number.isFinite(price) || price <= 0) throw new Error('perCentDecimal: wrong price');
     const fiatPrec = weieth;
     //x * price = 0.01
     //x = 0.01/price = 1/100 / price = 1/(100*price)
@@ -493,6 +586,8 @@ export const formatters = {
     const fr = (str: string) => str.replace(/0+$/, '');
     const prefix =
       BigInt(`1${fr(fractionAfterPrecision)}`) === BigInt(`1${fr(fraction)}`) ? '' : '~';
+    // With zero precision there are no fractional digits to place after a decimal point.
+    if (precision === 0) return `${prefix}${whole}`;
     return `${prefix}${whole}.${fractionAfterPrecision}`;
   },
 
@@ -501,8 +596,9 @@ export const formatters = {
     const ETHER = BigInt(10) ** BigInt(ETH_PRECISION);
     wei = BigInt(wei);
     if (wei < BigInt(GWEI) / BigInt(10)) return wei + 'wei';
+    // This branch scales by gwei (nanoether), not by microether.
     if (wei >= BigInt(GWEI) && wei < ETHER / BigInt(1000))
-      return formatters.formatBigint(wei, BigInt(GWEI), 9, false) + 'μeth';
+      return formatters.formatBigint(wei, BigInt(GWEI), 9, false) + 'gwei';
     return formatters.formatBigint(wei, ETHER, ETH_PRECISION, false) + 'eth';
   },
-};
+});

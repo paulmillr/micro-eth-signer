@@ -45,6 +45,22 @@ describe('Fees', () => {
     // 21k * 2 = 42
     deepStrictEqual(tx2.fee, 1161300000000000n);
   });
+  should('EIP4844', () => {
+    const tx = Transaction.prepare(
+      {
+        type: 'eip4844',
+        to: '0x27b1fdb04752bbc536007a920d24acb045561c26',
+        nonce: 1n,
+        value: weieth.decode('1'),
+        maxFeePerGas: weigwei.decode('2'),
+        maxPriorityFeePerGas: weigwei.decode('1'),
+        maxFeePerBlobGas: 3n,
+        blobVersionedHashes: ['0x01' + '00'.repeat(31), '0x01' + '11'.repeat(31)],
+      },
+      false
+    );
+    deepStrictEqual(tx.fee, 42000000000000n + 2n * 131072n * 3n);
+  });
   should('Whole amount', () => {
     const tx = Transaction.prepare({
       to: '0x27b1fdb04752bbc536007a920d24acb045561c26',

@@ -1,5 +1,5 @@
 import { keccak_256 } from '@noble/hashes/sha3.js';
-import { concatBytes, hexToBytes } from '@noble/hashes/utils.js';
+import { concatBytes, hexToBytes, type TArg } from '@noble/hashes/utils.js';
 import { type ContractInfo, createContract } from '../advanced/abi-decoder.ts';
 import {
   default as UNISWAP_V2_ROUTER,
@@ -24,7 +24,11 @@ const PAIR_CONTRACT = [
   },
 ] as const;
 
-export function create2(from: Uint8Array, salt: Uint8Array, initCodeHash: Uint8Array): string {
+export function create2(
+  from: TArg<Uint8Array>,
+  salt: TArg<Uint8Array>,
+  initCodeHash: TArg<Uint8Array>
+): string {
   const cat = concatBytes(new Uint8Array([255]), from, salt, initCodeHash);
   return ethHex.encode(keccak_256(cat).slice(12));
 }
@@ -61,11 +65,11 @@ export function amount(
     if (amountOut === BigInt(0) || amountOut >= reserveOut)
       throw new Error('Uniswap: Insufficient reserves');
     return amountOut;
-  } else if (amountOut)
+  } else if (amountOut) {
     return (
       (reserveIn * amountOut * BigInt(1000)) / ((reserveOut - amountOut) * BigInt(997)) + BigInt(1)
     );
-  else throw new Error('uniswap.amount: provide only one amount');
+  } else throw new Error('uniswap.amount: provide only one amount');
 }
 
 export type Path = { path: string[]; amountIn: bigint; amountOut: bigint };
@@ -127,7 +131,8 @@ const ROUTER_CONTRACT = createContract(UNISWAP_V2_ROUTER, undefined, UNISWAP_V2_
 
 const TX_DEFAULT_OPT = {
   ...uni.DEFAULT_SWAP_OPT,
-  feeOnTransfer: false, // have no idea what it is
+  // Use Router02 SupportingFeeOnTransferTokens variants for exact-input swaps on taxed tokens.
+  feeOnTransfer: false,
 };
 
 export function txData(
@@ -158,10 +163,18 @@ export function txData(
   if (!uni.isValidUniAddr(input) || !uni.isValidUniAddr(output) || !uni.isValidEthAddr(to))
     throw new Error('Invalid address');
   if (input === 'eth' && output === 'eth') throw new Error('Both input and output is ETH!');
-  if (input === 'eth' && path.path[0] !== uni.WETH)
+  const pathInput = path.path[0] ? uni.wrapContract(path.path[0]) : undefined;
+  const pathOutput = path.path[path.path.length - 1]
+    ? uni.wrapContract(path.path[path.path.length - 1])
+    : undefined;
+  if (input === 'eth' && pathInput !== uni.WETH)
     throw new Error('Input is ETH but path starts with different contract');
-  if (output === 'eth' && path.path[path.path.length - 1] !== uni.WETH)
+  if (output === 'eth' && pathOutput !== uni.WETH)
     throw new Error('Output is ETH but path ends with different contract');
+  if (input !== 'eth' && pathInput !== uni.wrapContract(input))
+    throw new Error('Input token does not match path');
+  if (output !== 'eth' && pathOutput !== uni.wrapContract(output))
+    throw new Error('Output token does not match path');
   if ((amountIn && amountOut) || (!amountIn && !amountOut))
     throw new Error('uniswap.txData: provide only one amount');
   if (amountOut && opt.feeOnTransfer) throw new Error('Exact output + feeOnTransfer is impossible');
@@ -192,7 +205,8 @@ export function txData(
   return { to: UNISWAP_V2_ROUTER_CONTRACT, value, data, allowance };
 }
 
-// Here goes Exchange API. Everything above is SDK. Supports almost everything from official sdk except liquidity stuff.
+// Here goes Exchange API. Everything above is SDK. Supports almost everything
+// from official sdk except liquidity stuff.
 export default class UniswapV2 extends uni.UniswapAbstract {
   name = 'Uniswap V2';
   contract: string = UNISWAP_V2_ROUTER_CONTRACT;

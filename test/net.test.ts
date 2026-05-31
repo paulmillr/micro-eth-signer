@@ -1,9 +1,12 @@
 import { describe, should } from '@paulmillr/jsbt/test.js';
 import * as mftch from 'micro-ftch';
-import { deepStrictEqual, rejects } from 'node:assert';
-import { tokenFromSymbol } from '../src/advanced/abi.ts';
+import { deepStrictEqual, rejects, throws } from 'node:assert';
+import { ERC20, ERC1155, events, tokenFromSymbol } from '../src/advanced/abi.ts';
+import { Transaction } from '../src/index.ts';
+import { TOKENS as CHAINLINK_TOKENS } from '../src/net/chainlink.ts';
+import { awaitDeep, UniswapAbstract } from '../src/net/uniswap-common.ts';
 import { calcTransfersDiff, Chainlink, ENS, UniswapV3, Web3Provider } from '../src/net.ts';
-import { numberTo0xHex, weieth } from '../src/utils.ts';
+import { ethHexNum, numberTo0xHex, weieth } from '../src/utils.ts';
 
 // These real network responses from real nodes, captured by replayable
 import { default as NET_CHAINLINK_REPLAY } from './vectors/rpc/chainlink.js';
@@ -13,15 +16,15 @@ import { default as NET_UNISWAP_REPLAY } from './vectors/rpc/uniswap.js';
 
 import { default as NET_TX_ALLOWANCES } from './vectors/rpc/net_allowances.js';
 import { default as NET_TX_CONTRACT_CAPABILITIES } from './vectors/rpc/net_contract_capabilities.js';
+import { default as NET_TX_CLAMP_REPLAY } from './new_vectors/rpc/net_transfers_clamp.js';
 import { default as NET_TX_TOKEN_BALANCES } from './vectors/rpc/net_token_balances.js';
 import { default as NET_TX_TOKEN_INFO } from './vectors/rpc/net_token_info.js';
 import { default as NET_TX_TOKEN_TRANSFERS_NFT } from './vectors/rpc/net_token_transfers_nft.js';
-import { default as NET_TX_BATCH_REPLAY } from './vectors/rpc/net_transfers_batch.js';
-import { default as NET_TX_SLOW_REPLAY } from './vectors/rpc/net_transfers_slow.js';
+import { default as NET_TX_BATCH_CLAMP_REPLAY } from './new_vectors/rpc/net_transfers_batch_clamp.js';
+import { default as NET_TX_SLOW_CLAMP_REPLAY } from './new_vectors/rpc/net_transfers_slow_clamp.js';
 import { default as NET_TX_BASIC } from './vectors/rpc/net_tx_basic.js';
 import { default as NET_TX_TRANSFERS } from './vectors/rpc/net_tx_transfers.js';
 import { default as NET_TX_VECTORS } from './vectors/rpc/parsed-transactions.js';
-
 
 const NODE_URL = 'https://NODE_URL/';
 const getKey = (url, opt) => JSON.stringify({ url: NODE_URL, opt });
@@ -45,11 +48,12 @@ function deepMapToObject(input) {
 
 // API change workaround
 const fixTx = (tx) => {
-  if (tx.info.accessList)
+  if (tx.info.accessList) {
     tx.info.accessList = tx.info.accessList.map(([address, storageKeys]) => ({
       address,
       storageKeys,
     }));
+  }
   return tx;
 };
 
@@ -65,6 +69,136 @@ describe('Network', () => {
     const chainlink = new Chainlink(initProv(NET_CHAINLINK_REPLAY));
     const btcPrice = await chainlink.coinPrice('BTC');
     deepStrictEqual(btcPrice, 69369.10271);
+  });
+  should('Chainlink token metadata uses canonical token addresses', () => {
+    const canonical = {};
+    for (const symbol in CHAINLINK_TOKENS) {
+      try {
+        canonical[symbol] = tokenFromSymbol(symbol)!.contract;
+      } catch {}
+    }
+    deepStrictEqual(
+      Object.fromEntries(
+        Object.entries(canonical).map(([symbol]) => [
+          symbol,
+          CHAINLINK_TOKENS[symbol].tokenContract,
+        ])
+      ),
+      canonical
+    );
+  });
+  should('formats RPC quantities', () => {
+    deepStrictEqual(
+      {
+        encoded: [
+          ethHexNum.encode(0n),
+          ethHexNum.encode(1),
+          numberTo0xHex(15),
+          ethHexNum.encode(1024n),
+        ],
+        decoded: [
+          ethHexNum.decode('0x0'),
+          ethHexNum.decode('0x1'),
+          ethHexNum.decode('0xf'),
+          ethHexNum.decode('0x400'),
+        ],
+      },
+      { encoded: ['0x0', '0x1', '0xf', '0x400'], decoded: [0n, 1n, 15n, 1024n] }
+    );
+    for (const hex of ['', '0x', '1', '0x00', '0x01', '0x0400'])
+      throws(() => ethHexNum.decode(hex), /invalid RPC quantity/);
+  });
+  should('awaitDeep preserves null leaves', async () => {
+    deepStrictEqual(await awaitDeep({ a: null, b: [Promise.resolve(1), null] }, false), {
+      a: null,
+      b: [1, null],
+    });
+  });
+  should('awaitDeep preserves user awaitDeep keys', async () => {
+    deepStrictEqual(await awaitDeep({ awaitDeep: true, value: Promise.resolve('ok') }, false), {
+      awaitDeep: true,
+      value: 'ok',
+    });
+  });
+  should('validates swap token input', async () => {
+    const univ3 = new UniswapV3({
+      ethCall: async () => {
+        throw new Error('unexpected ethCall');
+      },
+      estimateGas: async () => {
+        throw new Error('unexpected estimateGas');
+      },
+      call: async () => {
+        throw new Error('unexpected rpc call');
+      },
+    });
+    const DAI = tokenFromSymbol('DAI');
+    await rejects(() => univ3.swap('DAI' as any, DAI, '1'), /uniswap\.swap: wrong fromCoin/);
+    await rejects(() => univ3.swap('eth', { contract: DAI.contract } as any, '1'), /wrong toCoin/);
+  });
+  should('swap only hides missing-route bestPath errors', async () => {
+    class TestUni extends UniswapAbstract {
+      name = 'Test';
+      contract = '0x0000000000000000000000000000000000000001';
+      err: Error;
+      constructor(err: Error) {
+        super({
+          ethCall: async () => {
+            throw new Error('unexpected ethCall');
+          },
+          estimateGas: async () => {
+            throw new Error('unexpected estimateGas');
+          },
+          call: async () => {
+            throw new Error('unexpected rpc call');
+          },
+        });
+        this.err = err;
+      }
+      bestPath() {
+        throw this.err;
+      }
+      txData() {
+        throw new Error('unexpected txData');
+      }
+    }
+    const DAI = tokenFromSymbol('DAI');
+    await rejects(() => new TestUni(new Error('boom')).swap('eth', DAI, '1'), /boom/);
+    deepStrictEqual(
+      await new TestUni(new Error('uniswap: cannot find path')).swap('eth', DAI, '1'),
+      undefined
+    );
+  });
+  should('UniswapV3 wraps eth before direct quote', async () => {
+    const DAI = tokenFromSymbol('DAI');
+    const WETH = tokenFromSymbol('WETH');
+    const word = (n) => n.toString(16).padStart(64, '0');
+    let directCalls = 0;
+    const univ3 = new UniswapV3({
+      ethCall: async ({ data }) => {
+        if (!data) throw new Error('missing calldata');
+        if (data.startsWith('0xcdca1753')) throw new Error('multihop unavailable');
+        if (data.startsWith('0xf7729d43')) {
+          const call = data.toLowerCase();
+          if (!call.includes(WETH.contract.slice(2))) throw new Error('missing WETH tokenIn');
+          if (!call.includes(DAI.contract.slice(2))) throw new Error('missing DAI tokenOut');
+          directCalls++;
+          return `0x${word(2000000000000000000n)}`;
+        }
+        throw new Error(`unexpected ethCall ${data.slice(0, 10)}`);
+      },
+      estimateGas: async () => {
+        throw new Error('unexpected estimateGas');
+      },
+      call: async () => {
+        throw new Error('unexpected rpc call');
+      },
+    });
+    const swap = await univ3.swap('eth', DAI, '1', { slippagePercent: 0.5, ttl: 1800 });
+    deepStrictEqual(
+      { name: swap?.name, expectedAmount: swap?.expectedAmount, directCalls },
+      { name: 'Uniswap V3', expectedAmount: '2', directCalls: 3 }
+    );
   });
 
   should('UniswapV3', async () => {
@@ -97,6 +231,615 @@ describe('Network', () => {
       data: '0xc04b8d59000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa960450000000000000000000000000000000000000000000000000000019077fd30000000000000000000000000000000000000000000000000001111d67bb1bb0000000000000000000000000000000000000000000000000102d6906ca33403f40b0000000000000000000000000000000000000000000000000000000000000042c02aaa39b223fe8d0a0e5c4f27ead9083c756cc20001f4a0b86991c6218b36c1d19d4a2e9eb0ce3606eb480001f46b175474e89094c44da98b954eedeac495271d0f000000000000000000000000000000000000000000000000000000000000',
     });
     deepStrictEqual(gasLimit, 236082n);
+  });
+  should('rejects empty RPC quantities', async () => {
+    const archive = new Web3Provider({
+      call: async () => '',
+    });
+    await rejects(() => archive.estimateGas({}), /RPC quantity/);
+  });
+  should('validates callbacks', async () => {
+    const archive = new Web3Provider({
+      call: async () => {
+        throw new Error('unexpected rpc call');
+      },
+    });
+    await rejects(
+      () =>
+        archive.internalTransactions('0x0000000000000000000000000000000000000000', {
+          txInfoCallback: 1,
+        }),
+      /validateCallbacks: txInfoCallback should be function/
+    );
+  });
+  should('validates pagination blocks', async () => {
+    const archive = new Web3Provider({
+      call: async () => {
+        throw new Error('unexpected rpc call');
+      },
+    });
+    await rejects(
+      () =>
+        archive.internalTransactions('0x0000000000000000000000000000000000000000', {
+          fromBlock: -1,
+          toBlock: 0,
+        }),
+      /validatePagination: wrong field fromBlock=-1/
+    );
+    await rejects(
+      () =>
+        archive.internalTransactions('0x0000000000000000000000000000000000000000', {
+          fromBlock: 0,
+          toBlock: -1,
+        }),
+      /validatePagination: wrong field toBlock=-1/
+    );
+  });
+  should('validates OTS trace page size', async () => {
+    const archive = new Web3Provider({
+      call: async () => {
+        throw new Error('unexpected rpc call');
+      },
+    });
+    await rejects(
+      () =>
+        archive.internalTransactionsOTS('0x0000000000000000000000000000000000000000', {
+          perRequestOTS: 1.5,
+        }),
+      /validateTraceOpts: wrong field perRequestOTS=1.5/
+    );
+  });
+  should('validates trace batch size', async () => {
+    const archive = new Web3Provider({
+      call: async () => {
+        throw new Error('unexpected rpc call');
+      },
+    });
+    await rejects(
+      () =>
+        archive.internalTransactions('0x0000000000000000000000000000000000000000', {
+          fromBlock: 2,
+          toBlock: 1,
+          limitTrace: 0,
+        }),
+      /validateTraceOpts: wrong field limitTrace=0/
+    );
+    await rejects(
+      () =>
+        archive.internalTransactions('0x0000000000000000000000000000000000000000', {
+          fromBlock: 2,
+          toBlock: 1,
+          limitTrace: -1,
+        }),
+      /validateTraceOpts: wrong field limitTrace=-1/
+    );
+  });
+  should('validates log batch size', async () => {
+    const archive = new Web3Provider({
+      call: async () => {
+        throw new Error('unexpected rpc call');
+      },
+    });
+    await rejects(
+      () => archive.ethLogs([], { fromBlock: 2, toBlock: 1, limitLogs: 0 }),
+      /validateLogOpts: wrong field limitLogs=0/
+    );
+    await rejects(
+      () => archive.ethLogs([], { fromBlock: 2, toBlock: 1, limitLogs: -1 }),
+      /validateLogOpts: wrong field limitLogs=-1/
+    );
+  });
+  should('validates direct log options', async () => {
+    const archive = new Web3Provider({
+      call: async () => {
+        throw new Error('unexpected rpc call');
+      },
+    });
+    await rejects(
+      () => archive.ethLogsSingle([], { fromBlock: -1 }),
+      /validatePagination: wrong field fromBlock=-1/
+    );
+    await rejects(
+      () => archive.ethLogsSingle([], { txCallback: 1 }),
+      /validateCallbacks: txCallback should be function/
+    );
+  });
+  should('validates WETH transfer address', async () => {
+    const archive = new Web3Provider({
+      call: async () => {
+        throw new Error('unexpected rpc call');
+      },
+    });
+    await rejects(() => archive.wethTransfers(1 as any), /wethTransfers: wrong address/);
+  });
+  should('validates ERC1155 transfer address', async () => {
+    const archive = new Web3Provider({
+      call: async () => {
+        throw new Error('unexpected rpc call');
+      },
+    });
+    await rejects(() => archive.erc1155Transfers(1 as any), /erc1155Transfers: wrong address/);
+  });
+  should('validates allowances address', async () => {
+    const archive = new Web3Provider({
+      call: async () => {
+        throw new Error('unexpected rpc call');
+      },
+    });
+    await rejects(() => archive.allowances(1 as any), /allowances: wrong address/);
+  });
+  should('keeps token balance snapshots independent', () => {
+    const contract = '0x0000000000000000000000000000000000000001';
+    const from = '0x0000000000000000000000000000000000000002';
+    const mid = '0x0000000000000000000000000000000000000003';
+    const to = '0x0000000000000000000000000000000000000004';
+    const diff = calcTransfersDiff([
+      {
+        hash: '0x01',
+        reverted: false,
+        transfers: [],
+        tokenTransfers: [
+          {
+            contract,
+            abi: 'ERC20',
+            totalSupply: 10n,
+            from,
+            to: mid,
+            tokens: new Map([[1n, 3n]]),
+          },
+        ],
+        info: {},
+      },
+      {
+        hash: '0x02',
+        reverted: false,
+        transfers: [],
+        tokenTransfers: [
+          {
+            contract,
+            abi: 'ERC20',
+            totalSupply: 10n,
+            from: mid,
+            to,
+            tokens: new Map([[1n, 2n]]),
+          },
+        ],
+        info: {},
+      },
+    ] as any);
+    deepStrictEqual(
+      diff.map((i) => deepMapToObject(i.tokenBalances)),
+      [
+        {
+          [contract]: {
+            [from]: { '1': -3n },
+            [mid]: { '1': 3n },
+          },
+        },
+        {
+          [contract]: {
+            [from]: { '1': -3n },
+            [mid]: { '1': 1n },
+            [to]: { '1': 2n },
+          },
+        },
+      ]
+    );
+  });
+  should('clamps eth_getLogs batches to toBlock', async () => {
+    const calls = [];
+    const archive = new Web3Provider({
+      call: async (method, ...args) => {
+        calls.push([method, args]);
+        return [];
+      },
+    });
+    await archive.ethLogs(['0x1234'], {
+      fromBlock: 15065022,
+      toBlock: 15065022,
+      limitLogs: 6,
+    });
+    deepStrictEqual(calls, [
+      [
+        'eth_getLogs',
+        [
+          {
+            topics: ['0x1234'],
+            fromBlock: '0xe5dfbe',
+            toBlock: '0xe5dfbe',
+          },
+        ],
+      ],
+    ]);
+  });
+  should('deduplicates overlapping eth_getLogs batches', async () => {
+    const log = {
+      address: '0x0000000000000000000000000000000000000001',
+      topics: [],
+      data: '0x',
+      blockNumber: '0x3',
+      transactionHash: `0x${'11'.repeat(32)}`,
+      transactionIndex: '0x0',
+      blockHash: `0x${'22'.repeat(32)}`,
+      logIndex: '0x0',
+      removed: false,
+    };
+    const archive = new Web3Provider({
+      call: async () => {
+        return [{ ...log }];
+      },
+    });
+    deepStrictEqual(await archive.ethLogs([], { fromBlock: 1, toBlock: 3, limitLogs: 2 }), [
+      {
+        ...log,
+        blockNumber: 3,
+        transactionIndex: 0,
+        logIndex: 0,
+      },
+    ]);
+  });
+  should('rebuilds zero-fee EIP-1559 transaction info', async () => {
+    const tx = Transaction.prepare(
+      {
+        type: 'eip1559',
+        chainId: 1n,
+        nonce: 0n,
+        maxPriorityFeePerGas: 0n,
+        maxFeePerGas: 0n,
+        gasLimit: 21000n,
+        to: '0x0000000000000000000000000000000000000001',
+        value: 0n,
+        data: '0x',
+        accessList: [],
+      },
+      false
+    ).signBy('6b911fd37cdf5c81d4c0adb1ab7fa822ed253ab0ad9aa18d77257c88b29b718e', false);
+    const raw = tx.raw as any;
+    const hash = `0x${tx.hash}`;
+    const info = {
+      blockHash: `0x${'11'.repeat(32)}`,
+      blockNumber: '0x1',
+      hash,
+      accessList: [],
+      transactionIndex: '0x0',
+      type: '0x2',
+      nonce: '0x0',
+      input: '0x',
+      r: numberTo0xHex(raw.r),
+      s: numberTo0xHex(raw.s),
+      chainId: '0x1',
+      v: numberTo0xHex(raw.yParity),
+      gas: '0x5208',
+      maxPriorityFeePerGas: '0x0',
+      maxFeePerGas: '0x0',
+      from: tx.sender,
+      to: raw.to,
+      value: '0x0',
+      gasPrice: '0x0',
+    };
+    const receipt = {
+      transactionHash: hash,
+      blockHash: info.blockHash,
+      blockNumber: '0x1',
+      logsBloom: `0x${'00'.repeat(256)}`,
+      gasUsed: '0x5208',
+      contractAddress: null,
+      cumulativeGasUsed: '0x5208',
+      transactionIndex: '0x0',
+      from: info.from,
+      to: info.to,
+      type: '0x2',
+      effectiveGasPrice: '0x0',
+      logs: [],
+      status: '0x1',
+    };
+    const archive = new Web3Provider({
+      call: async (method, txHash) => {
+        deepStrictEqual(txHash, hash);
+        if (method === 'eth_getTransactionByHash') return info;
+        if (method === 'eth_getTransactionReceipt') return receipt;
+        throw new Error('unexpected rpc call');
+      },
+    });
+    deepStrictEqual(await archive.txInfo(hash), {
+      type: 'eip1559',
+      info: {
+        ...info,
+        blockNumber: 1,
+        transactionIndex: 0,
+        type: 2,
+        nonce: 0n,
+        r: raw.r,
+        s: raw.s,
+        chainId: 1n,
+        v: BigInt(raw.yParity),
+        gas: 21000n,
+        maxPriorityFeePerGas: 0n,
+        maxFeePerGas: 0n,
+        value: 0n,
+        gasPrice: 0n,
+      },
+      receipt: {
+        ...receipt,
+        blockNumber: 1,
+        gasUsed: 21000n,
+        cumulativeGasUsed: 21000n,
+        transactionIndex: 0,
+        type: 2,
+        effectiveGasPrice: 0n,
+        status: 1,
+      },
+      raw: tx.toHex(),
+    });
+  });
+  should('rebuilds zero-gas-price legacy transaction info', async () => {
+    const tx = Transaction.prepare(
+      {
+        type: 'legacy',
+        chainId: 1n,
+        nonce: 0n,
+        gasPrice: 0n,
+        gasLimit: 21000n,
+        to: '0x0000000000000000000000000000000000000001',
+        value: 0n,
+        data: '0x',
+      },
+      false
+    ).signBy('6b911fd37cdf5c81d4c0adb1ab7fa822ed253ab0ad9aa18d77257c88b29b718e', false);
+    const raw = tx.raw as any;
+    const hash = `0x${tx.hash}`;
+    const info = {
+      blockHash: `0x${'11'.repeat(32)}`,
+      blockNumber: '0x1',
+      hash,
+      transactionIndex: '0x0',
+      type: '0x0',
+      nonce: '0x0',
+      input: '0x',
+      r: numberTo0xHex(raw.r),
+      s: numberTo0xHex(raw.s),
+      chainId: '0x1',
+      v: numberTo0xHex(BigInt(raw.yParity) + 37n),
+      gas: '0x5208',
+      from: tx.sender,
+      to: raw.to,
+      value: '0x0',
+      gasPrice: '0x0',
+    };
+    const receipt = {
+      transactionHash: hash,
+      blockHash: info.blockHash,
+      blockNumber: '0x1',
+      logsBloom: `0x${'00'.repeat(256)}`,
+      gasUsed: '0x5208',
+      contractAddress: null,
+      cumulativeGasUsed: '0x5208',
+      transactionIndex: '0x0',
+      from: info.from,
+      to: info.to,
+      type: '0x0',
+      effectiveGasPrice: '0x0',
+      logs: [],
+      status: '0x1',
+    };
+    const archive = new Web3Provider({
+      call: async (method, txHash) => {
+        deepStrictEqual(txHash, hash);
+        if (method === 'eth_getTransactionByHash') return info;
+        if (method === 'eth_getTransactionReceipt') return receipt;
+        throw new Error('unexpected rpc call');
+      },
+    });
+    deepStrictEqual(await archive.txInfo(hash), {
+      type: 'legacy',
+      info: {
+        ...info,
+        blockNumber: 1,
+        transactionIndex: 0,
+        type: 0,
+        nonce: 0n,
+        r: raw.r,
+        s: raw.s,
+        chainId: 1n,
+        v: 37n,
+        gas: 21000n,
+        value: 0n,
+        gasPrice: 0n,
+      },
+      receipt: {
+        ...receipt,
+        blockNumber: 1,
+        gasUsed: 21000n,
+        cumulativeGasUsed: 21000n,
+        transactionIndex: 0,
+        type: 0,
+        effectiveGasPrice: 0n,
+        status: 1,
+      },
+      raw: tx.toHex(),
+    });
+  });
+  should('validates transaction info hash', async () => {
+    const calls = [];
+    const archive = new Web3Provider({
+      call: async (method, ...args) => {
+        calls.push([method, args]);
+        throw new Error('unexpected rpc call');
+      },
+    });
+    await rejects(() => archive.txInfo(1 as any), /txInfo: wrong txHash/);
+    await rejects(() => archive.txInfo('0x1234'), /txInfo: wrong txHash/);
+    await rejects(() => archive.txInfo(`0x${'zz'.repeat(32)}`), /txInfo: wrong txHash/);
+    deepStrictEqual(calls, []);
+  });
+  should('formats trace_filter bounds', async () => {
+    const calls = [];
+    const archive = new Web3Provider({
+      call: async (method, ...args) => {
+        calls.push([method, args]);
+        return [];
+      },
+    });
+    await archive.traceFilterSingle('0x0000000000000000000000000000000000000000', {
+      fromBlock: 1,
+    });
+    await archive.traceFilterSingle('0x0000000000000000000000000000000000000000', {
+      fromBlock: 1,
+      toBlock: 2,
+    });
+    deepStrictEqual(calls, [
+      [
+        'trace_filter',
+        [
+          {
+            fromBlock: '0x1',
+            toAddress: ['0x0000000000000000000000000000000000000000'],
+            fromAddress: ['0x0000000000000000000000000000000000000000'],
+          },
+        ],
+      ],
+      [
+        'trace_filter',
+        [
+          {
+            fromBlock: '0x1',
+            toAddress: ['0x0000000000000000000000000000000000000000'],
+            fromAddress: ['0x0000000000000000000000000000000000000000'],
+            toBlock: '0x2',
+          },
+        ],
+      ],
+    ]);
+  });
+  should('validates OTS search blocks', async () => {
+    const archive = new Web3Provider({
+      call: async () => {
+        throw new Error('unexpected rpc call');
+      },
+    });
+    await rejects(
+      () => archive.ots_searchBefore('0x0000000000000000000000000000000000000000', -1),
+      /ots_searchBefore: wrong block/
+    );
+    await rejects(
+      () => archive.ots_searchAfter('0x0000000000000000000000000000000000000000', -1),
+      /ots_searchAfter: wrong block/
+    );
+    await rejects(
+      () => archive.ots_searchBefore('0x0000000000000000000000000000000000000000', 0, 0),
+      /ots_searchBefore: wrong pageSize/
+    );
+    await rejects(
+      () => archive.ots_searchAfter('0x0000000000000000000000000000000000000000', 0, -1),
+      /ots_searchAfter: wrong pageSize/
+    );
+  });
+  should('stops OTS internal search at toBlock', async () => {
+    const addr = '0x0000000000000000000000000000000000000000';
+    let calls = 0;
+    const archive = new Web3Provider({
+      call: async (method, ...args) => {
+        deepStrictEqual(method, 'ots_searchTransactionsAfter');
+        deepStrictEqual(args, [addr, 15065021, 1]);
+        if (++calls > 1) throw new Error('repeated ots request');
+        return {
+          txs: [
+            {
+              hash: '0x1111111111111111111111111111111111111111111111111111111111111111',
+              blockNumber: 15065024,
+              type: '0x0',
+              transactionIndex: '0x0',
+            },
+          ],
+          receipts: [
+            {
+              transactionHash: '0x1111111111111111111111111111111111111111111111111111111111111111',
+              blockNumber: 15065024,
+              type: '0x0',
+              transactionIndex: '0x0',
+              status: '0x1',
+              logs: [],
+            },
+          ],
+          firstPage: false,
+          lastPage: false,
+        };
+      },
+    });
+    deepStrictEqual(
+      await archive.internalTransactionsOTS(addr, {
+        fromBlock: 15065022,
+        toBlock: 15065022,
+        perRequestOTS: 1,
+      }),
+      []
+    );
+    deepStrictEqual(calls, 1);
+  });
+  should('clamps trace_filter batches to toBlock', async () => {
+    const calls = [];
+    const archive = new Web3Provider({
+      call: async (method, ...args) => {
+        calls.push([method, args]);
+        return [];
+      },
+    });
+    await archive.internalTransactions('0x0000000000000000000000000000000000000000', {
+      fromBlock: 15065022,
+      toBlock: 15065022,
+      limitTrace: 6,
+    });
+    deepStrictEqual(calls, [
+      [
+        'trace_filter',
+        [
+          {
+            fromBlock: '0xe5dfbe',
+            toAddress: ['0x0000000000000000000000000000000000000000'],
+            fromAddress: ['0x0000000000000000000000000000000000000000'],
+            toBlock: '0xe5dfbe',
+          },
+        ],
+      ],
+    ]);
+  });
+  should('does not overlap trace_filter batches', async () => {
+    const calls = [];
+    const archive = new Web3Provider({
+      call: async (method, ...args) => {
+        calls.push([method, args]);
+        return [];
+      },
+    });
+    await archive.internalTransactions('0x0000000000000000000000000000000000000000', {
+      fromBlock: 1,
+      toBlock: 5,
+      limitTrace: 2,
+    });
+    deepStrictEqual(calls, [
+      [
+        'trace_filter',
+        [
+          {
+            fromBlock: '0x1',
+            toAddress: ['0x0000000000000000000000000000000000000000'],
+            fromAddress: ['0x0000000000000000000000000000000000000000'],
+            toBlock: '0x3',
+          },
+        ],
+      ],
+      [
+        'trace_filter',
+        [
+          {
+            fromBlock: '0x4',
+            toAddress: ['0x0000000000000000000000000000000000000000'],
+            fromAddress: ['0x0000000000000000000000000000000000000000'],
+            toBlock: '0x5',
+          },
+        ],
+      ],
+    ]);
   });
   should('Transcations basic', async () => {
     // Random address from abi tests which test for fingerprinted data in encoding.
@@ -229,7 +972,10 @@ describe('Network', () => {
 
   should('transfers: limitLogs', async () => {
     const addr = '0x6994eCe772cC4aBb5C9993c065a34C94544A4087';
-    const replay = mftch.replayable(fetch, NET_TX_SLOW_REPLAY, { getKey, offline: true });
+    const replay = mftch.replayable(fetch, NET_TX_SLOW_CLAMP_REPLAY, {
+      getKey,
+      offline: true,
+    });
     const ftch = mftch.ftch(replay, { concurrencyLimit: 1 });
     const archive = new Web3Provider(mftch.jsonrpc(ftch, 'http://SOME_NODE/'));
     const transfers = (
@@ -244,9 +990,49 @@ describe('Network', () => {
     deepStrictEqual(diffLast.balances[addr.toLowerCase()], 130036071955215n);
   });
 
+  should('transfers: limitLogs clamp capture', async () => {
+    const addr = '0x6994eCe772cC4aBb5C9993c065a34C94544A4087';
+    const replay = mftch.replayable(fetch, NET_TX_CLAMP_REPLAY, { getKey, offline: true });
+    const ftch = mftch.ftch(replay, { concurrencyLimit: 1 });
+    const archive = new Web3Provider(mftch.jsonrpc(ftch, 'http://SOME_NODE/'));
+    const transfers = (
+      await archive.transfers(addr, {
+        limitLogs: 50,
+        fromBlock: 15_065_022,
+        toBlock: 15_065_121,
+      })
+    ).map((i) => ({ ...i, info: undefined }));
+    const diff = calcTransfersDiff(transfers);
+    const diffLast = diff[diff.length - 1];
+    deepStrictEqual(
+      {
+        hashes: transfers.map((i) => i.hash),
+        blocks: transfers.map((i) => i.block),
+        balance: diffLast.balances[addr.toLowerCase()],
+      },
+      {
+        hashes: [
+          '0x9fbc50b02d051e96d6c4cfdab6744c12306e3fb9fe8decafd14bca21653ddcd7',
+          '0xd0afcc12366ae3a44092ab607c2870bfb5f07213253368dcd87686da57bf1945',
+          '0xdc582d7f8a8394dcfc17cabea6bbcc680ff3fd0fd70d588ebd9559d230b7e854',
+          '0x6a2f1965bd322e370511577ffc8f8af4d65222db6f97252471465eed83c8cfb5',
+          '0x86c5a4350c973cd990105ae461522d01aa313fecbe0a67727e941cd9cee28997',
+          '0x69ea0cc22fea6cb5dc6a44a34a872c141e760f306a30646addcd973d778553d9',
+          '0x01bcf8e4be50fcf0537865f658dc912f43710f2fe579aa46f133105d58945eb5',
+          '0xdfdc260522826c1772fd522cda30344ad35ab42b86d2f239dd43106a91e3f54c',
+        ],
+        blocks: [
+          15_065_024, 15_065_027, 15_065_030, 15_065_053, 15_065_081, 15_065_101, 15_065_105,
+          15_065_121,
+        ],
+        balance: -1681823829451014121n,
+      }
+    );
+  });
+
   should('transfers: limitLogs + batch', async () => {
     const addr = '0x6994eCe772cC4aBb5C9993c065a34C94544A4087';
-    const replay = mftch.replayable(fetch, NET_TX_BATCH_REPLAY, {
+    const replay = mftch.replayable(fetch, NET_TX_BATCH_CLAMP_REPLAY, {
       getKey,
       offline: true,
     });
@@ -366,6 +1152,287 @@ describe('Network', () => {
       contract: '0x52903256dd18d85c2dc4a6c999907c9793ea61e3',
       error: 'not contract or destructed',
     });
+  });
+  should('preserves zero ERC20 decimals', async () => {
+    const contract = '0x0000000000000000000000000000000000000001';
+    const archive = new Web3Provider({
+      call: async (method, ...args) => {
+        if (method === 'eth_getCode') return '0x01';
+        if (method === 'eth_call') {
+          const [{ data }] = args;
+          if (data.startsWith('0x01ffc9a7')) return `0x${'00'.repeat(32)}`;
+          if (data === '0x313ce567') return `0x${'00'.repeat(32)}`;
+          if (data === '0x18160ddd') return `0x${'00'.repeat(31)}01`;
+        }
+        throw new Error('optional metadata unavailable');
+      },
+    });
+    deepStrictEqual(await archive.tokenInfo(contract), {
+      contract,
+      abi: 'ERC20',
+      name: undefined,
+      symbol: undefined,
+      totalSupply: 1n,
+      decimals: 0,
+    });
+  });
+  should('handles empty ERC20 tokenIds filter', async () => {
+    const address = '0x0000000000000000000000000000000000000002';
+    const contract = '0x0000000000000000000000000000000000000001';
+    const archive = new Web3Provider({
+      call: async (method, ...args) => {
+        if (method === 'eth_getCode') return '0x01';
+        if (method === 'eth_call') {
+          const [{ data }] = args;
+          if (data.startsWith('0x01ffc9a7')) return `0x${'00'.repeat(32)}`;
+          if (data === '0x18160ddd') return `0x${'00'.repeat(31)}01`;
+          if (data.startsWith('0x70a08231')) return `0x${'00'.repeat(31)}05`;
+        }
+        throw new Error('optional metadata unavailable');
+      },
+    });
+    deepStrictEqual(await archive.tokenBalances(address, [contract], { [contract]: new Set() }), {
+      [contract]: new Map(),
+    });
+  });
+  should('validates tokenURI token input', async () => {
+    const archive = new Web3Provider({
+      call: async () => {
+        throw new Error('unexpected rpc call');
+      },
+    });
+    await rejects(() => archive.tokenURI(123 as any, 1n), /tokenURI: wrong token/);
+  });
+  should('validates tokenBalances token input', async () => {
+    const archive = new Web3Provider({
+      call: async () => {
+        throw new Error('unexpected rpc call');
+      },
+    });
+    const address = '0x0000000000000000000000000000000000000002';
+    await rejects(() => archive.tokenBalances(address, [123 as any]), /tokenBalances: wrong token/);
+    await rejects(
+      () => archive.tokenBalances(address, [{ abi: 'ERC20' } as any]),
+      /tokenBalances: wrong token/
+    );
+  });
+  should('ignores malformed ERC1155 batch transfer logs', async () => {
+    const word = (n) => n.toString(16).padStart(64, '0');
+    const address = '0x0000000000000000000000000000000000000002';
+    const to = '0x0000000000000000000000000000000000000003';
+    const contract = '0x0000000000000000000000000000000000000001';
+    const hash = `0x${'11'.repeat(32)}`;
+    const blockHash = `0x${'22'.repeat(32)}`;
+    const batch = events(ERC1155).TransferBatch;
+    const log = {
+      address: contract,
+      topics: batch.topics({
+        operator: address,
+        from: address,
+        to,
+        ids: null,
+        values: null,
+      }),
+      data: `0x${word(64n)}${word(160n)}${word(2n)}${word(7n)}${word(8n)}${word(1n)}${word(9n)}`,
+      blockNumber: '0x1',
+      transactionHash: hash,
+      transactionIndex: '0x0',
+      blockHash,
+      logIndex: '0x0',
+      removed: false,
+    };
+    const archive = new Web3Provider({
+      call: async (method, ...args) => {
+        if (method === 'trace_filter') return [];
+        if (method === 'eth_getBlockByNumber')
+          return { timestamp: '0x1', size: '0x0', number: '0x1' };
+        if (method === 'eth_getTransactionByHash') {
+          return {
+            blockHash,
+            blockNumber: '0x1',
+            hash,
+            transactionIndex: '0x0',
+            type: '0x2',
+            nonce: '0x0',
+            input: '0x',
+            r: '0x1',
+            s: '0x1',
+            chainId: '0x1',
+            v: '0x0',
+            gas: '0x5208',
+            maxPriorityFeePerGas: '0x1',
+            maxFeePerGas: '0x1',
+            from: address,
+            to,
+            value: '0x0',
+            gasPrice: '0x1',
+            accessList: [],
+          };
+        }
+        if (method === 'eth_getTransactionReceipt') {
+          return {
+            transactionHash: hash,
+            blockHash,
+            blockNumber: '0x1',
+            logsBloom: `0x${'00'.repeat(256)}`,
+            gasUsed: '0x0',
+            contractAddress: null,
+            cumulativeGasUsed: '0x0',
+            transactionIndex: '0x0',
+            from: address,
+            to,
+            type: '0x2',
+            effectiveGasPrice: '0x0',
+            logs: [log],
+            status: '0x1',
+          };
+        }
+        if (method === 'eth_getCode') return '0x01';
+        if (method === 'eth_call') {
+          const [{ data }] = args;
+          if (data.startsWith('0x01ffc9a7')) {
+            const cap = data.slice(10, 18);
+            return `0x${'00'.repeat(31)}${cap === '01ffc9a7' || cap === 'd9b67a26' ? '01' : '00'}`;
+          }
+          throw new Error('optional metadata unavailable');
+        }
+        if (method === 'eth_getLogs') {
+          const [req] = args;
+          if (req.topics[0] === log.topics[0] && req.topics[2] === log.topics[2]) return [log];
+          return [];
+        }
+        throw new Error(`unexpected rpc call ${method}`);
+      },
+    });
+    const txs = await archive.transfers(address, {
+      fromBlock: 1,
+      toBlock: 1,
+      limitTrace: 1,
+      ignoreTxRebuildErrors: true,
+    } as any);
+    deepStrictEqual(
+      txs.map((i) => i.tokenTransfers),
+      [[]]
+    );
+  });
+  should('discovers token info from related transaction receipts', async () => {
+    const word = (n) => n.toString(16).padStart(64, '0');
+    const address = '0x0000000000000000000000000000000000000002';
+    const traceTo = '0x0000000000000000000000000000000000000003';
+    const from = '0x0000000000000000000000000000000000000004';
+    const to = '0x0000000000000000000000000000000000000005';
+    const contract = '0x0000000000000000000000000000000000000001';
+    const hash = `0x${'11'.repeat(32)}`;
+    const blockHash = `0x${'22'.repeat(32)}`;
+    const transfer = events(ERC20).Transfer;
+    let traceCalls = 0;
+    const log = {
+      address: contract,
+      topics: transfer.topics({ from, to, value: null }),
+      data: `0x${word(5n)}`,
+      blockNumber: '0x1',
+      transactionHash: hash,
+      transactionIndex: '0x0',
+      blockHash,
+      logIndex: '0x0',
+      removed: false,
+    };
+    const archive = new Web3Provider({
+      call: async (method, ...args) => {
+        if (method === 'trace_filter') {
+          return traceCalls++
+            ? []
+            : [
+                {
+                  action: { from: address, to: traceTo, gas: '0x0', input: '0x', value: '0x1' },
+                  blockHash,
+                  blockNumber: 1,
+                  result: { gasUsed: '0x0', output: '0x' },
+                  subtraces: 0,
+                  traceAddress: [],
+                  transactionHash: hash,
+                  transactionPosition: 0,
+                  type: 'call',
+                },
+              ];
+        }
+        if (method === 'eth_getBlockByNumber')
+          return { timestamp: '0x1', size: '0x0', number: '0x1' };
+        if (method === 'eth_getTransactionByHash') {
+          return {
+            blockHash,
+            blockNumber: '0x1',
+            hash,
+            transactionIndex: '0x0',
+            type: '0x2',
+            nonce: '0x0',
+            input: '0x',
+            r: '0x1',
+            s: '0x1',
+            chainId: '0x1',
+            v: '0x0',
+            gas: '0x5208',
+            maxPriorityFeePerGas: '0x1',
+            maxFeePerGas: '0x1',
+            from: address,
+            to: traceTo,
+            value: '0x0',
+            gasPrice: '0x1',
+            accessList: [],
+          };
+        }
+        if (method === 'eth_getTransactionReceipt') {
+          return {
+            transactionHash: hash,
+            blockHash,
+            blockNumber: '0x1',
+            logsBloom: `0x${'00'.repeat(256)}`,
+            gasUsed: '0x0',
+            contractAddress: null,
+            cumulativeGasUsed: '0x0',
+            transactionIndex: '0x0',
+            from: address,
+            to: traceTo,
+            type: '0x2',
+            effectiveGasPrice: '0x0',
+            logs: [log],
+            status: '0x1',
+          };
+        }
+        if (method === 'eth_getCode') return '0x01';
+        if (method === 'eth_call') {
+          const [{ data }] = args;
+          if (data.startsWith('0x01ffc9a7')) return `0x${'00'.repeat(32)}`;
+          if (data.startsWith('0x18160ddd')) return `0x${word(100n)}`;
+          throw new Error('optional metadata unavailable');
+        }
+        if (method === 'eth_getLogs') return [];
+        throw new Error(`unexpected rpc call ${method}`);
+      },
+    });
+    const txs = await archive.transfers(address, {
+      fromBlock: 1,
+      toBlock: 1,
+      ignoreTxRebuildErrors: true,
+    } as any);
+    deepStrictEqual(
+      txs.map((i) => i.tokenTransfers),
+      [
+        [
+          {
+            contract,
+            abi: 'ERC20',
+            name: undefined,
+            symbol: undefined,
+            totalSupply: 100n,
+            decimals: undefined,
+            from,
+            to,
+            tokens: new Map([[1n, 5n]]),
+          },
+        ],
+      ]
+    );
   });
   should('tokenBalances', async () => {
     const replay = mftch.replayable(fetch, NET_TX_TOKEN_BALANCES, { getKey, offline: true });

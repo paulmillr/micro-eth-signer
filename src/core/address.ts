@@ -1,18 +1,29 @@
 /*! micro-eth-signer - MIT License (c) 2021 Paul Miller (paulmillr.com) */
 import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { keccak_256 } from '@noble/hashes/sha3.js';
-import { bytesToHex, hexToBytes, utf8ToBytes } from '@noble/hashes/utils.js';
-import { add0x, astr, ethHex, strip0x } from '../utils.ts';
+import { bytesToHex, hexToBytes, utf8ToBytes, type TArg } from '@noble/hashes/utils.js';
+import { add0x, astr, deepFreeze, ethHex, strip0x, type TRet } from '../utils.ts';
 
-export const addr = {
-  RE: /^(0[xX])?([0-9a-fA-F]{40})?$/ satisfies RegExp as RegExp,
-  parse: (
-    address: string,
-    allowEmpty = false
-  ): {
-    hasPrefix: boolean;
-    data: string;
-  } => {
+type ParsedAddress = {
+  hasPrefix: boolean;
+  data: string;
+};
+type AddressUtils = {
+  RE: RegExp;
+  parse: (address: string, allowEmpty?: boolean) => ParsedAddress;
+  addChecksum: (nonChecksummedAddress: string, allowEmpty?: boolean) => string;
+  fromPublicKey: (key: TArg<string | Uint8Array>) => string;
+  fromSecretKey: (key: TArg<string | Uint8Array>) => string;
+  fromPrivateKey: (key: TArg<string | Uint8Array>) => string;
+  random: () => { privateKey: string; address: string };
+  isValid: (checksummedAddress: string, allowEmpty?: boolean) => boolean;
+};
+
+export const addr: TRet<AddressUtils> = /* @__PURE__ */ deepFreeze({
+  // Internal splitter for parse(): the body is optional so parse() can distinguish bare `0x`
+  // / empty input from malformed address lengths before enforcing the final non-empty rule.
+  RE: Object.freeze(/^(0[xX])?([0-9a-fA-F]{40})?$/) as RegExp,
+  parse: (address: string, allowEmpty = false): ParsedAddress => {
     astr(address);
     // NOTE: empty address allowed for 'to', but would be mistake for other address fields.
     // '0x' instead of null/undefined because we don't want to send contract creation tx if user
@@ -50,7 +61,7 @@ export const addr = {
   /**
    * Creates address from secp256k1 public key.
    */
-  fromPublicKey: (key: string | Uint8Array): string => {
+  fromPublicKey: (key: TArg<string | Uint8Array>): string => {
     if (!key) throw new Error('invalid public key: ' + key);
     if (typeof key === 'string') key = hexToBytes(strip0x(key));
     const pub65b = secp256k1.Point.fromBytes(key).toBytes(false);
@@ -62,11 +73,11 @@ export const addr = {
   /**
    * Creates address from ETH private key in hex or ui8a format.
    */
-  fromSecretKey: (key: string | Uint8Array): string => {
+  fromSecretKey: (key: TArg<string | Uint8Array>): string => {
     if (typeof key === 'string') key = hexToBytes(strip0x(key));
     return addr.fromPublicKey(secp256k1.getPublicKey(key, false));
   },
-  fromPrivateKey: (key: string | Uint8Array): string => {
+  fromPrivateKey: (key: TArg<string | Uint8Array>): string => {
     return addr.fromSecretKey(key);
   },
 
@@ -84,7 +95,7 @@ export const addr = {
    * @param allowEmpty - allows '0x'
    */
   isValid: (checksummedAddress: string, allowEmpty = false): boolean => {
-    let parsed: { hasPrefix: boolean; data: string };
+    let parsed: ParsedAddress;
     try {
       parsed = addr.parse(checksummedAddress, allowEmpty);
     } catch (error) {
@@ -97,4 +108,4 @@ export const addr = {
     if (address === low || address === upp) return true;
     return addr.addChecksum(low, allowEmpty) === checksummedAddress;
   },
-};
+});

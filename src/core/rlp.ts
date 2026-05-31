@@ -1,6 +1,6 @@
 import { numberToVarBytesBE } from '@noble/curves/utils.js';
 import * as P from 'micro-packed';
-import { isBytes, type Bytes } from '../utils.ts';
+import { deepFreeze, isBytes, type Bytes, type TArg, type TRet } from '../utils.ts';
 
 // Spec-compliant RLP in 100 lines of code.
 /** Public input accepted by the RLP encoder. */
@@ -66,13 +66,15 @@ const rlpInner = P.tag(P.map(P.bits(1), { byte: 0, complex: 1 }), {
       RLPLength,
       P.array(
         null,
-        P.lazy((): P.CoderType<InternalRLP> => rlpInner)
+        P.lazy((): TRet<P.CoderType<InternalRLP>> => rlpInner as TRet<P.CoderType<InternalRLP>>)
       )
     ),
   }),
 });
 
-const phex = P.hex(null);
+// Ethereum JSON-RPC Data uses 0x-prefixed byte strings; keep that separate from
+// plain UTF-8 strings.
+const phex = P.hex(null, { with0x: true });
 const pstr = P.string(null);
 const empty = Uint8Array.of();
 
@@ -81,45 +83,53 @@ const empty = Uint8Array.of();
  * Real type of rlp is `Item = Uint8Array | Item[]`.
  * Strings/number encoded to Uint8Array, but not decoded back: type information is lost.
  */
-export const RLP: P.CoderType<RLPInput> = P.apply(rlpInner, {
-  encode(from: InternalRLP): RLPInput {
-    if (from.TAG === 'byte') return new Uint8Array([from.data]);
-    if (from.TAG !== 'complex') throw new Error('RLP.encode: unexpected type');
-    const complex = from.data;
-    if (complex.TAG === 'string') {
-      if (complex.data.length === 1 && complex.data[0] < 128)
-        throw new Error('RLP.encode: wrong string length encoding, should use single byte mode');
-      return complex.data;
-    }
-    if (complex.TAG === 'list') return complex.data.map((i) => this.encode(i));
-    throw new Error('RLP.encode: unknown TAG');
-  },
-  decode(data: RLPInput): InternalRLP {
-    if (data == null) return this.decode(empty);
-    switch (typeof data) {
-      case 'object':
-        if (isBytes(data)) {
-          if (data.length === 1) {
-            const head = data[0];
-            if (head < 128) return { TAG: 'byte', data: head };
+export const RLP: TRet<P.CoderType<RLPInput>> = /* @__PURE__ */ deepFreeze(
+  P.apply(rlpInner, {
+    encode(from: TArg<InternalRLP>): TRet<RLPInput> {
+      if (from.TAG === 'byte') return new Uint8Array([from.data]) as TRet<RLPInput>;
+      if (from.TAG !== 'complex') throw new Error('RLP.encode: unexpected type');
+      const complex = from.data;
+      if (complex.TAG === 'string') {
+        if (complex.data.length === 1 && complex.data[0] < 128)
+          throw new Error('RLP.encode: wrong string length encoding, should use single byte mode');
+        return complex.data as TRet<RLPInput>;
+      }
+      if (complex.TAG === 'list') return complex.data.map((i) => this.encode(i)) as TRet<RLPInput>;
+      throw new Error('RLP.encode: unknown TAG');
+    },
+    decode(data: TArg<RLPInput>): TRet<InternalRLP> {
+      if (data == null) return this.decode(empty);
+      switch (typeof data) {
+        case 'object':
+          if (isBytes(data)) {
+            if (data.length === 1) {
+              const head = data[0];
+              if (head < 128) return { TAG: 'byte', data: head } as TRet<InternalRLP>;
+            }
+            return { TAG: 'complex', data: { TAG: 'string', data: data } } as TRet<InternalRLP>;
           }
-          return { TAG: 'complex', data: { TAG: 'string', data: data } };
-        }
-        if (Array.isArray(data))
-          return { TAG: 'complex', data: { TAG: 'list', data: data.map((i) => this.decode(i)) } };
-        throw new Error('RLP.encode: unknown type');
-      case 'number':
-        if (data < 0) throw new Error('RLP.encode: invalid integer as argument, must be unsigned');
-        if (data === 0) return this.decode(empty);
-        return this.decode(numberToVarBytesBE(data));
-      case 'bigint':
-        if (data < BigInt(0))
-          throw new Error('RLP.encode: invalid integer as argument, must be unsigned');
-        return this.decode(numberToVarBytesBE(data));
-      case 'string':
-        return this.decode(data.startsWith('0x') ? phex.encode(data) : pstr.encode(data));
-      default:
-        throw new Error('RLP.encode: unknown type');
-    }
-  },
-});
+          if (Array.isArray(data)) {
+            return {
+              TAG: 'complex',
+              data: { TAG: 'list', data: data.map((i) => this.decode(i)) },
+            } as TRet<InternalRLP>;
+          }
+          throw new Error('RLP.encode: unknown type');
+        case 'number':
+          if (data < 0)
+            throw new Error('RLP.encode: invalid integer as argument, must be unsigned');
+          if (data === 0) return this.decode(empty);
+          return this.decode(numberToVarBytesBE(data));
+        case 'bigint':
+          if (data < BigInt(0))
+            throw new Error('RLP.encode: invalid integer as argument, must be unsigned');
+          if (data === BigInt(0)) return this.decode(empty);
+          return this.decode(numberToVarBytesBE(data));
+        case 'string':
+          return this.decode(data.startsWith('0x') ? phex.encode(data) : pstr.encode(data));
+        default:
+          throw new Error('RLP.encode: unknown type');
+      }
+    },
+  })
+) as TRet<P.CoderType<RLPInput>>;
