@@ -7,7 +7,7 @@ import * as yaml from 'yaml';
 import * as SSZ from '../src/advanced/ssz.ts';
 import { __dirname } from './util.ts';
 
-const SSZ_PATH = `${__dirname}/new_vectors/ssz`;
+const SSZ_PATH = `${__dirname}/vectors/ssz`;
 const yamlOpt = { intAsBigInt: true };
 
 const readGenericVectors = (path) => {

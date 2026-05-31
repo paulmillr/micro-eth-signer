@@ -11,7 +11,7 @@ import { __dirname } from './util.ts';
 const PATH = './test/vectors/consensus-spec-tests/tests/general/phase0/ssz_generic/';
 const STATIC_PATH = './test/vectors/consensus-spec-tests/tests/mainnet/deneb/ssz_static/';
 const SSZ_PATH = `${__dirname}/vectors/ssz`;
-const NEW_SSZ_PATH = `${__dirname}/new_vectors/ssz`;
+const NEW_SSZ_PATH = `${__dirname}/vectors/ssz`;
 const yamlOpt = { intAsBigInt: true };
 
 // TODO: think about additional package to export vectors?

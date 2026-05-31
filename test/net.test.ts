@@ -1,11 +1,11 @@
 import { describe, should } from '@paulmillr/jsbt/test.js';
 import * as mftch from 'micro-ftch';
 import { deepStrictEqual, rejects, throws } from 'node:assert';
-import { ERC20, ERC1155, events, tokenFromSymbol } from '../src/advanced/abi.ts';
+import { ERC1155, ERC20, events, tokenFromSymbol } from '../src/advanced/abi.ts';
 import { Transaction } from '../src/index.ts';
+import { calcTransfersDiff, Chainlink, ENS, UniswapV3, Web3Provider } from '../src/net.ts';
 import { TOKENS as CHAINLINK_TOKENS } from '../src/net/chainlink.ts';
 import { awaitDeep, UniswapAbstract } from '../src/net/uniswap-common.ts';
-import { calcTransfersDiff, Chainlink, ENS, UniswapV3, Web3Provider } from '../src/net.ts';
 import { ethHexNum, numberTo0xHex, weieth } from '../src/utils.ts';
 
 // These real network responses from real nodes, captured by replayable
@@ -16,12 +16,12 @@ import { default as NET_UNISWAP_REPLAY } from './vectors/rpc/uniswap.js';
 
 import { default as NET_TX_ALLOWANCES } from './vectors/rpc/net_allowances.js';
 import { default as NET_TX_CONTRACT_CAPABILITIES } from './vectors/rpc/net_contract_capabilities.js';
-import { default as NET_TX_CLAMP_REPLAY } from './new_vectors/rpc/net_transfers_clamp.js';
 import { default as NET_TX_TOKEN_BALANCES } from './vectors/rpc/net_token_balances.js';
 import { default as NET_TX_TOKEN_INFO } from './vectors/rpc/net_token_info.js';
 import { default as NET_TX_TOKEN_TRANSFERS_NFT } from './vectors/rpc/net_token_transfers_nft.js';
-import { default as NET_TX_BATCH_CLAMP_REPLAY } from './new_vectors/rpc/net_transfers_batch_clamp.js';
-import { default as NET_TX_SLOW_CLAMP_REPLAY } from './new_vectors/rpc/net_transfers_slow_clamp.js';
+import { default as NET_TX_BATCH_CLAMP_REPLAY } from './vectors/rpc/net_transfers_batch_clamp.js';
+import { default as NET_TX_CLAMP_REPLAY } from './vectors/rpc/net_transfers_clamp.js';
+import { default as NET_TX_SLOW_CLAMP_REPLAY } from './vectors/rpc/net_transfers_slow_clamp.js';
 import { default as NET_TX_BASIC } from './vectors/rpc/net_tx_basic.js';
 import { default as NET_TX_TRANSFERS } from './vectors/rpc/net_tx_transfers.js';
 import { default as NET_TX_VECTORS } from './vectors/rpc/parsed-transactions.js';
