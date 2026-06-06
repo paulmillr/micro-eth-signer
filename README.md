@@ -6,7 +6,7 @@ Minimal library for Ethereum transactions, addresses and smart contracts.
 - 🔻 Tree-shakeable: unused code is excluded from your builds
 - 🔍 Reliable: 150MB of test vectors from EIPs, ethers and viem
 - ✍️ Transactions, addresses, messages
-- 🦺 Type-safe ABI, RLP, SSZ, KZG, PeerDAS
+- 🦺 Type-safe ABI, RLP, SSZ, KZG, PeerDAS, BLS validator keys
 - 👓 Clear Signing
 - 🌍 Archive node connector
 - 🪶 32KB (gzipped) for core+deps: 4x smaller than alternatives
@@ -31,6 +31,7 @@ If you don't like NPM, a standalone [eth-signer.js](https://github.com/paulmillr
 - Advanced
   - [Type-safe ABI parsing](#type-safe-abi-parsing)
   - [Clear Signing](#clear-signing)
+  - [BLS EIP-2333 validator keys](#bls-eip-2333-validator-keys)
   - [RLP & SSZ](#rlp--ssz)
   - [KZG & PeerDAS](#kzg--peerdas)
 - Archive node connector
@@ -474,6 +475,33 @@ const topics = [
 const data = '0x00000000000000000000000000000000000000000000003635c9adc5dea00000';
 const einfo = decodeEvent(to, topics, data);
 console.log(einfo);
+```
+
+### BLS EIP-2333 validator keys
+
+`micro-eth-signer/advanced/bls.js` implements EIP-2333, EIP-2334, and EIP-2335
+for Ethereum consensus validator keys.
+
+Online demo: [eip2333-tool](https://iancoleman.io/eip2333/)
+
+> `npm install @scure/bip39` for mnemonic-to-seed helpers
+
+```ts
+import { mnemonicToSeedSync } from '@scure/bip39';
+import { createDerivedEIP2334Keystores } from 'micro-eth-signer/advanced/bls.js';
+
+const password = 'my_password';
+const mnemonic = 'letter advice cage absurd amount doctor acoustic avoid letter advice cage above';
+const keyType = 'signing'; // or 'withdrawal'
+const indexes = [0, 1, 2, 3]; // create 4 keys
+
+const keystores = createDerivedEIP2334Keystores(
+  password,
+  'scrypt',
+  mnemonicToSeedSync(mnemonic, ''),
+  keyType,
+  indexes
+);
 ```
 
 ### RLP & SSZ

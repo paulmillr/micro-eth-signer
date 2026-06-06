@@ -14,6 +14,7 @@
     "!_type_test.*"
   ],
   "dependencies": {
+    "@noble/ciphers": "2.2.0",
     "@noble/curves": "2.2.0",
     "@noble/hashes": "2.2.0",
     "micro-packed": "0.9.0"
@@ -46,6 +47,7 @@
     "./net.js": "./net.js",
     "./utils.js": "./utils.js",
     "./advanced/abi.js": "./advanced/abi.js",
+    "./advanced/bls.js": "./advanced/bls.js",
     "./advanced/kzg.js": "./advanced/kzg.js",
     "./advanced/ssz.js": "./advanced/ssz.js"
   },

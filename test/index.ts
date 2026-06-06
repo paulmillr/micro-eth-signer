@@ -1,5 +1,6 @@
 import { should } from '@paulmillr/jsbt/test.js';
 
+import './bls.test.ts';
 import './fee.test.ts';
 import './rlp.test.ts';
 import './tx.test.ts';
