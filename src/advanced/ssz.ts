@@ -1815,11 +1815,9 @@ const PendingConsolidation: ContainerCoder<{
   target_index: ValidatorIndex,
 });
 const ProposerLookahead: ContainerCoder<{
-  source_index: typeof ValidatorIndex;
-  target_index: typeof ValidatorIndex;
+  index: typeof ValidatorIndex;
 }> = /* @__PURE__ */ container({
-  source_index: ValidatorIndex,
-  target_index: ValidatorIndex,
+  index: ValidatorIndex
 });
 const ProgressiveBeaconState: ProgressiveContainerCoder<{
   genesis_time: typeof uint64;
