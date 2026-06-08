@@ -2970,9 +2970,9 @@ type ETH2_PROFILES = {
     ExecutionRequests: typeof ExecutionRequests;
     ExecutionPayloadHeader: typeof ExecutionPayloadHeaderElectra;
     ExecutionPayload: typeof ExecutionPayloadElectra;
-    BeaconBlockBody: typeof BeaconBlockBodyElectra;
-    BeaconBlock: typeof BeaconBlockElectra;
-    SignedBeaconBlock: typeof SignedBeaconBlockElectra;
+    BeaconBlockBody: typeof BeaconBlockBodyElectra; //TODO BeaconBlockBodyFulu
+    BeaconBlock: typeof BeaconBlockElectra; //TODO BeaconBlockFulu
+    SignedBeaconBlock: typeof SignedBeaconBlockElectra; //TODO SignedBeaconBlockFulu
     BeaconState: typeof BeaconStateFulu;
     LightClientHeader: typeof LightClientHeaderElectra;
     LightClientBootstrap: typeof LightClientBootstrapElectra;
@@ -3013,9 +3013,9 @@ export const ETH2_PROFILES: TRet<ETH2_PROFILES> = /* @__PURE__ */ freezeRegistry
     ExecutionRequests,
     ExecutionPayloadHeader: ExecutionPayloadHeaderElectra,
     ExecutionPayload: ExecutionPayloadElectra,
-    BeaconBlockBody: BeaconBlockBodyElectra,
-    BeaconBlock: BeaconBlockElectra,
-    SignedBeaconBlock: SignedBeaconBlockElectra,
+    BeaconBlockBody: BeaconBlockBodyElectra, //TODO BeaconBlockBodyFulu
+    BeaconBlock: BeaconBlockElectra, //TODO BeaconBlockFulu
+    SignedBeaconBlock: SignedBeaconBlockElectra, //TODO SignedBeaconBlockFulu
     BeaconState: BeaconStateFulu,
     LightClientHeader: LightClientHeaderElectra,
     LightClientBootstrap: LightClientBootstrapElectra,
