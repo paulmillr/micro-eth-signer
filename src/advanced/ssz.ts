@@ -2970,9 +2970,9 @@ type ETH2_PROFILES = {
     ExecutionRequests: typeof ExecutionRequests;
     ExecutionPayloadHeader: typeof ExecutionPayloadHeaderElectra;
     ExecutionPayload: typeof ExecutionPayloadElectra;
-    BeaconBlockBody: typeof BeaconBlockBodyElectra; //TODO BeaconBlockBodyFulu
-    BeaconBlock: typeof BeaconBlockElectra; //TODO BeaconBlockFulu
-    SignedBeaconBlock: typeof SignedBeaconBlockElectra; //TODO SignedBeaconBlockFulu
+    BeaconBlockBody: typeof BeaconBlockBodyElectra;
+    BeaconBlock: typeof BeaconBlockElectra;
+    SignedBeaconBlock: typeof SignedBeaconBlockElectra;
     BeaconState: typeof BeaconStateFulu;
     LightClientHeader: typeof LightClientHeaderElectra;
     LightClientBootstrap: typeof LightClientBootstrapElectra;
@@ -3013,9 +3013,9 @@ export const ETH2_PROFILES: TRet<ETH2_PROFILES> = /* @__PURE__ */ freezeRegistry
     ExecutionRequests,
     ExecutionPayloadHeader: ExecutionPayloadHeaderElectra,
     ExecutionPayload: ExecutionPayloadElectra,
-    BeaconBlockBody: BeaconBlockBodyElectra, //TODO BeaconBlockBodyFulu
-    BeaconBlock: BeaconBlockElectra, //TODO BeaconBlockFulu
-    SignedBeaconBlock: SignedBeaconBlockElectra, //TODO SignedBeaconBlockFulu
+    BeaconBlockBody: BeaconBlockBodyElectra,
+    BeaconBlock: BeaconBlockElectra,
+    SignedBeaconBlock: SignedBeaconBlockElectra,
     BeaconState: BeaconStateFulu,
     LightClientHeader: LightClientHeaderElectra,
     LightClientBootstrap: LightClientBootstrapElectra,
@@ -3289,6 +3289,29 @@ const _CapellaBeaconState = (): TRet<CapellaBeaconState> =>
   }) as TRet<CapellaBeaconState>;
 /** SSZ coder for a Capella beacon state. */
 export const CapellaBeaconState: TRet<CapellaBeaconState> = /* @__PURE__ */ _CapellaBeaconState();
+
+/** Electra Types */
+type ElectraBeaconBlock = ForkBeaconBlock<typeof ProgressiveBeaconBlockBody>;
+const _ElectraBeaconBlock = (): TRet<ElectraBeaconBlock> =>
+  container({
+    slot: ETH2_TYPES.Slot,
+    proposer_index: ETH2_TYPES.ValidatorIndex,
+    parent_root: ETH2_TYPES.Root,
+    state_root: ETH2_TYPES.Root,
+    body: ProgressiveBeaconBlockBody,
+  }) as TRet<ElectraBeaconBlock>;
+/** SSZ coder for a Electra beacon block. */
+export const ElectraBeaconBlock: TRet<ElectraBeaconBlock> = /* @__PURE__ */ _ElectraBeaconBlock();
+
+type ElectraSignedBeaconBlock = SignedMessage<ElectraBeaconBlock>;
+const _ElectraSignedBeaconBlock = (): TRet<ElectraSignedBeaconBlock> =>
+  container({
+    message: ElectraBeaconBlock,
+    signature: ETH2_TYPES.BLSSignature,
+  }) as TRet<ElectraSignedBeaconBlock>;
+/** SSZ coder for a signed Electra beacon block. */
+export const ElectraSignedBeaconBlock: TRet<ElectraSignedBeaconBlock> =
+  /* @__PURE__ */ _ElectraSignedBeaconBlock();
 
 /** Bellatrix Types */
 // Bellatrix block bodies embed the full payload; only BeaconState.latest_execution_payload_header stores the header form.
