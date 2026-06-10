@@ -49,7 +49,7 @@ export const ForkSlots: TRet<{
   readonly Capella: number;
   readonly Deneb: number;
   readonly Electra: number;
-  readonly Osaka: number;
+  readonly Fulu: number;
 }> = /* @__PURE__ */ (() =>
   Object.freeze({
     Phase0: 0, // 2020-12-01
@@ -59,7 +59,7 @@ export const ForkSlots: TRet<{
     Capella: 6209536, // 2023-04-12
     Deneb: 8626176, // 2024-03-13
     Electra: 11649024, // 2025-05-07
-    Osaka: 13164544, // 2025-12-03
+    Fulu: 13164544, // 2025-12-03
   } as const))();
 
 /**
@@ -1309,6 +1309,8 @@ const MAX_ATTESTATIONS_ELECTRA = 8;
 const MAX_DEPOSIT_REQUESTS_PER_PAYLOAD = 8192;
 const MAX_WITHDRAWAL_REQUESTS_PER_PAYLOAD = 16;
 const MAX_CONSOLIDATION_REQUESTS_PER_PAYLOAD = 2;
+// Fulu
+const PROPOSER_LOOKAHEAD_VECTOR = 64;
 
 // We can reduce size if we inline these. But updates for new forks would be hard.
 const Slot = uint64;
@@ -1738,6 +1740,400 @@ const BeaconState: ContainerCoder<{
   next_withdrawal_validator_index: ValidatorIndex,
   historical_summaries: /* @__PURE__ */ list(HISTORICAL_ROOTS_LIMIT, HistoricalSummary),
 });
+const progressiveFields = <T extends Record<string, SSZCoder<any>>>(
+  fields: T
+): TRet<ProgressiveContainerCoder<T>> =>
+  progressiveContainer(
+    // simple-serialize.md §Illegal types bans inactive trailing slots, so current consensus containers use only live fields.
+    Object.keys(fields).map(() => true),
+    fields
+  );
+  // Request commitments are not split into per-request roots on ExecutionPayloadHeader; future Gloas will use a separate bid field.
+const ProgressiveExecutionPayloadHeader: ProgressiveContainerCoder<{
+  parent_hash: typeof Hash32;
+  fee_recipient: typeof ExecutionAddress;
+  state_root: typeof Bytes32;
+  receipts_root: typeof Bytes32;
+  logs_bloom: ByteVectorType;
+  prev_randao: typeof Bytes32;
+  block_number: typeof uint64;
+  gas_limit: typeof uint64;
+  gas_used: typeof uint64;
+  timestamp: typeof uint64;
+  extra_data: ByteListType;
+  base_fee_per_gas: typeof uint256;
+  block_hash: typeof Hash32;
+  transactions_root: typeof Root;
+  withdrawals_root: typeof Root;
+  blob_gas_used: typeof uint64;
+  excess_blob_gas: typeof uint64;
+}> = /* @__PURE__ */ progressiveFields({
+  parent_hash: Hash32,
+  fee_recipient: ExecutionAddress,
+  state_root: Bytes32,
+  receipts_root: Bytes32,
+  logs_bloom: /* @__PURE__ */ bytevector(BYTES_PER_LOGS_BLOOM),
+  prev_randao: Bytes32,
+  block_number: uint64,
+  gas_limit: uint64,
+  gas_used: uint64,
+  timestamp: uint64,
+  extra_data: /* @__PURE__ */ bytelist(MAX_EXTRA_DATA_BYTES),
+  base_fee_per_gas: uint256,
+  block_hash: Hash32,
+  transactions_root: Root,
+  withdrawals_root: Root, // [New in Capella]
+  blob_gas_used: uint64, // [New in Deneb:EIP4844]
+  excess_blob_gas: uint64, // [New in Deneb:EIP4844]
+});
+// consensus-specs specs/electra/beacon-chain.md §PendingDeposit: Electra queues full deposit request data plus the originating slot.
+const PendingDeposit: ContainerCoder<{
+  pubkey: typeof BLSPubkey;
+  withdrawal_credentials: typeof Bytes32;
+  amount: typeof Gwei;
+  signature: typeof BLSSignature;
+  slot: typeof Slot;
+}> = /* @__PURE__ */ container({
+  pubkey: BLSPubkey,
+  withdrawal_credentials: Bytes32,
+  amount: Gwei,
+  signature: BLSSignature,
+  slot: Slot,
+});
+// Kept for compatibility with older copied Electra vectors; current BeaconState uses PendingDeposit/pending_deposits.
+const PendingBalanceDeposit: ContainerCoder<{
+  index: typeof ValidatorIndex;
+  amount: typeof Gwei;
+}> = /* @__PURE__ */ container({
+  index: ValidatorIndex,
+  amount: Gwei,
+});
+// Electra pending partial withdrawals queue a validator index, amount, and the epoch when the withdrawal becomes processable.
+const PendingPartialWithdrawal: ContainerCoder<{
+  validator_index: typeof ValidatorIndex;
+  amount: typeof Gwei;
+  withdrawable_epoch: typeof Epoch;
+}> = /* @__PURE__ */ container({
+  validator_index: ValidatorIndex,
+  amount: Gwei,
+  withdrawable_epoch: Epoch,
+});
+// Electra pending consolidations queue the source and target validator indices after the source exit is scheduled.
+const PendingConsolidation: ContainerCoder<{
+  source_index: typeof ValidatorIndex;
+  target_index: typeof ValidatorIndex;
+}> = /* @__PURE__ */ container({
+  source_index: ValidatorIndex,
+  target_index: ValidatorIndex,
+});
+const ProposerLookahead: ContainerCoder<{
+  index: typeof ValidatorIndex;
+}> = /* @__PURE__ */ container({
+  index: ValidatorIndex
+});
+const ProgressiveBeaconState: ProgressiveContainerCoder<{
+  genesis_time: typeof uint64;
+  genesis_validators_root: typeof Root;
+  slot: typeof Slot;
+  fork: typeof Fork;
+  latest_block_header: typeof BeaconBlockHeader;
+  block_roots: VectorType<SSZValue<typeof Root>>;
+  state_roots: VectorType<SSZValue<typeof Root>>;
+  historical_roots: ListType<SSZValue<typeof Root>>;
+  eth1_data: typeof Eth1Data;
+  eth1_data_votes: ListType<SSZValue<typeof Eth1Data>>;
+  eth1_deposit_index: typeof uint64;
+  validators: ListType<SSZValue<typeof Validator>>;
+  balances: ListType<SSZValue<typeof Gwei>>;
+  randao_mixes: VectorType<SSZValue<typeof Bytes32>>;
+  slashings: VectorType<SSZValue<typeof Gwei>>;
+  previous_epoch_participation: ListType<SSZValue<typeof ParticipationFlags>>;
+  current_epoch_participation: ListType<SSZValue<typeof ParticipationFlags>>;
+  justification_bits: BitVectorType;
+  previous_justified_checkpoint: typeof Checkpoint;
+  current_justified_checkpoint: typeof Checkpoint;
+  finalized_checkpoint: typeof Checkpoint;
+  inactivity_scores: ListType<SSZValue<typeof uint64>>;
+  current_sync_committee: typeof SyncCommittee;
+  next_sync_committee: typeof SyncCommittee;
+  latest_execution_payload_header: typeof ProgressiveExecutionPayloadHeader;
+  next_withdrawal_index: typeof WithdrawalIndex;
+  next_withdrawal_validator_index: typeof ValidatorIndex;
+  historical_summaries: ListType<SSZValue<typeof HistoricalSummary>>;
+  deposit_requests_start_index: typeof uint64;
+  deposit_balance_to_consume: typeof Gwei;
+  exit_balance_to_consume: typeof Gwei;
+  earliest_exit_epoch: typeof Epoch;
+  consolidation_balance_to_consume: typeof Gwei;
+  earliest_consolidation_epoch: typeof Epoch;
+  pending_deposits: ListType<SSZValue<typeof PendingDeposit>>;
+  pending_partial_withdrawals: ListType<SSZValue<typeof PendingPartialWithdrawal>>;
+  pending_consolidations: ListType<SSZValue<typeof PendingConsolidation>>;
+  proposer_lookahead: VectorType<SSZValue<typeof ValidatorIndex>>;
+}> = /* @__PURE__ */ progressiveFields({
+  genesis_time: uint64,
+  genesis_validators_root: Root,
+  slot: Slot,
+  fork: Fork,
+  latest_block_header: BeaconBlockHeader,
+  block_roots: /* @__PURE__ */ vector(SLOTS_PER_HISTORICAL_ROOT, Root),
+  state_roots: /* @__PURE__ */ vector(SLOTS_PER_HISTORICAL_ROOT, Root),
+  historical_roots: /* @__PURE__ */ list(HISTORICAL_ROOTS_LIMIT, Root),
+  eth1_data: Eth1Data,
+  eth1_data_votes: /* @__PURE__ */ list(
+    /* @__PURE__ */ (() => EPOCHS_PER_ETH1_VOTING_PERIOD * SLOTS_PER_EPOCH)(),
+    Eth1Data
+  ),
+  eth1_deposit_index: uint64,
+  validators: /* @__PURE__ */ list(VALIDATOR_REGISTRY_LIMIT, Validator),
+  balances: /* @__PURE__ */ list(VALIDATOR_REGISTRY_LIMIT, Gwei),
+  randao_mixes: /* @__PURE__ */ vector(EPOCHS_PER_HISTORICAL_VECTOR, Bytes32),
+  slashings: /* @__PURE__ */ vector(EPOCHS_PER_SLASHINGS_VECTOR, Gwei),
+  previous_epoch_participation: /* @__PURE__ */ list(VALIDATOR_REGISTRY_LIMIT, ParticipationFlags),
+  current_epoch_participation: /* @__PURE__ */ list(VALIDATOR_REGISTRY_LIMIT, ParticipationFlags),
+  justification_bits: /* @__PURE__ */ bitvector(JUSTIFICATION_BITS_LENGTH),
+  previous_justified_checkpoint: Checkpoint,
+  current_justified_checkpoint: Checkpoint,
+  finalized_checkpoint: Checkpoint,
+  inactivity_scores: /* @__PURE__ */ list(VALIDATOR_REGISTRY_LIMIT, uint64),
+  current_sync_committee: SyncCommittee,
+  next_sync_committee: SyncCommittee,
+  // Kept for compatibility with the existing Electra surface; this will change in Gloas to latest_execution_payload_bid.
+  latest_execution_payload_header: ProgressiveExecutionPayloadHeader,
+  next_withdrawal_index: WithdrawalIndex,
+  next_withdrawal_validator_index: ValidatorIndex,
+  historical_summaries: /* @__PURE__ */ list(HISTORICAL_ROOTS_LIMIT, HistoricalSummary),
+  deposit_requests_start_index: uint64, // [New in Electra:EIP6110]
+  deposit_balance_to_consume: Gwei, // [New in Electra:EIP7251]
+  exit_balance_to_consume: Gwei, // [New in Electra:EIP7251]
+  earliest_exit_epoch: Epoch, // [New in Electra:EIP7251]
+  consolidation_balance_to_consume: Gwei, // [New in Electra:EIP7251]
+  earliest_consolidation_epoch: Epoch, // [New in Electra:EIP7251]
+  pending_deposits: /* @__PURE__ */ list(PENDING_DEPOSITS_LIMIT, PendingDeposit), // [New in Electra:EIP7251]
+  pending_partial_withdrawals: /* @__PURE__ */ list(
+    PENDING_PARTIAL_WITHDRAWALS_LIMIT,
+    PendingPartialWithdrawal
+  ), // [New in Electra:EIP7251]
+  pending_consolidations: /* @__PURE__ */ list(PENDING_CONSOLIDATIONS_LIMIT, PendingConsolidation), // [New in Electra:EIP7251]
+  proposer_lookahead: vector(PROPOSER_LOOKAHEAD_VECTOR, ValidatorIndex),  // [New in Fulu:EIP7917]
+});
+const ExecutionPayloadHeaderElectra: ProfileType<
+  typeof ProgressiveExecutionPayloadHeader,
+  never,
+  | 'parent_hash'
+  | 'fee_recipient'
+  | 'state_root'
+  | 'receipts_root'
+  | 'logs_bloom'
+  | 'prev_randao'
+  | 'block_number'
+  | 'gas_limit'
+  | 'gas_used'
+  | 'timestamp'
+  | 'extra_data'
+  | 'base_fee_per_gas'
+  | 'block_hash'
+  | 'transactions_root'
+  | 'withdrawals_root'
+  | 'blob_gas_used'
+  | 'excess_blob_gas'
+> = /* @__PURE__ */ profile(
+  ProgressiveExecutionPayloadHeader,
+  [],
+  [
+    'parent_hash',
+    'fee_recipient',
+    'state_root',
+    'receipts_root',
+    'logs_bloom',
+    'prev_randao',
+    'block_number',
+    'gas_limit',
+    'gas_used',
+    'timestamp',
+    'extra_data',
+    'base_fee_per_gas',
+    'block_hash',
+    'transactions_root',
+    'withdrawals_root',
+    'blob_gas_used',
+    'excess_blob_gas',
+  ]
+);
+const BeaconStateElectra: ProfileType<
+  typeof ProgressiveBeaconState,
+  never,
+  | 'genesis_time'
+  | 'genesis_validators_root'
+  | 'slot'
+  | 'fork'
+  | 'latest_block_header'
+  | 'block_roots'
+  | 'state_roots'
+  | 'historical_roots'
+  | 'eth1_data'
+  | 'eth1_data_votes'
+  | 'eth1_deposit_index'
+  | 'validators'
+  | 'balances'
+  | 'randao_mixes'
+  | 'slashings'
+  | 'previous_epoch_participation'
+  | 'current_epoch_participation'
+  | 'justification_bits'
+  | 'previous_justified_checkpoint'
+  | 'current_justified_checkpoint'
+  | 'finalized_checkpoint'
+  | 'inactivity_scores'
+  | 'current_sync_committee'
+  | 'next_sync_committee'
+  | 'latest_execution_payload_header'
+  | 'next_withdrawal_index'
+  | 'next_withdrawal_validator_index'
+  | 'historical_summaries'
+  | 'deposit_requests_start_index'
+  | 'deposit_balance_to_consume'
+  | 'exit_balance_to_consume'
+  | 'earliest_exit_epoch'
+  | 'consolidation_balance_to_consume'
+  | 'earliest_consolidation_epoch'
+  | 'pending_deposits'
+  | 'pending_partial_withdrawals'
+  | 'pending_consolidations'
+> = /* @__PURE__ */ profile(
+  ProgressiveBeaconState,
+  [],
+  [
+    'genesis_time',
+    'genesis_validators_root',
+    'slot',
+    'fork',
+    'latest_block_header',
+    'block_roots',
+    'state_roots',
+    'historical_roots',
+    'eth1_data',
+    'eth1_data_votes',
+    'eth1_deposit_index',
+    'validators',
+    'balances',
+    'randao_mixes',
+    'slashings',
+    'previous_epoch_participation',
+    'current_epoch_participation',
+    'justification_bits',
+    'previous_justified_checkpoint',
+    'current_justified_checkpoint',
+    'finalized_checkpoint',
+    'inactivity_scores',
+    'current_sync_committee',
+    'next_sync_committee',
+    'latest_execution_payload_header',
+    'next_withdrawal_index',
+    'next_withdrawal_validator_index',
+    'historical_summaries',
+    'deposit_requests_start_index',
+    'deposit_balance_to_consume',
+    'exit_balance_to_consume',
+    'earliest_exit_epoch',
+    'consolidation_balance_to_consume',
+    'earliest_consolidation_epoch',
+    'pending_deposits',
+    'pending_partial_withdrawals',
+    'pending_consolidations',
+  ],
+  {
+    latest_execution_payload_header: ExecutionPayloadHeaderElectra,
+  }
+);
+const BeaconStateFulu: ProfileType<
+  typeof ProgressiveBeaconState,
+  never,
+  | 'genesis_time'
+  | 'genesis_validators_root'
+  | 'slot'
+  | 'fork'
+  | 'latest_block_header'
+  | 'block_roots'
+  | 'state_roots'
+  | 'historical_roots'
+  | 'eth1_data'
+  | 'eth1_data_votes'
+  | 'eth1_deposit_index'
+  | 'validators'
+  | 'balances'
+  | 'randao_mixes'
+  | 'slashings'
+  | 'previous_epoch_participation'
+  | 'current_epoch_participation'
+  | 'justification_bits'
+  | 'previous_justified_checkpoint'
+  | 'current_justified_checkpoint'
+  | 'finalized_checkpoint'
+  | 'inactivity_scores'
+  | 'current_sync_committee'
+  | 'next_sync_committee'
+  | 'latest_execution_payload_header'
+  | 'next_withdrawal_index'
+  | 'next_withdrawal_validator_index'
+  | 'historical_summaries'
+  | 'deposit_requests_start_index'
+  | 'deposit_balance_to_consume'
+  | 'exit_balance_to_consume'
+  | 'earliest_exit_epoch'
+  | 'consolidation_balance_to_consume'
+  | 'earliest_consolidation_epoch'
+  | 'pending_deposits'
+  | 'pending_partial_withdrawals'
+  | 'pending_consolidations'
+  | 'proposer_lookahead'
+> = /* @__PURE__ */ profile(
+  ProgressiveBeaconState,
+  [],
+  [
+    'genesis_time',
+    'genesis_validators_root',
+    'slot',
+    'fork',
+    'latest_block_header',
+    'block_roots',
+    'state_roots',
+    'historical_roots',
+    'eth1_data',
+    'eth1_data_votes',
+    'eth1_deposit_index',
+    'validators',
+    'balances',
+    'randao_mixes',
+    'slashings',
+    'previous_epoch_participation',
+    'current_epoch_participation',
+    'justification_bits',
+    'previous_justified_checkpoint',
+    'current_justified_checkpoint',
+    'finalized_checkpoint',
+    'inactivity_scores',
+    'current_sync_committee',
+    'next_sync_committee',
+    'latest_execution_payload_header',
+    'next_withdrawal_index',
+    'next_withdrawal_validator_index',
+    'historical_summaries',
+    'deposit_requests_start_index',
+    'deposit_balance_to_consume',
+    'exit_balance_to_consume',
+    'earliest_exit_epoch',
+    'consolidation_balance_to_consume',
+    'earliest_consolidation_epoch',
+    'pending_deposits',
+    'pending_partial_withdrawals',
+    'pending_consolidations',
+    'proposer_lookahead'
+  ],
+  {
+    latest_execution_payload_header: ExecutionPayloadHeaderElectra,
+  }
+);
 // Blob identifiers stay a simple `{ block_root, index }` tuple for external blob lookup; BlobSidecar carries the full sidecar payload separately instead of nesting this helper.
 const BlobIdentifier: ContainerCoder<{
   block_root: typeof Root;
@@ -2003,46 +2399,6 @@ const SingleAttestation: ContainerCoder<{
   data: AttestationData,
   signature: BLSSignature,
 });
-// consensus-specs specs/electra/beacon-chain.md §PendingDeposit: Electra queues full deposit request data plus the originating slot.
-const PendingDeposit: ContainerCoder<{
-  pubkey: typeof BLSPubkey;
-  withdrawal_credentials: typeof Bytes32;
-  amount: typeof Gwei;
-  signature: typeof BLSSignature;
-  slot: typeof Slot;
-}> = /* @__PURE__ */ container({
-  pubkey: BLSPubkey,
-  withdrawal_credentials: Bytes32,
-  amount: Gwei,
-  signature: BLSSignature,
-  slot: Slot,
-});
-// Kept for compatibility with older copied Electra vectors; current BeaconState uses PendingDeposit/pending_deposits.
-const PendingBalanceDeposit: ContainerCoder<{
-  index: typeof ValidatorIndex;
-  amount: typeof Gwei;
-}> = /* @__PURE__ */ container({
-  index: ValidatorIndex,
-  amount: Gwei,
-});
-// Electra pending partial withdrawals queue a validator index, amount, and the epoch when the withdrawal becomes processable.
-const PendingPartialWithdrawal: ContainerCoder<{
-  validator_index: typeof ValidatorIndex;
-  amount: typeof Gwei;
-  withdrawable_epoch: typeof Epoch;
-}> = /* @__PURE__ */ container({
-  validator_index: ValidatorIndex,
-  amount: Gwei,
-  withdrawable_epoch: Epoch,
-});
-// Electra pending consolidations queue the source and target validator indices after the source exit is scheduled.
-const PendingConsolidation: ContainerCoder<{
-  source_index: typeof ValidatorIndex;
-  target_index: typeof ValidatorIndex;
-}> = /* @__PURE__ */ container({
-  source_index: ValidatorIndex,
-  target_index: ValidatorIndex,
-});
 
 type ETH2_TYPES = {
   Slot: typeof Slot;
@@ -2093,6 +2449,8 @@ type ETH2_TYPES = {
   ExecutionPayloadHeader: typeof ExecutionPayloadHeader;
   HistoricalSummary: typeof HistoricalSummary;
   BeaconState: typeof BeaconState;
+  BeaconStateElectra: typeof BeaconStateElectra;
+  BeaconStateFulu: typeof BeaconStateFulu;
   BlobIdentifier: typeof BlobIdentifier;
   BlobSidecar: typeof BlobSidecar;
   ContributionAndProof: typeof ContributionAndProof;
@@ -2123,6 +2481,7 @@ type ETH2_TYPES = {
   PendingBalanceDeposit: typeof PendingBalanceDeposit;
   PendingPartialWithdrawal: typeof PendingPartialWithdrawal;
   PendingConsolidation: typeof PendingConsolidation;
+  ProposerLookahead: typeof ProposerLookahead;
 };
 /**
  * Low-level Ethereum consensus SSZ field coders.
@@ -2185,6 +2544,8 @@ export const ETH2_TYPES: TRet<ETH2_TYPES> = /* @__PURE__ */ freezeRegistry<ETH2_
   ExecutionPayloadHeader,
   HistoricalSummary,
   BeaconState,
+  BeaconStateElectra,
+  BeaconStateFulu,
   BlobIdentifier,
   BlobSidecar,
   ContributionAndProof,
@@ -2217,16 +2578,9 @@ export const ETH2_TYPES: TRet<ETH2_TYPES> = /* @__PURE__ */ freezeRegistry<ETH2_
   PendingBalanceDeposit,
   PendingPartialWithdrawal,
   PendingConsolidation,
+  // Fulu
+  ProposerLookahead
 }) as TRet<ETH2_TYPES>;
-
-const progressiveFields = <T extends Record<string, SSZCoder<any>>>(
-  fields: T
-): TRet<ProgressiveContainerCoder<T>> =>
-  progressiveContainer(
-    // simple-serialize.md §Illegal types bans inactive trailing slots, so current consensus containers use only live fields.
-    Object.keys(fields).map(() => true),
-    fields
-  );
 
 // Progressive attestation mirrors the Electra attestation field order under EIP-7688 progressive merkleization.
 const ProgressiveAttestation: TRet<
@@ -2318,44 +2672,6 @@ const ProgressiveExecutionPayload: ProgressiveContainerCoder<{
   blob_gas_used: uint64,
   excess_blob_gas: uint64,
 });
-// Request commitments are not split into per-request roots on ExecutionPayloadHeader; future Gloas will use a separate bid field.
-const ProgressiveExecutionPayloadHeader: ProgressiveContainerCoder<{
-  parent_hash: typeof Hash32;
-  fee_recipient: typeof ExecutionAddress;
-  state_root: typeof Bytes32;
-  receipts_root: typeof Bytes32;
-  logs_bloom: ByteVectorType;
-  prev_randao: typeof Bytes32;
-  block_number: typeof uint64;
-  gas_limit: typeof uint64;
-  gas_used: typeof uint64;
-  timestamp: typeof uint64;
-  extra_data: ByteListType;
-  base_fee_per_gas: typeof uint256;
-  block_hash: typeof Hash32;
-  transactions_root: typeof Root;
-  withdrawals_root: typeof Root;
-  blob_gas_used: typeof uint64;
-  excess_blob_gas: typeof uint64;
-}> = /* @__PURE__ */ progressiveFields({
-  parent_hash: Hash32,
-  fee_recipient: ExecutionAddress,
-  state_root: Bytes32,
-  receipts_root: Bytes32,
-  logs_bloom: /* @__PURE__ */ bytevector(BYTES_PER_LOGS_BLOOM),
-  prev_randao: Bytes32,
-  block_number: uint64,
-  gas_limit: uint64,
-  gas_used: uint64,
-  timestamp: uint64,
-  extra_data: /* @__PURE__ */ bytelist(MAX_EXTRA_DATA_BYTES),
-  base_fee_per_gas: uint256,
-  block_hash: Hash32,
-  transactions_root: Root,
-  withdrawals_root: Root, // [New in Capella]
-  blob_gas_used: uint64, // [New in Deneb:EIP4844]
-  excess_blob_gas: uint64, // [New in Deneb:EIP4844]
-});
 const ProgressiveBeaconBlockBody: ProgressiveContainerCoder<{
   randao_reveal: typeof BLSSignature;
   eth1_data: typeof Eth1Data;
@@ -2392,90 +2708,6 @@ const ProgressiveBeaconBlockBody: ProgressiveContainerCoder<{
   ),
   blob_kzg_commitments: /* @__PURE__ */ list(MAX_BLOB_COMMITMENTS_PER_BLOCK, KZGCommitment),
   execution_requests: ProgressiveExecutionRequests,
-});
-const ProgressiveBeaconState: ProgressiveContainerCoder<{
-  genesis_time: typeof uint64;
-  genesis_validators_root: typeof Root;
-  slot: typeof Slot;
-  fork: typeof Fork;
-  latest_block_header: typeof BeaconBlockHeader;
-  block_roots: VectorType<SSZValue<typeof Root>>;
-  state_roots: VectorType<SSZValue<typeof Root>>;
-  historical_roots: ListType<SSZValue<typeof Root>>;
-  eth1_data: typeof Eth1Data;
-  eth1_data_votes: ListType<SSZValue<typeof Eth1Data>>;
-  eth1_deposit_index: typeof uint64;
-  validators: ListType<SSZValue<typeof Validator>>;
-  balances: ListType<SSZValue<typeof Gwei>>;
-  randao_mixes: VectorType<SSZValue<typeof Bytes32>>;
-  slashings: VectorType<SSZValue<typeof Gwei>>;
-  previous_epoch_participation: ListType<SSZValue<typeof ParticipationFlags>>;
-  current_epoch_participation: ListType<SSZValue<typeof ParticipationFlags>>;
-  justification_bits: BitVectorType;
-  previous_justified_checkpoint: typeof Checkpoint;
-  current_justified_checkpoint: typeof Checkpoint;
-  finalized_checkpoint: typeof Checkpoint;
-  inactivity_scores: ListType<SSZValue<typeof uint64>>;
-  current_sync_committee: typeof SyncCommittee;
-  next_sync_committee: typeof SyncCommittee;
-  latest_execution_payload_header: typeof ProgressiveExecutionPayloadHeader;
-  next_withdrawal_index: typeof WithdrawalIndex;
-  next_withdrawal_validator_index: typeof ValidatorIndex;
-  historical_summaries: ListType<SSZValue<typeof HistoricalSummary>>;
-  deposit_requests_start_index: typeof uint64;
-  deposit_balance_to_consume: typeof Gwei;
-  exit_balance_to_consume: typeof Gwei;
-  earliest_exit_epoch: typeof Epoch;
-  consolidation_balance_to_consume: typeof Gwei;
-  earliest_consolidation_epoch: typeof Epoch;
-  pending_deposits: ListType<SSZValue<typeof PendingDeposit>>;
-  pending_partial_withdrawals: ListType<SSZValue<typeof PendingPartialWithdrawal>>;
-  pending_consolidations: ListType<SSZValue<typeof PendingConsolidation>>;
-}> = /* @__PURE__ */ progressiveFields({
-  genesis_time: uint64,
-  genesis_validators_root: Root,
-  slot: Slot,
-  fork: Fork,
-  latest_block_header: BeaconBlockHeader,
-  block_roots: /* @__PURE__ */ vector(SLOTS_PER_HISTORICAL_ROOT, Root),
-  state_roots: /* @__PURE__ */ vector(SLOTS_PER_HISTORICAL_ROOT, Root),
-  historical_roots: /* @__PURE__ */ list(HISTORICAL_ROOTS_LIMIT, Root),
-  eth1_data: Eth1Data,
-  eth1_data_votes: /* @__PURE__ */ list(
-    /* @__PURE__ */ (() => EPOCHS_PER_ETH1_VOTING_PERIOD * SLOTS_PER_EPOCH)(),
-    Eth1Data
-  ),
-  eth1_deposit_index: uint64,
-  validators: /* @__PURE__ */ list(VALIDATOR_REGISTRY_LIMIT, Validator),
-  balances: /* @__PURE__ */ list(VALIDATOR_REGISTRY_LIMIT, Gwei),
-  randao_mixes: /* @__PURE__ */ vector(EPOCHS_PER_HISTORICAL_VECTOR, Bytes32),
-  slashings: /* @__PURE__ */ vector(EPOCHS_PER_SLASHINGS_VECTOR, Gwei),
-  previous_epoch_participation: /* @__PURE__ */ list(VALIDATOR_REGISTRY_LIMIT, ParticipationFlags),
-  current_epoch_participation: /* @__PURE__ */ list(VALIDATOR_REGISTRY_LIMIT, ParticipationFlags),
-  justification_bits: /* @__PURE__ */ bitvector(JUSTIFICATION_BITS_LENGTH),
-  previous_justified_checkpoint: Checkpoint,
-  current_justified_checkpoint: Checkpoint,
-  finalized_checkpoint: Checkpoint,
-  inactivity_scores: /* @__PURE__ */ list(VALIDATOR_REGISTRY_LIMIT, uint64),
-  current_sync_committee: SyncCommittee,
-  next_sync_committee: SyncCommittee,
-  // Kept for compatibility with the existing Electra surface; this will change in Gloas to latest_execution_payload_bid.
-  latest_execution_payload_header: ProgressiveExecutionPayloadHeader,
-  next_withdrawal_index: WithdrawalIndex,
-  next_withdrawal_validator_index: ValidatorIndex,
-  historical_summaries: /* @__PURE__ */ list(HISTORICAL_ROOTS_LIMIT, HistoricalSummary),
-  deposit_requests_start_index: uint64, // [New in Electra:EIP6110]
-  deposit_balance_to_consume: Gwei, // [New in Electra:EIP7251]
-  exit_balance_to_consume: Gwei, // [New in Electra:EIP7251]
-  earliest_exit_epoch: Epoch, // [New in Electra:EIP7251]
-  consolidation_balance_to_consume: Gwei, // [New in Electra:EIP7251]
-  earliest_consolidation_epoch: Epoch, // [New in Electra:EIP7251]
-  pending_deposits: /* @__PURE__ */ list(PENDING_DEPOSITS_LIMIT, PendingDeposit), // [New in Electra:EIP7251]
-  pending_partial_withdrawals: /* @__PURE__ */ list(
-    PENDING_PARTIAL_WITHDRAWALS_LIMIT,
-    PendingPartialWithdrawal
-  ), // [New in Electra:EIP7251]
-  pending_consolidations: /* @__PURE__ */ list(PENDING_CONSOLIDATIONS_LIMIT, PendingConsolidation), // [New in Electra:EIP7251]
 });
 
 type ETH2_CONSENSUS = {
@@ -2519,49 +2751,6 @@ const AttesterSlashingElectra: ContainerCoder<{
   attestation_1: IndexedAttestationElectra,
   attestation_2: IndexedAttestationElectra,
 });
-const ExecutionPayloadHeaderElectra: ProfileType<
-  typeof ProgressiveExecutionPayloadHeader,
-  never,
-  | 'parent_hash'
-  | 'fee_recipient'
-  | 'state_root'
-  | 'receipts_root'
-  | 'logs_bloom'
-  | 'prev_randao'
-  | 'block_number'
-  | 'gas_limit'
-  | 'gas_used'
-  | 'timestamp'
-  | 'extra_data'
-  | 'base_fee_per_gas'
-  | 'block_hash'
-  | 'transactions_root'
-  | 'withdrawals_root'
-  | 'blob_gas_used'
-  | 'excess_blob_gas'
-> = /* @__PURE__ */ profile(
-  ProgressiveExecutionPayloadHeader,
-  [],
-  [
-    'parent_hash',
-    'fee_recipient',
-    'state_root',
-    'receipts_root',
-    'logs_bloom',
-    'prev_randao',
-    'block_number',
-    'gas_limit',
-    'gas_used',
-    'timestamp',
-    'extra_data',
-    'base_fee_per_gas',
-    'block_hash',
-    'transactions_root',
-    'withdrawals_root',
-    'blob_gas_used',
-    'excess_blob_gas',
-  ]
-);
 const ExecutionRequests: ProfileType<
   typeof ProgressiveExecutionRequests,
   never,
@@ -2703,92 +2892,6 @@ const SignedBeaconBlockElectra: ContainerCoder<{
   message: BeaconBlockElectra,
   signature: BLSSignature,
 });
-const BeaconStateElectra: ProfileType<
-  typeof ProgressiveBeaconState,
-  never,
-  | 'genesis_time'
-  | 'genesis_validators_root'
-  | 'slot'
-  | 'fork'
-  | 'latest_block_header'
-  | 'block_roots'
-  | 'state_roots'
-  | 'historical_roots'
-  | 'eth1_data'
-  | 'eth1_data_votes'
-  | 'eth1_deposit_index'
-  | 'validators'
-  | 'balances'
-  | 'randao_mixes'
-  | 'slashings'
-  | 'previous_epoch_participation'
-  | 'current_epoch_participation'
-  | 'justification_bits'
-  | 'previous_justified_checkpoint'
-  | 'current_justified_checkpoint'
-  | 'finalized_checkpoint'
-  | 'inactivity_scores'
-  | 'current_sync_committee'
-  | 'next_sync_committee'
-  | 'latest_execution_payload_header'
-  | 'next_withdrawal_index'
-  | 'next_withdrawal_validator_index'
-  | 'historical_summaries'
-  | 'deposit_requests_start_index'
-  | 'deposit_balance_to_consume'
-  | 'exit_balance_to_consume'
-  | 'earliest_exit_epoch'
-  | 'consolidation_balance_to_consume'
-  | 'earliest_consolidation_epoch'
-  | 'pending_deposits'
-  | 'pending_partial_withdrawals'
-  | 'pending_consolidations'
-> = /* @__PURE__ */ profile(
-  ProgressiveBeaconState,
-  [],
-  [
-    'genesis_time',
-    'genesis_validators_root',
-    'slot',
-    'fork',
-    'latest_block_header',
-    'block_roots',
-    'state_roots',
-    'historical_roots',
-    'eth1_data',
-    'eth1_data_votes',
-    'eth1_deposit_index',
-    'validators',
-    'balances',
-    'randao_mixes',
-    'slashings',
-    'previous_epoch_participation',
-    'current_epoch_participation',
-    'justification_bits',
-    'previous_justified_checkpoint',
-    'current_justified_checkpoint',
-    'finalized_checkpoint',
-    'inactivity_scores',
-    'current_sync_committee',
-    'next_sync_committee',
-    'latest_execution_payload_header',
-    'next_withdrawal_index',
-    'next_withdrawal_validator_index',
-    'historical_summaries',
-    'deposit_requests_start_index',
-    'deposit_balance_to_consume',
-    'exit_balance_to_consume',
-    'earliest_exit_epoch',
-    'consolidation_balance_to_consume',
-    'earliest_consolidation_epoch',
-    'pending_deposits',
-    'pending_partial_withdrawals',
-    'pending_consolidations',
-  ],
-  {
-    latest_execution_payload_header: ExecutionPayloadHeaderElectra,
-  }
-);
 const LightClientHeaderElectra: ContainerCoder<{
   beacon: typeof BeaconBlockHeader;
   execution: typeof ExecutionPayloadHeaderElectra;
@@ -2867,6 +2970,26 @@ type ETH2_PROFILES = {
     LightClientFinalityUpdate: typeof LightClientFinalityUpdateElectra;
     LightClientOptimisticUpdate: typeof LightClientOptimisticUpdateElectra;
   };
+  fulu: {
+    SingleAttestation: typeof SingleAttestation;
+    Attestation: typeof AttestationElectra;
+    AggregateAndProof: typeof AggregateAndProofElectra;
+    SignedAggregateAndProof: typeof SignedAggregateAndProofElectra;
+    AttesterSlashing: typeof AttesterSlashingElectra;
+    IndexedAttestation: typeof IndexedAttestationElectra;
+    ExecutionRequests: typeof ExecutionRequests;
+    ExecutionPayloadHeader: typeof ExecutionPayloadHeaderElectra;
+    ExecutionPayload: typeof ExecutionPayloadElectra;
+    BeaconBlockBody: typeof BeaconBlockBodyElectra;
+    BeaconBlock: typeof BeaconBlockElectra;
+    SignedBeaconBlock: typeof SignedBeaconBlockElectra;
+    BeaconState: typeof BeaconStateFulu;
+    LightClientHeader: typeof LightClientHeaderElectra;
+    LightClientBootstrap: typeof LightClientBootstrapElectra;
+    LightClientUpdate: typeof LightClientUpdateElectra;
+    LightClientFinalityUpdate: typeof LightClientFinalityUpdateElectra;
+    LightClientOptimisticUpdate: typeof LightClientOptimisticUpdateElectra;
+  };
 };
 /** Ethereum consensus profile coders. */
 export const ETH2_PROFILES: TRet<ETH2_PROFILES> = /* @__PURE__ */ freezeRegistry<ETH2_PROFILES>({
@@ -2884,6 +3007,26 @@ export const ETH2_PROFILES: TRet<ETH2_PROFILES> = /* @__PURE__ */ freezeRegistry
     BeaconBlock: BeaconBlockElectra,
     SignedBeaconBlock: SignedBeaconBlockElectra,
     BeaconState: BeaconStateElectra,
+    LightClientHeader: LightClientHeaderElectra,
+    LightClientBootstrap: LightClientBootstrapElectra,
+    LightClientUpdate: LightClientUpdateElectra,
+    LightClientFinalityUpdate: LightClientFinalityUpdateElectra,
+    LightClientOptimisticUpdate: LightClientOptimisticUpdateElectra,
+  },
+  fulu: {
+    SingleAttestation,
+    Attestation: AttestationElectra,
+    AggregateAndProof: AggregateAndProofElectra,
+    SignedAggregateAndProof: SignedAggregateAndProofElectra,
+    AttesterSlashing: AttesterSlashingElectra,
+    IndexedAttestation: IndexedAttestationElectra,
+    ExecutionRequests,
+    ExecutionPayloadHeader: ExecutionPayloadHeaderElectra,
+    ExecutionPayload: ExecutionPayloadElectra,
+    BeaconBlockBody: BeaconBlockBodyElectra,
+    BeaconBlock: BeaconBlockElectra,
+    SignedBeaconBlock: SignedBeaconBlockElectra,
+    BeaconState: BeaconStateFulu,
     LightClientHeader: LightClientHeaderElectra,
     LightClientBootstrap: LightClientBootstrapElectra,
     LightClientUpdate: LightClientUpdateElectra,
@@ -3156,6 +3299,29 @@ const _CapellaBeaconState = (): TRet<CapellaBeaconState> =>
   }) as TRet<CapellaBeaconState>;
 /** SSZ coder for a Capella beacon state. */
 export const CapellaBeaconState: TRet<CapellaBeaconState> = /* @__PURE__ */ _CapellaBeaconState();
+
+/** Electra Types */
+type ElectraBeaconBlock = ForkBeaconBlock<typeof ProgressiveBeaconBlockBody>;
+const _ElectraBeaconBlock = (): TRet<ElectraBeaconBlock> =>
+  container({
+    slot: ETH2_TYPES.Slot,
+    proposer_index: ETH2_TYPES.ValidatorIndex,
+    parent_root: ETH2_TYPES.Root,
+    state_root: ETH2_TYPES.Root,
+    body: ProgressiveBeaconBlockBody,
+  }) as TRet<ElectraBeaconBlock>;
+/** SSZ coder for a Electra beacon block. */
+export const ElectraBeaconBlock: TRet<ElectraBeaconBlock> = /* @__PURE__ */ _ElectraBeaconBlock();
+
+type ElectraSignedBeaconBlock = SignedMessage<ElectraBeaconBlock>;
+const _ElectraSignedBeaconBlock = (): TRet<ElectraSignedBeaconBlock> =>
+  container({
+    message: ElectraBeaconBlock,
+    signature: ETH2_TYPES.BLSSignature,
+  }) as TRet<ElectraSignedBeaconBlock>;
+/** SSZ coder for a signed Electra beacon block. */
+export const ElectraSignedBeaconBlock: TRet<ElectraSignedBeaconBlock> =
+  /* @__PURE__ */ _ElectraSignedBeaconBlock();
 
 /** Bellatrix Types */
 // Bellatrix block bodies embed the full payload; only BeaconState.latest_execution_payload_header stores the header form.

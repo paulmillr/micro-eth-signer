@@ -186,7 +186,7 @@ describe('SSZ', () => {
       Capella: 194048 * 32,
       Deneb: 269568 * 32,
       Electra: 364032 * 32,
-      Osaka: 411392 * 32,
+      Fulu: 411392 * 32,
     });
   });
   should('Electra request limits', () => {
