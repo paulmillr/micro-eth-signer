@@ -1,6 +1,6 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import * as P from 'micro-packed';
-import { isBytes, isObject, type Bytes, type TArg, type TRet } from '../utils.ts';
+import { aarray, astring, isBytes, isObject, type Bytes, type TArg, type TRet } from '../utils.ts';
 /*
 
 Simple serialize (SSZ) is the serialization method used on the Beacon Chain.
@@ -158,17 +158,17 @@ const merkleizeProgressive = (chunks: TArg<Uint8Array[]>, numLeaves = 1): TRet<U
 };
 
 // Shared minimum surface for generic SSZ builders; deeper packed-coder invariants are validated later.
-const checkSSZ = (o: any) => {
+const checkSSZ = (o: any, title = 'element') => {
   if (
-    typeof o !== 'object' ||
-    o === null ||
+    !isObject(o) ||
+    Array.isArray(o) ||
     typeof o.encode !== 'function' ||
     typeof o.decode !== 'function' ||
     typeof o.merkleRoot !== 'function' ||
     typeof o.composite !== 'boolean' ||
     typeof o.chunkCount !== 'number'
   ) {
-    throw new Error(`SSZ: wrong element: ${o} (${typeof o})`);
+    throw new TypeError(`"${title}" expected SSZ coder, got type=${typeof o}`);
   }
 };
 
@@ -364,7 +364,7 @@ export const boolean: TRet<SSZCoder<boolean>> = /* @__PURE__ */ basic('boolean',
 
 const array = <T>(len: P.Length, inner: TArg<SSZCoder<T>>): P.CoderType<T[]> => {
   const item = inner as SSZCoder<T>;
-  checkSSZ(item);
+  checkSSZ(item, 'inner');
   let arr = P.array(len, item);
   // variable size arrays
   if (inner.size === undefined) {
@@ -460,7 +460,7 @@ type ListType<T> = SSZCoder<T[]> & { info: { type: 'list'; N: number; inner: SSZ
  */
 export const list = <T>(maxLen: number, inner: TArg<SSZCoder<T>>): TRet<ListType<T>> => {
   const item = inner as SSZCoder<T>;
-  checkSSZ(item);
+  checkSSZ(item, 'inner');
   const coder = P.validate(array(null, item), (value) => {
     if (!Array.isArray(value) || value.length > maxLen)
       throw new Error(`SSZ/list: wrong value=${value} (len=${value.length} maxLen=${maxLen})`);
@@ -505,7 +505,7 @@ type ProgressiveListType<T> = SSZCoder<T[]> & {
  */
 export const progressiveList = <T>(inner: TArg<SSZCoder<T>>): TRet<ProgressiveListType<T>> => {
   const item = inner as SSZCoder<T>;
-  checkSSZ(item);
+  checkSSZ(item, 'inner');
   const coder = P.validate(array(null, item), (value) => {
     if (!Array.isArray(value)) throw new Error(`SSZ/progressiveList: wrong value=${value}`);
     return value;
@@ -579,8 +579,11 @@ type ContainerCoder<T extends Record<string, SSZCoder<any>>> = SSZCoder<{
 export const container = <T extends Record<string, SSZCoder<any>>>(
   fields: T
 ): TRet<ContainerCoder<T>> => {
+  if (!isObject(fields))
+    throw new TypeError(`"fields" expected object, got type=${typeof fields}`);
   const fs = { ...fields } as T;
   if (!Object.keys(fs).length) throw new Error('SSZ/container: no fields');
+  for (const k in fs) checkSSZ(fs[k], `fields.${k}`);
   const ptrCoder = P.struct(
     Object.fromEntries(Object.entries(fs).map(([k, v]) => [k, wrapPointer(v)]))
   ) as ContainerCoder<T>;
@@ -608,6 +611,8 @@ export const container = <T extends Record<string, SSZCoder<any>>>(
     composite: true,
     chunkCount: Object.keys(fs).length,
     chunks(value: TArg<P.UnwrapCoder<ContainerCoder<T>>>) {
+      if (!isObject(value))
+        throw new TypeError(`"value" expected object, got type=${typeof value}`);
       const val = value as P.UnwrapCoder<ContainerCoder<T>>;
       return Object.entries(fs).map(([k, v]) => v.merkleRoot(val[k]));
     },
@@ -812,7 +817,7 @@ export const union = (
     throw new Error('SSZ/union: should have at least 2 types if first is null');
   for (let i = 0; i < ts.length; i++) {
     if (i > 0 && ts[i] === null) throw new Error('SSZ/union: only first type can be null');
-    if (ts[i] !== null) checkSSZ(ts[i]);
+    if (ts[i] !== null) checkSSZ(ts[i], `types.${i}`);
   }
   const none = P.apply(P.magicBytes(P.EMPTY), {
     encode: () => null,
@@ -885,7 +890,7 @@ export const compatibleUnion = <T extends Record<number, SSZCoder<any>>>(
     const selector = Number(k);
     if (`${selector}` !== k || !Number.isSafeInteger(selector) || selector < 1 || selector > 127)
       throw new Error(`SSZ/compatibleUnion: wrong selector=${k}`);
-    checkSSZ(t);
+    checkSSZ(t, `types.${k}`);
     for (let j = 0; j < i; j++) {
       if (!t._isProgressiveCompat(entries[j][1]))
         throw new Error(`SSZ/compatibleUnion: incompatible selector=${k}`);
@@ -1019,10 +1024,14 @@ export const progressiveContainer = <T extends Record<string, SSZCoder<any>>>(
   activeFields: (boolean | number)[],
   fields: T
 ): TRet<ProgressiveContainerCoder<T>> => {
+  if (!isObject(fields))
+    throw new TypeError(`"fields" expected object, got type=${typeof fields}`);
   const fs = { ...fields } as T;
   const fieldsLen = Object.keys(fs).length;
   if (!fieldsLen) throw new Error('SSZ/progressiveContainer: no fields');
-  if (!Array.isArray(activeFields) || !activeFields.length || activeFields.length > 256)
+  for (const k in fs) checkSSZ(fs[k], `fields.${k}`);
+  aarray(activeFields, 'activeFields');
+  if (!activeFields.length || activeFields.length > 256)
     throw new Error('SSZ/progressiveContainer: wrong activeFields');
   const active = activeFields.map((i) => {
     if (i === true || i === 1) return true;
@@ -1046,6 +1055,8 @@ export const progressiveContainer = <T extends Record<string, SSZCoder<any>>>(
     },
     chunkCount: active.length,
     chunks(value: TArg<P.UnwrapCoder<ProgressiveContainerCoder<T>>>) {
+      if (!isObject(value))
+        throw new TypeError(`"value" expected object, got type=${typeof value}`);
       const res: Bytes[] = [];
       let field = 0;
       const entries = Object.entries(fs);
@@ -1126,16 +1137,16 @@ export const profile = <
   replaceType: Record<string, any> = {}
 ): TRet<ProfileCoder<T, OptK, ReqK>> => {
   const base = c as ProgressiveContainerCoder<T>;
-  checkSSZ(base);
+  checkSSZ(base, 'c');
   if (base.info.type !== 'progressiveContainer')
     throw new Error('profile: expected progressiveContainer');
   const containerFields: Set<string> = new Set(Object.keys(base.info.fields));
-  if (!Array.isArray(optFields)) throw new Error('profile: optional fields should be array');
+  aarray(optFields, 'optFields', astring);
   const optFS: Set<string> = new Set(optFields);
   for (const f of optFS) {
     if (!containerFields.has(f)) throw new Error(`profile: unexpected optional field ${f}`);
   }
-  if (!Array.isArray(requiredFields)) throw new Error('profile: required fields should be array');
+  aarray(requiredFields, 'requiredFields', astring);
   const reqFS: Set<string> = new Set(requiredFields);
   for (const f of reqFS) {
     if (!containerFields.has(f)) throw new Error(`profile: unexpected required field ${f}`);
@@ -1145,6 +1156,7 @@ export const profile = <
   if (!isObject(replaceType)) throw new Error('profile: replaceType should be object');
   for (const k in replaceType) {
     if (!containerFields.has(k)) throw new Error(`profile/replaceType: unexpected field ${k}`);
+    checkSSZ(replaceType[k], `replaceType.${k}`);
     if (!replaceType[k]._isProgressiveCompat(base.info.fields[k]))
       throw new Error(`profile/replaceType: incompatible field ${k}`);
   }

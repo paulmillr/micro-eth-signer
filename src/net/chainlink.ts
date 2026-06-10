@@ -1,5 +1,5 @@
 import { createContract, tokenFromSymbol } from '../advanced/abi.ts';
-import { type IWeb3Provider, createDecimal } from '../utils.ts';
+import { astring, type IWeb3Provider, createDecimal } from '../utils.ts';
 
 const ABI = [
   {
@@ -294,6 +294,7 @@ export default class Chainlink {
   }
 
   async coinPrice(symbol: string): Promise<number> {
+    astring(symbol, 'symbol');
     // Only common coins
     const COINS: Record<string, { decimals: number; contract: string }> = {
       BCH: { decimals: 8, contract: '0x9f0f69428f923d6c95b781f89e165c9b2df9789d' },
@@ -309,6 +310,7 @@ export default class Chainlink {
   }
 
   async tokenPrice(symbol: string): Promise<number> {
+    astring(symbol, 'symbol');
     const token = TOKENS[symbol.toUpperCase()];
     if (!token) throw new Error(`micro-web3/chainlink: unknown token: ${symbol}`);
     return await this.price(token.contract, token.decimals);

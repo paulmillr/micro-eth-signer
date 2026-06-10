@@ -380,10 +380,11 @@ Check out [`src/net/ens.ts`](./src/net/ens.ts) for type-safe contract execution 
 
 ### Clear Signing
 
-The library supports [Clear Signing](https://clearsigning.org) initiative with two mechanisms:
+The library supports [Clear Signing](https://clearsigning.org) initiative with three mechanisms:
 
-1. Transaction hints
-2. Event hints
+1. ERC-7730 descriptors via `clearSign` and `clearSig.repository`
+2. Transaction hints
+3. Event hints
 
 So, a user will see `Transfer 22588 USDT to 0xdac17f958d2ee523a2206206994597c13d831ec7` instead of
 `0xf8a901851d1a94a20082c12a94dac17f958d2ee523a2206206994597c13d831ec780b844a9059cbb000000000000000000000000dac17f958d2ee523a2206206994597c13d831ec7000000000000000000000000000000000000000000000000000000054259870025a066fcb560b50e577f6dc8c8b2e3019f760da78b4c04021382ba490c572a303a42a0078f5af8ac7e11caba9b7dc7a64f7bdc3b4ce1a6ab0a1246771d7cc3524a7200`.

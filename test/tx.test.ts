@@ -8,8 +8,8 @@ import { Transaction, addr, authorization } from '../src/index.ts';
 import {
   add0x,
   amounts,
-  createDecimal,
   cloneDeep,
+  createDecimal,
   deepFreeze,
   ethHex,
   formatters,
@@ -866,7 +866,7 @@ describe('Transactions', () => {
         // console.log('TTTT', cat, k, v.result, hasError);
         // TR_IntrinsicGas
         if (hasError === 'TR_IntrinsicGas') continue;
-        console.log('ddd', cat, k, hasError);
+        // console.log('ddd', cat, k, hasError);
         // if (k === 'TransactionWithRvaluePrefixed00BigInt') {
         //   console.log('TTT', v.txbytes, RlpTx.decode(ethHex().decode(v.txbytes)));
         //   console.log('AAA', Transaction.fromHex(v.txbytes, false));

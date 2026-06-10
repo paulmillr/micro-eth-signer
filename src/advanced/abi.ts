@@ -1,6 +1,6 @@
 import { addr } from '../core/address.ts';
 import { Transaction } from '../index.ts';
-import { deepFreeze, ethHex, type TArg, type TRet } from '../utils.ts';
+import { astring, deepFreeze, ethHex, type TArg, type TRet } from '../utils.ts';
 import {
   type ContractABI as _ContractABI,
   type ContractInfo as _ContractInfo,
@@ -317,6 +317,7 @@ export const decodeData = (
   amount?: bigint,
   opt: TArg<DecoderOpt> = {}
 ): SignatureInfo | SignatureInfo[] | undefined => {
+  astring(to, 'to');
   if (!addr.isValid(to)) throw new Error(`decodeData: wrong to=${to}`);
   if (amount !== undefined && typeof amount !== 'bigint')
     throw new Error(`decodeData: wrong amount=${amount}`);
@@ -383,6 +384,7 @@ export const decodeEvent = (
   data: string,
   opt: TArg<DecoderOpt> = {}
 ): SignatureInfo | SignatureInfo[] | undefined => {
+  astring(to, 'to');
   if (!addr.isValid(to)) throw new Error(`decodeEvent: wrong to=${to}`);
   const { decoder, contracts } = getDecoder(opt);
   return decoder.decodeEvent(to, topics, data, {

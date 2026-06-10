@@ -1,10 +1,11 @@
 import { keccak_256 } from '@noble/hashes/sha3.js';
 import { concatBytes, utf8ToBytes } from '@noble/hashes/utils.js';
 import { createContract } from '../advanced/abi-decoder.ts';
-import { type IWeb3Provider, strip0x, type TRet } from '../utils.ts';
+import { astring, type IWeb3Provider, strip0x, type TRet } from '../utils.ts';
 // ENS requires UTS-46 normalization before hashing; this only supports ASCII
 // case-folding, not IDN names.
 export function namehash(address: string): TRet<Uint8Array> {
+  astring(address, 'address');
   let res = new Uint8Array(32) as TRet<Uint8Array>;
   if (!address) return res;
   for (let label of address.split('.').reverse())
@@ -45,6 +46,7 @@ export default class ENS {
     this.net = net;
   }
   async getResolver(name: string): Promise<string | undefined> {
+    astring(name, 'name');
     const contract = createContract(ENS.REGISTRY_CONTRACT, this.net, ENS.REGISTRY);
     const res = await contract.resolver.call(namehash(name));
     if (res === ENS.ADDRESS_ZERO) return;
@@ -52,6 +54,7 @@ export default class ENS {
   }
 
   async nameToAddress(name: string): Promise<string | undefined> {
+    astring(name, 'name');
     const resolver = await this.getResolver(name);
     if (!resolver) return;
     const contract = createContract(ENS.RESOLVER_CONTRACT, this.net, resolver);

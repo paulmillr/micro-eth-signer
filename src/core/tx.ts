@@ -23,6 +23,7 @@ import {
   ethHexNoLeadingZero,
   initSig,
   isBytes,
+  isObject,
   sign,
   strip0x,
   verify,
@@ -108,6 +109,7 @@ export class Transaction<T extends TxType> {
     strict?: boolean
   ): Transaction<T['type']>;
   static prepare<T extends TxType>(data: HumanInput<T>, strict = true): Transaction<T> {
+    if (!isObject(data)) throw new TypeError('"data" expected object, got type=' + typeof data);
     const type = (data.type !== undefined ? data.type : TX_DEFAULTS.type) as T;
     if (!TxVersions.hasOwnProperty(type)) throw new Error(`wrong transaction type=${type}`);
     const coder = TxVersions[type];
@@ -272,7 +274,7 @@ export class Transaction<T extends TxType> {
     extraEntropy: boolean | Uint8Array = true
   ): Transaction<T> {
     if (this.isSigned) throw new Error('expected unsigned transaction');
-    const priv = isBytes(privateKey) ? privateKey : hexToBytes(strip0x(privateKey));
+    const priv = isBytes(privateKey) ? privateKey : hexToBytes(strip0x(privateKey, 'privateKey'));
     const hash = this.calcHash(false);
     const sig = sign(hash, priv, extraEntropy);
     const { r, s, recovery } = sig;

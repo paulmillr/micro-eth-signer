@@ -2,7 +2,7 @@
 import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { keccak_256 } from '@noble/hashes/sha3.js';
 import { bytesToHex, hexToBytes, utf8ToBytes, type TArg } from '@noble/hashes/utils.js';
-import { add0x, astr, deepFreeze, ethHex, strip0x, type TRet } from '../utils.ts';
+import { add0x, astring, deepFreeze, ethHex, strip0x, type TRet } from '../utils.ts';
 
 type ParsedAddress = {
   hasPrefix: boolean;
@@ -24,7 +24,7 @@ export const addr: TRet<AddressUtils> = /* @__PURE__ */ deepFreeze({
   // / empty input from malformed address lengths before enforcing the final non-empty rule.
   RE: Object.freeze(/^(0[xX])?([0-9a-fA-F]{40})?$/) as RegExp,
   parse: (address: string, allowEmpty = false): ParsedAddress => {
-    astr(address);
+    astring(address);
     // NOTE: empty address allowed for 'to', but would be mistake for other address fields.
     // '0x' instead of null/undefined because we don't want to send contract creation tx if user
     // accidentally missed 'to' field.

@@ -4,7 +4,7 @@ import { concatBytes } from '@noble/hashes/utils.js';
 import * as P from 'micro-packed';
 import {
   amounts,
-  astr,
+  astring,
   deepFreeze,
   ethHex,
   initSig,
@@ -790,11 +790,12 @@ export const authorization: TRet<AuthorizationHelpers> = /* @__PURE__ */ deepFre
     return keccak_256(concatBytes(new Uint8Array([0x05]), msg));
   },
   sign(req: AuthorizationRequest, privateKey: string): AuthorizationItem {
-    astr(privateKey);
+    astring(privateKey);
     const sig = sign(this._getHash(req), ethHex.decode(privateKey));
     return { ...req, r: sig.r, s: sig.s, yParity: sig.recovery! };
   },
   getAuthority(item: AuthorizationItem): string {
+    if (!isObject(item)) throw new TypeError('"item" expected object, got type=' + typeof item);
     const { r, s, yParity, ...req } = item;
     const hash = this._getHash(req);
     const sig = initSig({ r, s }, yParity);

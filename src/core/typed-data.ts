@@ -4,7 +4,7 @@ import { concatBytes, hexToBytes, utf8ToBytes } from '@noble/hashes/utils.js';
 import { mapComponent, type GetType as AbiGetType } from '../advanced/abi-mapper.ts';
 import {
   add0x,
-  astr,
+  astring,
   deepFreeze,
   ethHex,
   initSig,
@@ -53,7 +53,7 @@ function getSigner<T>(
       return add0x(sig.toHex('compact') + end);
     },
     recoverPublicKey(signature: string, message: TArg<T>) {
-      astr(signature);
+      astring(signature);
       const hash = getHash(message);
       signature = strip0x(signature);
       if (signature.length !== 65 * 2) throw new Error('invalid signature length');
@@ -279,7 +279,7 @@ export function encoder<T extends EIP712Types>(types: T, domain: TArg<GetType<T,
     return mapComponent({ type }).encode(data) as TRet<Uint8Array>;
   };
   const encodeData = <K extends Key<T>>(type: K, data: TArg<GetType<T, K>>) => {
-    astr(type);
+    astring(type);
     if (!types[type]) throw new Error(`Unknown type: ${type}`);
     if (!isObject(data)) throw new Error('wrong data object');
     return encodeField(type, data, false);
@@ -356,6 +356,7 @@ const getTypedTypes = <T extends EIP712Types, K extends Key<T>>(typed: TArg<Type
 });
 
 function validateTyped<T extends EIP712Types, K extends Key<T>>(t: TArg<TypedData<T, K>>) {
+  if (!isObject(t)) throw new TypeError('"typed" expected object, got type=' + typeof t);
   if (!isObject(t.message)) throw new Error('wrong message');
   if (!isObject(t.domain)) throw new Error('wrong domain');
   if (!isObject(t.types)) throw new Error('wrong types');

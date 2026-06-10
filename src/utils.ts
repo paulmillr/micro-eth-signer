@@ -1,4 +1,5 @@
 import { secp256k1 } from '@noble/curves/secp256k1.js';
+import { validateObject } from '@noble/curves/utils.js';
 import {
   hexToBytes as _hexToBytes,
   isBytes as _isBytes,
@@ -9,6 +10,40 @@ import {
 import { type Coder, coders } from 'micro-packed';
 
 export type { TArg, TRet } from '@noble/hashes/utils.js';
+export { validateObject };
+
+export function aarray<T>(
+  item: unknown,
+  title: string,
+  inner: (elm: T, title: string) => void = () => {}
+): T[] {
+  if (!Array.isArray(item))
+    throw new TypeError(`"${title}" expected array, got type=${typeof item}`);
+  for (let i = 0; i < item.length; i++) inner(item[i], `${title}[${i}]`);
+  return item;
+}
+
+/**
+ * Asserts something is a string.
+ * @param value - Value to validate.
+ * @param title - Label included in thrown errors.
+ * @returns The validated string.
+ * @throws On wrong argument types. {@link TypeError}
+ * @example
+ * Validate a label string.
+ *
+ * ```ts
+ * astring('example', 'label');
+ * ```
+ */
+export function astring(value: unknown, title: string = ''): string {
+  if (typeof value !== 'string') {
+    const prefix = title && `"${title}" `;
+    throw new TypeError(prefix + 'expected string, got type=' + typeof value);
+  }
+  return value;
+}
+
 
 /**
  * Checks whether a value is a byte array.
@@ -184,7 +219,8 @@ const ethHexStartRe = /^0[xX]/;
  * add0x('abcd');
  * ```
  */
-export function add0x(hex: string): string {
+export function add0x(hex: string, title: string = 'hex'): string {
+  astring(hex, title);
   return ethHexStartRe.test(hex) ? hex : `0x${hex}`;
 }
 
@@ -198,7 +234,8 @@ export function add0x(hex: string): string {
  * strip0x('0xabcd');
  * ```
  */
-export function strip0x(hex: string): string {
+export function strip0x(hex: string, title: string = 'hex'): string {
+  astring(hex, title);
   return hex.replace(ethHexStartRe, '');
 }
 
@@ -299,20 +336,6 @@ export function deepFreeze<T>(obj: T): T {
 }
 
 /**
- * Asserts that a value is a string.
- * @param str - Value expected to be a string.
- * @throws If the value is not a string. {@link Error}
- * @example
- * Validate user input before passing it into the hex and address helpers.
- * ```ts
- * astr('ok');
- * ```
- */
-export function astr(str: unknown): void {
-  if (typeof str !== 'string') throw new Error('string expected');
-}
-
-/**
  * Signs a digest with secp256k1 and returns a recovered signature.
  * @param hash - Message digest to sign.
  * @param privKey - 32-byte secp256k1 secret key.
@@ -402,10 +425,16 @@ export function initSig(
   bit: number
 ): ReturnType<typeof secp256k1.Signature.fromBytes> {
   // Ethereum signatures use y-parity recovery bits 0/1; noble also supports raw secp256k1 ids 2/3.
-  if (bit !== 0 && bit !== 1) throw new Error('invalid recovery bit');
-  const s = isBytes(sig)
-    ? secp256k1.Signature.fromBytes(sig, 'compact')
-    : new secp256k1.Signature(sig.r, sig.s);
+  if (typeof bit !== 'number')
+    throw new TypeError('"recovery bit" expected number, got type=' + typeof bit);
+  if (bit !== 0 && bit !== 1)
+    throw new RangeError('"recovery bit" expected 0 or 1, got ' + bit);
+  let s;
+  if (isBytes(sig)) s = secp256k1.Signature.fromBytes(sig, 'compact');
+  else {
+    validateObject(sig as Record<string, any>, { r: 'bigint', s: 'bigint' }, {}); // , 'sig'
+    s = new secp256k1.Signature((sig as RawSig).r, (sig as RawSig).s);
+  }
   return s.addRecoveryBit(bit);
 }
 

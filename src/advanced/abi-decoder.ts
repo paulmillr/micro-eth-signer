@@ -1,9 +1,12 @@
 import { keccak_256 } from '@noble/hashes/sha3.js';
-import { bytesToHex, concatBytes, hexToBytes, utf8ToBytes } from '@noble/hashes/utils.js';
+import { abytes, bytesToHex, concatBytes, hexToBytes, utf8ToBytes } from '@noble/hashes/utils.js';
 import * as P from 'micro-packed';
 import {
+  aarray,
   add0x,
   ethHex,
+  isBytes,
+  isObject,
   omit,
   strip0x,
   zip,
@@ -155,6 +158,7 @@ export function createContract<T extends ArrLike<FnArg>>(
   net?: IWeb3Provider,
   contract?: string
 ): TRet<ContractType<Writable<T>, undefined>> {
+  aarray(abi, 'abi');
   // Find non-uniq function names so we can handle overloads
   let nameCnt: Record<string, number> = {};
   for (let fn of abi) {
@@ -171,7 +175,11 @@ export function createContract<T extends ArrLike<FnArg>>(
     const sh = fnSigHash(fn);
     const inputs = fn.inputs && fn.inputs.length ? mapArgs(fn.inputs) : undefined;
     const outputs = fn.outputs ? mapArgs(fn.outputs) : undefined;
-    const decodeOutput = (b: TArg<Uint8Array>) => outputs && outputs.decode(b);
+    const decodeOutput = (b: TArg<Uint8Array>) => {
+      if (outputs && !isBytes(b))
+        throw new TypeError('"b" expected Uint8Array, got type=' + typeof b);
+      return outputs && outputs.decode(b);
+    };
     const encodeInput = (v: unknown) =>
       concatBytes(hexToBytes(sh), inputs ? inputs.encode(v as any) : Uint8Array.of());
     res[name] = { decodeOutput, encodeInput };
@@ -212,6 +220,7 @@ export function deployContract<T extends ArrLike<FnArg>, A extends TArg<DeployAr
   bytecodeHex: string,
   ...args: A
 ): string {
+  aarray(abi, 'abi');
   const bytecode = ethHex.decode(bytecodeHex);
   let consCall;
   for (let fn of abi) {
@@ -250,6 +259,7 @@ export type ContractEventType<T extends Array<FnArg>, F = ContractEventTypeFilte
 
 // TODO: try to simplify further
 export function events<T extends ArrLike<FnArg>>(abi: T): TRet<ContractEventType<Writable<T>>> {
+  aarray(abi, 'abi');
   let res: Record<string, any> = {};
   for (let elm of abi) {
     // Only named events supported
@@ -268,6 +278,7 @@ export function events<T extends ArrLike<FnArg>>(abi: T): TRet<ContractEventType
     const sigHash = evSigHash(elm);
     res[elm.name] = {
       decode(topics: string[], _data: string) {
+        aarray(topics, 'topics');
         const data = hexToBytes(strip0x(_data));
         if (!elm.anonymous) {
           if (!topics[0]) throw new Error('No signature on non-anonymous event');
@@ -288,6 +299,8 @@ export function events<T extends ArrLike<FnArg>>(abi: T): TRet<ContractEventType
         } else return inputs.map((i) => (!i.indexed ? parsed : indexedParsed).shift());
       },
       topics(values: any[] | Record<string, any>) {
+        if (!isObject(values))
+          throw new TypeError('"values" expected object or array, got type=' + typeof values);
         let res = [];
         if (!elm.anonymous) res.push(add0x(sigHash));
         // We require all keys to be set, even if they are null, to be sure nothing is accidentaly missed
@@ -380,10 +393,13 @@ export class Decoder {
   evContracts: Record<string, Record<string, EventSignatureDecoder>> = {};
   evSighashes: Record<string, EventSignatureDecoder[]> = {};
   add(contract: string, abi: ContractABI): void {
-    contract = strip0x(contract).toLowerCase();
+    contract = strip0x(contract, 'contract').toLowerCase();
+    aarray(abi, 'abi');
     if (!this.contracts[contract]) this.contracts[contract] = {};
     if (!this.evContracts[contract]) this.evContracts[contract] = {};
     for (let fn of abi) {
+      if (!isObject(fn as unknown) || Array.isArray(fn as unknown))
+        throw new TypeError('"abi item" expected object, got type=' + typeof fn);
       if (fn.type === 'function') {
         const selector = fnSigHash(fn);
         const value = {
@@ -414,7 +430,8 @@ export class Decoder {
     }
   }
   method(contract: string, data: Uint8Array): string | undefined {
-    contract = strip0x(contract).toLowerCase();
+    contract = strip0x(contract, 'contract').toLowerCase();
+    data = abytes(data, undefined, 'data');
     const sh = bytesToHex(data.slice(0, 4));
     if (!this.contracts[contract] || !this.contracts[contract][sh]) return;
     const { name } = this.contracts[contract][sh];
@@ -427,7 +444,8 @@ export class Decoder {
     _data: Uint8Array,
     opt: HintOpt
   ): SignatureInfo | SignatureInfo[] | undefined {
-    contract = strip0x(contract).toLowerCase();
+    contract = strip0x(contract, 'contract').toLowerCase();
+    _data = abytes(_data, undefined, 'data');
     const sh = bytesToHex(_data.slice(0, 4));
     const data = _data.slice(4);
     if (this.contracts[contract] && this.contracts[contract][sh]) {
@@ -460,7 +478,8 @@ export class Decoder {
     data: string,
     opt: HintOpt
   ): SignatureInfo | SignatureInfo[] | undefined {
-    contract = strip0x(contract).toLowerCase();
+    contract = strip0x(contract, 'contract').toLowerCase();
+    aarray(topics, 'topics');
     if (!topics.length) return;
     const sh = strip0x(topics[0]);
     const event = this.evContracts[contract];
