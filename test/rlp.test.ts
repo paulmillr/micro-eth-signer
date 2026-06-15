@@ -3,7 +3,7 @@ import { describe, should } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual, throws } from 'node:assert';
 import { RLP } from '../src/core/rlp.ts';
 import { ethHex, ethHexNoLeadingZero } from '../src/utils.ts';
-import { getEthersVectors, getViemVectors } from './util.ts';
+import { getEthersVectors, getViemVectorItems } from './util.ts';
 import { default as INVALID_RLP } from './vectors/ethereum-tests/RLPTests/invalidRLPTest.json' with { type: 'json' };
 import { default as RANDOM_RLP } from './vectors/ethereum-tests/RLPTests/RandomRLPTests/example.json' with { type: 'json' };
 import { default as RLP_TEST } from './vectors/ethereum-tests/RLPTests/rlptest.json' with { type: 'json' };
@@ -124,9 +124,9 @@ describe('RLP', () => {
       });
     });
     // 60 MB of gzipped json
-    should('viem rlp tests', () => {
+    should('viem rlp tests', async () => {
       const mapViem = (t) => (Array.isArray(t) ? t.map(mapViem) : hexToBytes(t.replace('0x', '')));
-      for (const t of getViemVectors('rlp.json.gz')) {
+      for await (const t of getViemVectorItems('rlp.json.gz')) {
         let { encoded, decoded } = t;
         const value = mapViem(decoded);
         encoded = hexToBytes(encoded.replace('0x', ''));

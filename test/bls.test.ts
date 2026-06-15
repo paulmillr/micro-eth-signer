@@ -122,7 +122,7 @@ describe('Validator keys', () => {
         deepStrictEqual(bls._TEST.normalizePassword(input), exp);
       }
     });
-    should('decrypt Scrypt', () => {
+    const decryptScrypt = () => {
       const vector = {
         crypto: {
           kdf: {
@@ -168,7 +168,7 @@ describe('Validator keys', () => {
       const badPath = structuredClone(vector) as typeof vector & { path: number | string };
       badPath.path = 123;
       throws(() => decryptInvalid(badPath));
-    });
+    };
     should('decrypt PBKDF2', () => {
       const vector = {
         crypto: {
@@ -269,7 +269,7 @@ describe('Validator keys', () => {
       };
       throws(() => bls.decryptEIP2335Keystore(vector, 'testpassword').privateKey);
     });
-    should('keystore', () => {
+    const keystore = () => {
       const iv = hexToBytes('ea19787657550f76181bb4c0ce49cc8a');
       const salt = hexToBytes('9330c1010e6859591404baf9d0c490efd7f8b476314358111a09b4b41d9c4498');
       const uuid = hexToBytes('c2de70413e806097058393c2e8da2161');
@@ -425,8 +425,8 @@ describe('Validator keys', () => {
         uuid: 'c2de7041-3e80-4097-8583-93c2e8da2161',
         version: 4,
       });
-    });
-    should('multiple', () => {
+    };
+    const multiple = () => {
       const seed = hexToBytes(
         'cbd1178c008ca4ee38654d6584f753e7f6c42b258ae0efd5a99d1c69e293f8488ce4e994c9ce06ae8b284a1b3a07a41059782e72036378427277d988fdd61c83'
       );
@@ -445,6 +445,11 @@ describe('Validator keys', () => {
         bls.deriveEIP2334Key(seed, 'signing', 2).key,
         bls.deriveEIP2334Key(seed, 'signing', 3).key,
       ]);
+    };
+    should('scrypt keystore vectors', () => {
+      decryptScrypt();
+      keystore();
+      multiple();
     });
   });
 });

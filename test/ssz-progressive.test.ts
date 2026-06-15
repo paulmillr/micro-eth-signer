@@ -5,37 +5,34 @@ import { readdirSync, readFileSync } from 'node:fs';
 import * as snappy from 'snappyjs';
 import * as yaml from 'yaml';
 import * as SSZ from '../src/advanced/ssz.ts';
-import { __dirname } from './util.ts';
+import { getVectorsPath } from './util.ts';
 
-const SSZ_PATH = `${__dirname}/vectors/ssz`;
+const SSZ_PATH = getVectorsPath('ssz');
 const yamlOpt = { intAsBigInt: true };
 
-const readGenericVectors = (path) => {
-  const validVectors = {};
-  const invalidVectors = {};
+function* readGenericVectorCases(path) {
   for (const category of readdirSync(path)) {
     for (const valid of ['valid', 'invalid']) {
       for (const name of readdirSync(`${path}/${category}/${valid}`)) {
         const curPath = `${path}/${category}/${valid}/${name}`;
-        const data = readFileSync(`${curPath}/serialized.ssz_snappy`);
-        const hex = bytesToHex(snappy.uncompress(data));
         const fullName = `${category}/${name}`;
-
-        if (valid === 'valid') {
-          const meta = yaml.parse(readFileSync(`${curPath}/meta.yaml`, 'utf8'), yamlOpt);
-          const value = yaml.parse(readFileSync(`${curPath}/value.yaml`, 'utf8'), yamlOpt);
-          validVectors[fullName] = { meta, value, hex };
-        } else {
-          invalidVectors[fullName] = hex;
-        }
+        yield { path: curPath, name: fullName, valid: valid === 'valid' };
       }
     }
   }
-  return { valid: validVectors, invalid: invalidVectors };
+}
+
+const readSerialized = (path) => {
+  const bytes = snappy.uncompress(readFileSync(`${path}/serialized.ssz_snappy`));
+  return new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 };
-const { valid: PROGRESSIVE_VALID, invalid: PROGRESSIVE_INVALID } = readGenericVectors(
-  `${SSZ_PATH}/progressive`
-);
+const readRoot = (path) => yaml.parse(readFileSync(`${path}/meta.yaml`, 'utf8'), yamlOpt).root;
+
+const readGenericVector = (path) => ({
+  root: readRoot(path),
+  value: yaml.parse(readFileSync(`${path}/value.yaml`, 'utf8'), yamlOpt),
+  serialized: readSerialized(path),
+});
 
 describe('SSZ progressive', () => {
   const SmallTestStruct = SSZ.container({
@@ -97,9 +94,24 @@ describe('SSZ progressive', () => {
   };
   const bit = (hex) => SSZ.progressiveBitlist().decode(hexToBytes(hex.slice(2)));
   const num = (n) => Number(n);
-  const progVar = (v) => ({ A: num(v.A), B: v.B.map(num), C: bit(v.C) });
-  const progSingle = (v) => ({ A: num(v.A) });
-  const progSingleList = (v) => ({ C: bit(v.C) });
+  const mapArray = (arr, fn) => {
+    for (let i = 0; i < arr.length; i++) arr[i] = fn(arr[i]);
+    return arr;
+  };
+  const progVar = (v) => {
+    v.A = num(v.A);
+    v.B = mapArray(v.B, num);
+    v.C = bit(v.C);
+    return v;
+  };
+  const progSingle = (v) => {
+    v.A = num(v.A);
+    return v;
+  };
+  const progSingleList = (v) => {
+    v.C = bit(v.C);
+    return v;
+  };
 
   should('builders', () => {
     throws(() => SSZ.progressiveContainer([], { A: SSZ.byte }));
@@ -134,75 +146,85 @@ describe('SSZ progressive', () => {
 
   should('vectors', () => {
     const isSmall = (type) => ['uint8', 'uint16', 'uint32'].includes(type);
-    for (const t in PROGRESSIVE_VALID) {
-      const { meta, value, hex } = PROGRESSIVE_VALID[t];
-      let coder;
-      let val;
-      if (t.startsWith('basic_progressive_list/')) {
-        const type = /^basic_progressive_list\/proglist_([^_]+)_/.exec(t)[1];
-        coder = SSZ.progressiveList(type === 'bool' ? SSZ.boolean : SSZ[type]);
-        val = value.map((i) => (typeof i === 'string' ? BigInt(i) : i));
-        if (isSmall(type)) val = val.map(num);
-      } else if (t.startsWith('progressive_bitlist/')) {
-        coder = SSZ.progressiveBitlist();
-        val = coder.decode(hexToBytes(value.slice(2)));
-      } else if (t.startsWith('progressive_containers/')) {
-        const name = /^progressive_containers\/([^_]+)/.exec(t)[1];
-        coder = progressiveStructs[name];
-        if (name === 'ProgressiveSingleFieldContainerTestStruct') val = progSingle(value);
-        else if (name === 'ProgressiveSingleListContainerTestStruct') val = progSingleList(value);
-        else if (name === 'ProgressiveVarTestStruct') val = progVar(value);
-        else if (name === 'ProgressiveComplexTestStruct') {
-          val = {
-            A: num(value.A),
-            B: value.B.map(num),
-            C: bit(value.C),
-            D: value.D.map((n) => (typeof n === 'bigint' ? n : BigInt(n))),
-            E: value.E.map((v) => ({ A: num(v.A), B: num(v.B) })),
-            F: value.F.map((list) =>
-              list.map((v) => ({ A: num(v.A), B: v.B.map(num), C: num(v.C) }))
-            ),
-            G: value.G.map(progSingle),
-            H: value.H.map(progVar),
-          };
-        } else throw new Error(`missing progressive value mapper: ${name}`);
-      } else if (t.startsWith('compatible_unions/')) {
-        const name =
+    const getCoder = (name) => {
+      if (name.startsWith('basic_progressive_list/')) {
+        const type = /^basic_progressive_list\/proglist_([^_]+)_/.exec(name)[1];
+        return SSZ.progressiveList(type === 'bool' ? SSZ.boolean : SSZ[type]);
+      } else if (name.startsWith('progressive_bitlist/')) {
+        return SSZ.progressiveBitlist();
+      } else if (name.startsWith('progressive_containers/')) {
+        return progressiveStructs[/^progressive_containers\/([^_]+)/.exec(name)[1]];
+      } else if (name.startsWith('compatible_unions/')) {
+        return compatibleUnions[
           /^compatible_unions\/(CompatibleUnionABCA|CompatibleUnionBC|CompatibleUnionA)_/.exec(
-            t
-          )[1];
-        coder = compatibleUnions[name];
+            name
+          )[1]
+        ];
+      } else throw new Error(`missing progressive test: ${name}`);
+    };
+    const getValue = (name, value, coder) => {
+      if (name.startsWith('basic_progressive_list/')) {
+        const type = /^basic_progressive_list\/proglist_([^_]+)_/.exec(name)[1];
+        mapArray(value, (i) => (typeof i === 'string' ? BigInt(i) : i));
+        return isSmall(type) ? mapArray(value, num) : value;
+      } else if (name.startsWith('progressive_bitlist/')) {
+        return coder.decode(hexToBytes(value.slice(2)));
+      } else if (name.startsWith('progressive_containers/')) {
+        const type = /^progressive_containers\/([^_]+)/.exec(name)[1];
+        if (type === 'ProgressiveSingleFieldContainerTestStruct') return progSingle(value);
+        if (type === 'ProgressiveSingleListContainerTestStruct') return progSingleList(value);
+        if (type === 'ProgressiveVarTestStruct') return progVar(value);
+        if (type === 'ProgressiveComplexTestStruct') {
+          value.A = num(value.A);
+          value.B = mapArray(value.B, num);
+          value.C = bit(value.C);
+          value.D = mapArray(value.D, (n) => (typeof n === 'bigint' ? n : BigInt(n)));
+          value.E = mapArray(value.E, (v) => {
+            v.A = num(v.A);
+            v.B = num(v.B);
+            return v;
+          });
+          value.F = mapArray(value.F, (list) =>
+            mapArray(list, (v) => {
+              v.A = num(v.A);
+              v.B = mapArray(v.B, num);
+              v.C = num(v.C);
+              return v;
+            })
+          );
+          value.G = mapArray(value.G, progSingle);
+          value.H = mapArray(value.H, progVar);
+          return value;
+        }
+        throw new Error(`missing progressive value mapper: ${type}`);
+      } else if (name.startsWith('compatible_unions/')) {
         const selector = Number(value.selector);
         let data;
         if (selector === 1 || selector === 4) data = progSingle(value.data);
         else if (selector === 2) data = progSingleList(value.data);
         else if (selector === 3) data = progVar(value.data);
         else throw new Error(`missing compatible-union selector mapper: ${selector}`);
-        val = { selector, data };
-      } else throw new Error('missing progressive test');
-      deepStrictEqual(bytesToHex(coder.encode(val)), hex, `${t}: encode`);
-      deepStrictEqual(coder.decode(hexToBytes(hex)), val, `${t}: decode`);
-      deepStrictEqual(`0x${bytesToHex(coder.merkleRoot(val))}`, meta.root, `${t}: root`);
-    }
-    for (const t in PROGRESSIVE_INVALID) {
-      const hex = PROGRESSIVE_INVALID[t];
-      let coder;
-      if (t.startsWith('basic_progressive_list/')) {
-        const type = /^basic_progressive_list\/proglist_([^_]+)_/.exec(t)[1];
-        coder = SSZ.progressiveList(type === 'bool' ? SSZ.boolean : SSZ[type]);
-      } else if (t.startsWith('progressive_bitlist/')) {
-        coder = SSZ.progressiveBitlist();
-      } else if (t.startsWith('progressive_containers/')) {
-        const name = /^progressive_containers\/([^_]+)/.exec(t)[1];
-        coder = progressiveStructs[name];
-      } else if (t.startsWith('compatible_unions/')) {
-        const name =
-          /^compatible_unions\/(CompatibleUnionABCA|CompatibleUnionBC|CompatibleUnionA)_/.exec(
-            t
-          )[1];
-        coder = compatibleUnions[name];
-      } else throw new Error('missing progressive invalid test');
-      throws(() => coder.decode(hexToBytes(hex)), t);
+        value.selector = selector;
+        value.data = data;
+        return value;
+      } else throw new Error(`missing progressive value mapper: ${name}`);
+    };
+
+    for (const t of readGenericVectorCases(`${SSZ_PATH}/progressive`)) {
+      const coder = getCoder(t.name);
+
+      if (t.valid) {
+        const vector = readGenericVector(t.path);
+        const { root, serialized } = vector;
+        let val = getValue(t.name, vector.value, coder);
+        vector.value = undefined;
+        deepStrictEqual(coder.encode(val), serialized, `${t.name}: encode`);
+        deepStrictEqual(`0x${bytesToHex(coder.merkleRoot(val))}`, root, `${t.name}: root`);
+        val = undefined;
+        deepStrictEqual(coder.encode(coder.decode(serialized)), serialized, `${t.name}: decode`);
+      }
+
+      if (!t.valid) throws(() => coder.decode(readSerialized(t.path)), t.name);
     }
   });
 });

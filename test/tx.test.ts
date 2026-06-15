@@ -19,12 +19,11 @@ import {
   weigwei,
   zip,
 } from '../src/utils.ts';
-import { getEthersVectors, getViemVectors } from './util.ts';
+import { forceGC, getEthersVectors, getViemVectorItems } from './util.ts';
 import { default as EIP155_VECTORS } from './vectors/eips/eip155.json' with { type: 'json' };
 import * as ethTests from './vectors/eth-tests-tx-vectors.js';
 import { default as TX_VECTORS } from './vectors/transactions.json' with { type: 'json' };
 
-let VIEM_TX;
 const SKIPPED_ERRORS = {
   viem: 'address must be',
   ethereum_tests_raw_tx: [
@@ -590,25 +589,26 @@ describe('Transactions', () => {
         }
       }
     });
-    // const viem_filtered = VIEM_TX.filter(tx => tx.addr)
-    should(`viem tests`, () => {
+    should(`viem tests`, async () => {
       let skipped = 0;
       let passed = 0;
-      if (!VIEM_TX) VIEM_TX = getViemVectors('transaction.json.gz');
-      for (let i = 0; i < VIEM_TX.length; i++) {
-        const v = VIEM_TX[i];
-        for (const tx of [v.serialized, v.serializedSigned]) {
-          try {
-            t(tx);
-            passed += 1;
-          } catch (e) {
-            if (e.message.includes(SKIPPED_ERRORS.viem)) {
-              skipped++;
-              continue;
+      try {
+        for await (const v of getViemVectorItems('transaction.json.gz')) {
+          for (const tx of [v.serialized, v.serializedSigned]) {
+            try {
+              t(tx);
+              passed += 1;
+            } catch (e) {
+              if (e.message.includes(SKIPPED_ERRORS.viem)) {
+                skipped++;
+                continue;
+              }
+              throw e;
             }
-            throw e;
           }
         }
+      } finally {
+        forceGC();
       }
       if (skipped > 0) console.log(`skipped: ${skipped} ${passed}`);
     });
@@ -803,57 +803,59 @@ describe('Transactions', () => {
       }
     }
   });
-  should(`viem transactions`, () => {
-    if (!VIEM_TX) VIEM_TX = getViemVectors('transaction.json.gz');
-    for (let i = 0; i < VIEM_TX.length; i++) {
-      const vtx = VIEM_TX[i];
-      const data = vtx.transaction;
-      if (!data.to) continue;
-      const signed = vtx.serializedSigned;
-      const unsigned = vtx.serialized;
-      const signature = vtx.signature;
-      for (const k of ['r', 's', 'v']) if (signature[k]) signature[k] = BigInt(signature[k]);
-      // Parse unsgined
-      if (unsigned) {
-        const etx = Transaction.fromHex(unsigned);
-        deepStrictEqual(etx.toHex(), unsigned);
-        // Try to sign unsigned tx
+  should(`viem transactions`, async () => {
+    try {
+      for await (const vtx of getViemVectorItems('transaction.json.gz')) {
+        const data = vtx.transaction;
+        if (!data.to) continue;
+        const signed = vtx.serializedSigned;
+        const unsigned = vtx.serialized;
+        const signature = vtx.signature;
+        for (const k of ['r', 's', 'v']) if (signature[k]) signature[k] = BigInt(signature[k]);
+        // Parse unsgined
+        if (unsigned) {
+          const etx = Transaction.fromHex(unsigned);
+          deepStrictEqual(etx.toHex(), unsigned);
+          // Try to sign unsigned tx
+          if (signed) {
+            const sig = etx.signBy(vtx.privateKey, false);
+            deepStrictEqual(sig.toHex(true), signed);
+            deepStrictEqual(sig.raw.r, signature.r);
+            deepStrictEqual(sig.raw.s, signature.s);
+            if (signature.yParity !== undefined) deepStrictEqual(sig.raw.yParity, signature.yParity);
+          }
+        }
+        // parse signed
         if (signed) {
+          const tx = Transaction.fromHex(signed);
+          deepStrictEqual(tx.toHex(true), signed);
+          if (unsigned) deepStrictEqual(tx.toHex(false), unsigned);
+        }
+        // try to build tx
+        if (unsigned && signed) {
+          // Extract chainId && type (doesn't exists in vectors)
+          const etx = Transaction.fromHex(unsigned);
+          deepStrictEqual(etx.type, data.type);
+          const d = { ...convertTx({ ...data, gasLimit: data.gas }), type: etx.type };
+          d.chainId = etx.raw.chainId;
+          if (d.gasLimit === undefined) d.gasLimit = 0n;
+          if (['legacy', 'eip2930'].includes(etx.type) && d.gasPrice === undefined) d.gasPrice = 0n;
+          if (['eip1559', 'eip4844'].includes(etx.type)) {
+            if (d.maxFeePerGas === undefined) d.maxFeePerGas = 0n;
+            if (d.maxPriorityFeePerGas === undefined) d.maxPriorityFeePerGas = 0n;
+          }
+          if (['eip4844'].includes(etx.type) && d.maxFeePerBlobGas === undefined)
+            d.maxFeePerBlobGas = 0n;
+          if (['eip4844'].includes(etx.type) && d.blobVersionedHashes === undefined)
+            d.blobVersionedHashes = [];
+          const preparedTx = Transaction.prepare(d, false);
+          deepStrictEqual(preparedTx.toHex(false), unsigned);
           const sig = etx.signBy(vtx.privateKey, false);
           deepStrictEqual(sig.toHex(true), signed);
-          deepStrictEqual(sig.raw.r, signature.r);
-          deepStrictEqual(sig.raw.s, signature.s);
-          if (signature.yParity !== undefined) deepStrictEqual(sig.raw.yParity, signature.yParity);
         }
       }
-      // parse signed
-      if (signed) {
-        const tx = Transaction.fromHex(signed);
-        deepStrictEqual(tx.toHex(true), signed);
-        if (unsigned) deepStrictEqual(tx.toHex(false), unsigned);
-      }
-      // try to build tx
-      if (unsigned && signed) {
-        // Extract chainId && type (doesn't exists in vectors)
-        const etx = Transaction.fromHex(unsigned);
-        deepStrictEqual(etx.type, data.type);
-        const d = { ...convertTx({ ...data, gasLimit: data.gas }), type: etx.type };
-        d.chainId = etx.raw.chainId;
-        if (d.gasLimit === undefined) d.gasLimit = 0n;
-        if (['legacy', 'eip2930'].includes(etx.type) && d.gasPrice === undefined) d.gasPrice = 0n;
-        if (['eip1559', 'eip4844'].includes(etx.type)) {
-          if (d.maxFeePerGas === undefined) d.maxFeePerGas = 0n;
-          if (d.maxPriorityFeePerGas === undefined) d.maxPriorityFeePerGas = 0n;
-        }
-        if (['eip4844'].includes(etx.type) && d.maxFeePerBlobGas === undefined)
-          d.maxFeePerBlobGas = 0n;
-        if (['eip4844'].includes(etx.type) && d.blobVersionedHashes === undefined)
-          d.blobVersionedHashes = [];
-        const preparedTx = Transaction.prepare(d, false);
-        deepStrictEqual(preparedTx.toHex(false), unsigned);
-        const sig = etx.signBy(vtx.privateKey, false);
-        deepStrictEqual(sig.toHex(true), signed);
-      }
+    } finally {
+      forceGC();
     }
   });
   should('ethereum-tests', () => {

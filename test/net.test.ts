@@ -9,25 +9,9 @@ import { awaitDeep, UniswapAbstract } from '../src/net/uniswap-common.ts';
 import { ethHexNum, numberTo0xHex, weieth } from '../src/utils.ts';
 
 // These real network responses from real nodes, captured by replayable
-import { default as NET_CHAINLINK_REPLAY } from './vectors/rpc/chainlink.js';
-import { default as NET_ENS_REPLAY } from './vectors/rpc/ens.js';
-import { default as NET_ESTIMATE_GAS_REPLAY } from './vectors/rpc/estimateGas.js';
-import { default as NET_UNISWAP_REPLAY } from './vectors/rpc/uniswap.js';
-
-import { default as NET_TX_ALLOWANCES } from './vectors/rpc/net_allowances.js';
-import { default as NET_TX_CONTRACT_CAPABILITIES } from './vectors/rpc/net_contract_capabilities.js';
-import { default as NET_TX_TOKEN_BALANCES } from './vectors/rpc/net_token_balances.js';
-import { default as NET_TX_TOKEN_INFO } from './vectors/rpc/net_token_info.js';
-import { default as NET_TX_TOKEN_TRANSFERS_NFT } from './vectors/rpc/net_token_transfers_nft.js';
-import { default as NET_TX_BATCH_CLAMP_REPLAY } from './vectors/rpc/net_transfers_batch_clamp.js';
-import { default as NET_TX_CLAMP_REPLAY } from './vectors/rpc/net_transfers_clamp.js';
-import { default as NET_TX_SLOW_CLAMP_REPLAY } from './vectors/rpc/net_transfers_slow_clamp.js';
-import { default as NET_TX_BASIC } from './vectors/rpc/net_tx_basic.js';
-import { default as NET_TX_TRANSFERS } from './vectors/rpc/net_tx_transfers.js';
-import { default as NET_TX_VECTORS } from './vectors/rpc/parsed-transactions.js';
-
 const NODE_URL = 'https://NODE_URL/';
 const getKey = (url, opt) => JSON.stringify({ url: NODE_URL, opt });
+const rpcVector = async (name) => (await import(`./vectors/rpc/${name}.js`)).default;
 
 function initProv(replayJson) {
   const replay = mftch.replayable(fetch, replayJson, { getKey, offline: true });
@@ -59,14 +43,14 @@ const fixTx = (tx) => {
 
 describe('Network', () => {
   should('ENS', async () => {
-    const ens = new ENS(initProv(NET_ENS_REPLAY));
+    const ens = new ENS(initProv(await rpcVector('ens')));
     const vitalikAddr = await ens.nameToAddress('vitalik.eth');
     const vitalikName = await ens.addressToName(vitalikAddr);
     deepStrictEqual(vitalikAddr, '0xd8da6bf26964af9d7eed9e03e53415d37aa96045');
     deepStrictEqual(vitalikName, 'vitalik.eth');
   });
   should('Chainlink', async () => {
-    const chainlink = new Chainlink(initProv(NET_CHAINLINK_REPLAY));
+    const chainlink = new Chainlink(initProv(await rpcVector('chainlink')));
     const btcPrice = await chainlink.coinPrice('BTC');
     deepStrictEqual(btcPrice, 69369.10271);
   });
@@ -202,7 +186,7 @@ describe('Network', () => {
   });
 
   should('UniswapV3', async () => {
-    const univ3 = new UniswapV3(initProv(NET_UNISWAP_REPLAY));
+    const univ3 = new UniswapV3(initProv(await rpcVector('uniswap')));
     // Actual code
     const vitalikAddr = '0xd8da6bf26964af9d7eed9e03e53415d37aa96045';
     const DAI = tokenFromSymbol('DAI');
@@ -223,7 +207,7 @@ describe('Network', () => {
   });
 
   should('estimateGas', async () => {
-    const archive = initProv(NET_ESTIMATE_GAS_REPLAY);
+    const archive = initProv(await rpcVector('estimateGas'));
     const gasLimit = await archive.estimateGas({
       from: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
       to: '0xe592427a0aece92de3edee1f18e0157c05861564',
@@ -845,9 +829,10 @@ describe('Network', () => {
     // Random address from abi tests which test for fingerprinted data in encoding.
     // Perfect for tests: only has a few transactions and provides different types of txs.
     const addr = '0x6994eCe772cC4aBb5C9993c065a34C94544A4087';
-    const tx = initProv(NET_TX_BASIC);
+    const expected = await rpcVector('parsed-transactions');
+    const tx = initProv(await rpcVector('net_tx_basic'));
     // Blocks
-    deepStrictEqual(await tx.blockInfo(15_010_733), NET_TX_VECTORS.block);
+    deepStrictEqual(await tx.blockInfo(15_010_733), expected.block);
     // Internal transactions sanity
     const internal = await Promise.all([
       //  tx.internalTransactions(addr),
@@ -861,7 +846,7 @@ describe('Network', () => {
         perRequest: 25,
       }),
     ]);
-    for (const i of internal) deepStrictEqual(i, NET_TX_VECTORS.internal);
+    for (const i of internal) deepStrictEqual(i, expected.internal);
     // Make sure that all equal and pagination works
     for (let i = 1; i < internal.length; i++) deepStrictEqual(internal[i - 1], internal[i]);
 
@@ -871,20 +856,20 @@ describe('Network', () => {
       toBlock: 15_065_121,
       limit: 10_000,
     });
-    deepStrictEqual(logsTokenFrom[0], NET_TX_VECTORS.allFrom);
+    deepStrictEqual(logsTokenFrom[0], expected.allFrom);
     // works with alchemy, doesn't work with quicknode
-    deepStrictEqual((await tx.tokenTransfers(addr, {}))[0], NET_TX_VECTORS.allFrom);
+    deepStrictEqual((await tx.tokenTransfers(addr, {}))[0], expected.allFrom);
     deepStrictEqual(
       await tx.txInfo('0x01bcf8e4be50fcf0537865f658dc912f43710f2fe579aa46f133105d58945eb5'),
-      NET_TX_VECTORS.txInfo
+      expected.txInfo
     );
     deepStrictEqual(
       await tx.txInfo('0xba296ea35b5ff390b8c180ae8f536159dc8723871b43ed7f80e0c218cf171a05'),
-      fixTx(NET_TX_VECTORS.blobTx)
+      fixTx(expected.blobTx)
     );
     deepStrictEqual(
       await tx.txInfo('0x86c5a4350c973cd990105ae461522d01aa313fecbe0a67727e941cd9cee28997'),
-      NET_TX_VECTORS.legacyTx
+      expected.legacyTx
     );
     // Dynamically get tokenInfo for unknown token
     deepStrictEqual(
@@ -901,10 +886,11 @@ describe('Network', () => {
     // Random address from abi tests which test for fingerprinted data in encoding.
     // Perfect for tests: only has a few transactions and provides different types of txs.
     const addr = '0x6994eCe772cC4aBb5C9993c065a34C94544A4087';
-    const tx = initProv(NET_TX_TRANSFERS);
+    const expected = await rpcVector('parsed-transactions');
+    const tx = initProv(await rpcVector('net_tx_transfers'));
 
     const transfers = (await tx.transfers(addr)).map((i) => ({ ...i, info: undefined }));
-    deepStrictEqual(deepMapToObject(transfers), NET_TX_VECTORS.transfers);
+    deepStrictEqual(deepMapToObject(transfers), expected.transfers);
 
     const diff = calcTransfersDiff(transfers);
     const diffLast = diff[diff.length - 1];
@@ -938,7 +924,7 @@ describe('Network', () => {
   });
   should('allowances', async () => {
     const addr = '0x6994eCe772cC4aBb5C9993c065a34C94544A4087';
-    const tx = initProv(NET_TX_ALLOWANCES);
+    const tx = initProv(await rpcVector('net_allowances'));
     deepStrictEqual(await tx.allowances(addr), {
       '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48': {
         '0x68b3465833fb72a70ecdf485e0e4c7bd8665fc45': 1269932532n,
@@ -972,7 +958,7 @@ describe('Network', () => {
 
   should('transfers: limitLogs', async () => {
     const addr = '0x6994eCe772cC4aBb5C9993c065a34C94544A4087';
-    const replay = mftch.replayable(fetch, NET_TX_SLOW_CLAMP_REPLAY, {
+    const replay = mftch.replayable(fetch, await rpcVector('net_transfers_slow_clamp'), {
       getKey,
       offline: true,
     });
@@ -992,7 +978,10 @@ describe('Network', () => {
 
   should('transfers: limitLogs clamp capture', async () => {
     const addr = '0x6994eCe772cC4aBb5C9993c065a34C94544A4087';
-    const replay = mftch.replayable(fetch, NET_TX_CLAMP_REPLAY, { getKey, offline: true });
+    const replay = mftch.replayable(fetch, await rpcVector('net_transfers_clamp'), {
+      getKey,
+      offline: true,
+    });
     const ftch = mftch.ftch(replay, { concurrencyLimit: 1 });
     const archive = new Web3Provider(mftch.jsonrpc(ftch, 'http://SOME_NODE/'));
     const transfers = (
@@ -1032,7 +1021,7 @@ describe('Network', () => {
 
   should('transfers: limitLogs + batch', async () => {
     const addr = '0x6994eCe772cC4aBb5C9993c065a34C94544A4087';
-    const replay = mftch.replayable(fetch, NET_TX_BATCH_CLAMP_REPLAY, {
+    const replay = mftch.replayable(fetch, await rpcVector('net_transfers_batch_clamp'), {
       getKey,
       offline: true,
     });
@@ -1053,7 +1042,10 @@ describe('Network', () => {
   });
 
   should('contractCapabilities', async () => {
-    const replay = mftch.replayable(fetch, NET_TX_CONTRACT_CAPABILITIES, { getKey, offline: true });
+    const replay = mftch.replayable(fetch, await rpcVector('net_contract_capabilities'), {
+      getKey,
+      offline: true,
+    });
     const ftch = mftch.ftch(replay, { concurrencyLimit: 5 });
     const archive = new Web3Provider(mftch.jsonrpc(ftch, 'http://NODE_URL/', { batchSize: 10 }));
 
@@ -1111,7 +1103,10 @@ describe('Network', () => {
     await rejects(() => archive.contractCapabilities(dead));
   });
   should('tokenInfo', async () => {
-    const replay = mftch.replayable(fetch, NET_TX_TOKEN_INFO, { getKey, offline: true });
+    const replay = mftch.replayable(fetch, await rpcVector('net_token_info'), {
+      getKey,
+      offline: true,
+    });
     const ftch = mftch.ftch(replay, { concurrencyLimit: 5 });
     const archive = new Web3Provider(mftch.jsonrpc(ftch, 'http://NODE_URL/', { batchSize: 10 }));
 
@@ -1435,7 +1430,10 @@ describe('Network', () => {
     );
   });
   should('tokenBalances', async () => {
-    const replay = mftch.replayable(fetch, NET_TX_TOKEN_BALANCES, { getKey, offline: true });
+    const replay = mftch.replayable(fetch, await rpcVector('net_token_balances'), {
+      getKey,
+      offline: true,
+    });
     const ftch = mftch.ftch(replay, { concurrencyLimit: 5 });
     const archive = new Web3Provider(mftch.jsonrpc(ftch, 'http://NODE_URL/', { batchSize: 10 }));
 
@@ -1579,7 +1577,10 @@ describe('Network', () => {
     });
   });
   should('tokenTransfers', async () => {
-    const replay = mftch.replayable(fetch, NET_TX_TOKEN_TRANSFERS_NFT, { getKey, offline: true });
+    const replay = mftch.replayable(fetch, await rpcVector('net_token_transfers_nft'), {
+      getKey,
+      offline: true,
+    });
     const ftch = mftch.ftch(replay, { concurrencyLimit: 5 });
     const archive = new Web3Provider(mftch.jsonrpc(ftch, 'http://NODE_URL/', { batchSize: 10 }));
 

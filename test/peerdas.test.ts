@@ -1,6 +1,4 @@
-import { describe, should } from '@paulmillr/jsbt/test.js';
-import { trustedSetup as s_fast } from '@paulmillr/trusted-setups/fast-peerdas.js';
-import { trustedSetup as s_small } from '@paulmillr/trusted-setups/small-peerdas.js';
+import { afterEach, describe, should } from '@paulmillr/jsbt/test.js';
 import { Field } from '@noble/curves/abstract/modular.js';
 import { bls12_381 as bls } from '@noble/curves/bls12-381.js';
 import { bytesToHex, concatBytes } from '@noble/hashes/utils.js';
@@ -9,28 +7,58 @@ import { readdirSync, readFileSync } from 'node:fs';
 import * as yaml from 'yaml';
 import { KZG } from '../src/advanced/kzg.ts';
 import { add0x } from '../src/utils.ts';
-import { __dirname } from './util.ts';
+import { __dirname, forceGC } from './util.ts';
 
 const yamlOpt = {};
 const FE_PER_CELL = 64;
 const { Fr: blsFr } = bls.fields;
 const Fr = Field(blsFr.ORDER, { isLE: blsFr.isLE });
 
-function parseFunctionVectors(path) {
-  const res = {};
-  for (const name of readdirSync(`${__dirname}/${path}`)) {
-    res[name] = { valid: [], invalid: [] };
-    for (const test of readdirSync(`${__dirname}/${path}/${name}/kzg-mainnet`)) {
-      const curPath = `${__dirname}/${path}/${name}/kzg-mainnet/${test}`;
-      const data = yaml.parse(readFileSync(`${curPath}/data.yaml`, 'utf8'), yamlOpt);
-      const isInvalid = !test.includes('case_valid');
-      res[name][isInvalid ? 'invalid' : 'valid'].push({ ...data, name: test });
-    }
+function* readFunctionVectorCases(name, invalid) {
+  const path = `vectors/peerdas/kzg/${name}/kzg-mainnet`;
+  for (const test of readdirSync(`${__dirname}/${path}`)) {
+    const curPath = `${__dirname}/${path}/${test}`;
+    const isInvalid = !test.includes('case_valid');
+    if (isInvalid !== invalid) continue;
+    const data = yaml.parse(readFileSync(`${curPath}/data.yaml`, 'utf8'), yamlOpt);
+    yield { ...data, name: test };
   }
+}
+
+function readFunctionVectors(name) {
+  const res = { valid: [], invalid: [] };
+  for (const t of readFunctionVectorCases(name, false)) res.valid.push(t);
+  for (const t of readFunctionVectorCases(name, true)) res.invalid.push(t);
   return res;
 }
-export const VECTORS = parseFunctionVectors('vectors/peerdas/kzg');
 
+export const VECTORS = new Proxy(
+  {},
+  {
+    get(_target, name) {
+      if (typeof name !== 'string') return;
+      return readFunctionVectors(name);
+    },
+  }
+);
+
+let KZG_CACHE_SETUP;
+let KZG_CACHE;
+const getKzg = async (setup) => {
+  if (KZG_CACHE_SETUP !== setup || !KZG_CACHE) {
+    if (KZG_CACHE) {
+      KZG_CACHE = undefined;
+      forceGC();
+    }
+    const { trustedSetup } =
+      setup === 'fast'
+        ? await import('@paulmillr/trusted-setups/fast-peerdas.js')
+        : await import('@paulmillr/trusted-setups/small-peerdas.js');
+    KZG_CACHE_SETUP = setup;
+    KZG_CACHE = new KZG(trustedSetup);
+  }
+  return KZG_CACHE;
+};
 should('Cell.encode rejects non-canonical field elements', () => {
   const src = readFileSync(`${__dirname}/../src/advanced/kzg.ts`, 'utf8');
   const m = src.match(/encode\(fields: bigint\[\]\): string \{([\s\S]*?)\n  \},/);
@@ -55,43 +83,45 @@ should('Cell.encode rejects non-canonical field elements', () => {
   throws(() => encode(invalid), /invalid field element/);
 });
 
-function run(kzg) {
-  should('computeCells', () => {
-    const tests = VECTORS.compute_cells;
-    for (const t of tests.valid) {
+function run(setup) {
+  afterEach(forceGC);
+
+  should('computeCells', async () => {
+    const kzg = await getKzg(setup);
+    for (const t of readFunctionVectorCases('compute_cells', false)) {
       deepStrictEqual(kzg.computeCells(t.input.blob), t.output);
     }
-    for (const t of tests.invalid) {
+    for (const t of readFunctionVectorCases('compute_cells', true)) {
       throws(() => kzg.computeCells(t.input.blob));
     }
   });
-  should('computeCellsAndKzgProofs', () => {
-    const tests = VECTORS.compute_cells_and_kzg_proofs;
-    for (const t of tests.valid) {
+  should('computeCellsAndKzgProofs', async () => {
+    const kzg = await getKzg(setup);
+    for (const t of readFunctionVectorCases('compute_cells_and_kzg_proofs', false)) {
       const res = kzg.computeCellsAndProofs(t.input.blob);
       deepStrictEqual(res[0], t.output[0]);
       deepStrictEqual(res[1], t.output[1]);
     }
-    for (const t of tests.invalid) {
+    for (const t of readFunctionVectorCases('compute_cells_and_kzg_proofs', true)) {
       throws(() => kzg.computeCellsAndProofs(t.input.blob));
     }
   });
 
-  should('recoverCellsAndProofs', () => {
-    const tests = VECTORS.recover_cells_and_kzg_proofs;
-    for (const t of tests.valid) {
+  should('recoverCellsAndProofs', async () => {
+    const kzg = await getKzg(setup);
+    for (const t of readFunctionVectorCases('recover_cells_and_kzg_proofs', false)) {
       const res = kzg.recoverCellsAndProofs(t.input.cell_indices, t.input.cells);
       // cells, proofs
       deepStrictEqual(res[0], t.output[0]);
       deepStrictEqual(res[1], t.output[1]);
     }
-    for (const t of tests.invalid) {
+    for (const t of readFunctionVectorCases('recover_cells_and_kzg_proofs', true)) {
       throws(() => kzg.recoverCellsAndProofs(t.input.cell_indices, t.input.cells));
     }
   });
-  should('verifyCellKzgProofBatch', () => {
-    const tests = VECTORS.verify_cell_kzg_proof_batch;
-    for (const t of tests.valid) {
+  should('verifyCellKzgProofBatch', async () => {
+    const kzg = await getKzg(setup);
+    for (const t of readFunctionVectorCases('verify_cell_kzg_proof_batch', false)) {
       deepStrictEqual(
         kzg.verifyCellKzgProofBatch(
           t.input.commitments,
@@ -103,7 +133,7 @@ function run(kzg) {
       );
     }
 
-    for (const t of tests.invalid) {
+    for (const t of readFunctionVectorCases('verify_cell_kzg_proof_batch', true)) {
       let valid = true;
       try {
         valid = kzg.verifyCellKzgProofBatch(
@@ -122,10 +152,10 @@ function run(kzg) {
 
 describe('PeerDAS', () => {
   describe('trusted_setups/fast-peerdas.js', () => {
-    run(new KZG(s_fast));
+    run('fast');
   });
   describe('trusted_setups/small-peerdas.js', () => {
-    run(new KZG(s_small));
+    run('small');
   });
 });
 
