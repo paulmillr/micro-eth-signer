@@ -9,9 +9,23 @@ import {
 } from '@noble/hashes/utils.js';
 import { type Coder, coders } from 'micro-packed';
 
-export type { TArg, TRet } from '@noble/hashes/utils.js';
 export { validateObject };
+export type { TArg, TRet } from '@noble/hashes/utils.js';
 
+/**
+ * Asserts that a value is an array and validates each element.
+ * @param item - Value to validate.
+ * @param title - Label included in thrown errors.
+ * @param inner - Per-element validator called with item value and indexed label.
+ * @returns The validated array.
+ * @throws On wrong argument types. {@link TypeError}
+ * @example
+ * Validate an array of strings.
+ * ```ts
+ * import { aarray, astring } from 'micro-eth-signer/utils.js';
+ * const values = aarray(['a'], 'letters', astring);
+ * ```
+ */
 export function aarray<T>(
   item: unknown,
   title: string,
@@ -43,7 +57,6 @@ export function astring(value: unknown, title: string = ''): string {
   }
   return value;
 }
-
 
 /**
  * Checks whether a value is a byte array.
@@ -212,7 +225,9 @@ const ethHexStartRe = /^0[xX]/;
 /**
  * Adds a `0x` prefix when missing.
  * @param hex - Hex string with or without the `0x` prefix.
+ * @param title - Label included in thrown errors.
  * @returns Hex string guaranteed to start with `0x`.
+ * @throws On wrong argument types. {@link TypeError}
  * @example
  * Normalize a user-supplied hex string before sending it to RPC helpers.
  * ```ts
@@ -227,7 +242,9 @@ export function add0x(hex: string, title: string = 'hex'): string {
 /**
  * Removes a leading `0x` prefix when present.
  * @param hex - Hex string with or without the `0x` prefix.
+ * @param title - Label included in thrown errors.
  * @returns Hex string without the `0x` prefix.
+ * @throws On wrong argument types. {@link TypeError}
  * @example
  * Strip the prefix before handing hex to low-level byte decoders.
  * ```ts
@@ -408,7 +425,8 @@ export function verify(
  * @param sig - Compact signature bytes or a {@link RawSig} pair.
  * @param bit - Recovery bit used to reconstruct the public key.
  * @returns Recoverable secp256k1 signature instance.
- * @throws If the recovery bit is not valid for Ethereum signatures. {@link Error}
+ * @throws On wrong argument types. {@link TypeError}
+ * @throws On wrong argument ranges or values. {@link RangeError}
  * @example
  * Rebuild a recoverable signature from compact bytes plus the recovery bit.
  * ```ts
@@ -427,8 +445,7 @@ export function initSig(
   // Ethereum signatures use y-parity recovery bits 0/1; noble also supports raw secp256k1 ids 2/3.
   if (typeof bit !== 'number')
     throw new TypeError('"recovery bit" expected number, got type=' + typeof bit);
-  if (bit !== 0 && bit !== 1)
-    throw new RangeError('"recovery bit" expected 0 or 1, got ' + bit);
+  if (bit !== 0 && bit !== 1) throw new RangeError('"recovery bit" expected 0 or 1, got ' + bit);
   let s;
   if (isBytes(sig)) s = secp256k1.Signature.fromBytes(sig, 'compact');
   else {

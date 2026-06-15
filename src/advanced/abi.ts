@@ -1,10 +1,10 @@
 import { addr } from '../core/address.ts';
-import { Transaction } from '../index.ts';
+import { Transaction } from '../core/tx.ts';
 import { astring, deepFreeze, ethHex, type TArg, type TRet } from '../utils.ts';
 import {
   type ContractABI as _ContractABI,
   type ContractInfo as _ContractInfo,
-  Decoder as _Decoder,
+  Decoder,
   type SignatureInfo as _SignatureInfo,
   createContract as _createContract,
   deployContract as _deployContract,
@@ -13,6 +13,17 @@ import {
 import { default as _ERC1155 } from './abi-erc1155.ts';
 import { default as _ERC20 } from './abi-erc20.ts';
 import { default as _ERC721 } from './abi-erc721.ts';
+import {
+  _source as clearSigSource,
+  eip712 as clearSigEip712,
+  type ClearSigDef,
+  type ClearSigOpt as ClearSigRenderOpt,
+  type ClearSigResult,
+  type ClearSigSource,
+  type ClearSigTypedInput,
+} from './clearsig.ts';
+import { ERCS, OURS, addTokens } from './clearsig-repo.ts';
+export { ERCS, OURS, addTokens } from './clearsig-repo.ts';
 import {
   default as KYBER_NETWORK_PROXY,
   KYBER_NETWORK_PROXY_CONTRACT as _KYBER_NETWORK_PROXY_CONTRACT,
@@ -85,19 +96,6 @@ export const UNISWAP_V3_ROUTER_CONTRACT = _UNISWAP_V3_ROUTER_CONTRACT;
  */
 export const WETH = _WETH;
 /**
- * Contract ABI decoder with signature and topic registries.
- * @example
- * Register a known contract before decoding its calldata or logs.
- * ```ts
- * const decoder = new Decoder();
- * decoder.add(
- *   '0xdac17f958d2ee523a2206206994597c13d831ec7',
- *   [{ type: 'function', name: 'totalSupply', outputs: [{ type: 'uint256' }] }] as const
- * );
- * ```
- */
-export const Decoder = _Decoder;
-/**
  * Contract ABI shape accepted by decoder helpers.
  * Passed into `createContract`, `Decoder.add`, `events`, and deployment helpers.
  */
@@ -109,6 +107,32 @@ export type ContractABI = _ContractABI;
 export type ContractInfo = _ContractInfo;
 /** Decoded ABI signature information returned by decoder helpers. */
 export type SignatureInfo = _SignatureInfo;
+export type { ClearSigDef, ClearSigField, ClearSigResult, ClearSigTypedInput } from './clearsig.ts';
+/** Clear-signing options for public ABI helpers. */
+export type ClearSigOpt = Omit<ClearSigRenderOpt, 'clearSig'> & {
+  /** Clear-signing descriptor files. Omitted means {@link CLEARSIG_REPO}. */
+  clearSig?: Record<string, ClearSigDef>;
+};
+type CalldataInput = {
+  to?: string;
+  from?: string;
+  data?: Uint8Array;
+  value?: bigint;
+  chainId?: bigint;
+};
+/**
+ * Contract ABI decoder with signature/topic registries and optional ERC-7730 cache.
+ * @example
+ * Register a known contract before decoding its calldata or logs.
+ * ```ts
+ * const decoder = new Decoder();
+ * decoder.add(
+ *   '0xdac17f958d2ee523a2206206994597c13d831ec7',
+ *   [{ type: 'function', name: 'totalSupply', outputs: [{ type: 'uint256' }] }] as const
+ * );
+ * ```
+ */
+export { Decoder };
 /**
  * Creates a typed contract wrapper from ABI fragments.
  * @param abi - Contract ABI fragments to map into callable methods.
@@ -197,6 +221,14 @@ export const TOKENS: Record<string, TokenInfo> = /* @__PURE__ */ (() =>
       ])
     )
   ))();
+/** Ready-to-use ERC-7730 descriptor files bound to the built-in token registry. */
+export const CLEARSIG_REPO: Record<string, ClearSigDef> = /* @__PURE__ */ (() => {
+  const tokens = { ...TOKENS };
+  // WETH has a concrete descriptor with WETH ABI names (`dst`/`guy`/`wad`);
+  // binding the generic ERC-20 file to the same address makes selector order matter.
+  delete tokens[WETH_CONTRACT];
+  return deepFreeze(addTokens({ ...ERCS, ...OURS }, tokens));
+})();
 // <address, contractInfo>
 /** Built-in contract registry used by decode helpers. */
 export const CONTRACTS: TRet<Record<string, ContractInfo>> = /* @__PURE__ */ (() =>
@@ -211,6 +243,31 @@ export const CONTRACTS: TRet<Record<string, ContractInfo>> = /* @__PURE__ */ (()
   }))();
 
 /**
+ * Renders ERC-7730 clear-signing data for EIP-712 typed data.
+ * @param input - Typed-data object.
+ * @param opts - Optional clear-signing descriptors and resolver callbacks. See {@link ClearSigOpt}.
+ * @returns Clear-signing display data, or `undefined` when no descriptor matches.
+ * @example
+ * Render typed data through bundled clear-signing descriptors.
+ * ```ts
+ * const typed = { types: {}, primaryType: 'Msg', domain: {}, message: {} } as const;
+ * await eip712(typed);
+ * ```
+ */
+export function eip712(
+  input: TArg<ClearSigTypedInput>,
+  opts?: TArg<ClearSigOpt>
+): Promise<ClearSigResult | undefined>;
+export function eip712(
+  input: TArg<ClearSigTypedInput>,
+  opts: TArg<ClearSigOpt> = {}
+): Promise<ClearSigResult | undefined> {
+  const opt = opts as ClearSigOpt;
+  const src = opt.clearSig || CLEARSIG_REPO;
+  return clearSigEip712(input, { ...(opt as ClearSigRenderOpt), clearSig: src });
+}
+
+/**
  * Looks up a built-in token entry by symbol.
  * @param symbol - Uppercase token symbol such as `USDC` or `WETH`.
  * @returns Token metadata together with the contract address.
@@ -218,7 +275,7 @@ export const CONTRACTS: TRet<Record<string, ContractInfo>> = /* @__PURE__ */ (()
  * @example
  * Resolve a known token before building calldata or rendering balances.
  * ```ts
- * tokenFromSymbol('WETH').symbol;
+ * const token = tokenFromSymbol('WETH');
  * ```
  */
 export const tokenFromSymbol = (
@@ -249,24 +306,46 @@ const getABI = (info: TArg<ContractInfo>) => {
  * Controls which ABI registry entries the high-level decode helpers can use.
  */
 export type DecoderOpt = {
+  /** Reusable decoder with caller-owned ABI entries. */
+  decoder?: Decoder;
   /** Extra registry entries keyed by contract address. */
   customContracts?: Record<string, ContractInfo>;
   /** Skip the built-in registry and only use `customContracts`. */
   noDefault?: boolean;
+  /** Allows calldata with non-ABI trailing bytes; strict decoding is the default. */
+  allowUnreadBytes?: boolean;
 };
+/** Options for decoding raw transactions with optional ERC-7730 clear signing. */
+export type TxDecodeOpt = DecoderOpt &
+  ClearSigRenderOpt & {
+    /** ERC-7730 clear-signing descriptor files. Omitted means {@link CLEARSIG_REPO}. */
+    clearSig?: Record<string, ClearSigDef>;
+    /** Overrides the chain id parsed from the transaction. */
+    chainId?: bigint;
+    /**
+     * Sender address forwarded to clear-signing `@.from` paths.
+     * For unsigned transactions and calldata-only decode, signer UIs should
+     * pass the active account here; signed transactions recover it once.
+     */
+    from?: string;
+  };
 
 // TODO: export? Seems useful enough
 // We cannot have this inside decoder itself,
 // since it will create dependencies on all default contracts
-const getDecoder = (opt: TArg<DecoderOpt> = {}) => {
-  const decoder = new Decoder();
+const getDecoder = (opt_: TArg<TxDecodeOpt> = {}) => {
+  const opt = opt_ as TxDecodeOpt;
+  const decoder = opt.decoder || new Decoder();
   const contracts: Record<string, ContractInfo> = {};
+  const custom = new Set<string>();
   // Add contracts
   if (!opt.noDefault) Object.assign(contracts, CONTRACTS);
   if (opt.customContracts) {
     // Caller registries may be plain objects; inherited keys must not become trusted contracts.
-    for (const k of Object.keys(opt.customContracts))
+    for (const k of Object.keys(opt.customContracts)) {
+      custom.add(k.toLowerCase());
       contracts[k.toLowerCase()] = opt.customContracts[k] as ContractInfo;
+    }
   }
   // Contract info validation
   for (const k of Object.keys(contracts)) {
@@ -280,8 +359,19 @@ const getDecoder = (opt: TArg<DecoderOpt> = {}) => {
       throw new Error(`getDecoder: wrong name type=${c.name}`);
     if (c.price !== undefined && typeof c.price !== 'number')
       throw new Error(`getDecoder: wrong price type=${c.price}`);
-    decoder.add(k, getABI(c)); // validates c.abi
+    // Caller-owned decoders are not backfilled with the default registry; they
+    // may still use the metadata map for hooks and clear-signing field rendering.
+    if (!opt.decoder || custom.has(k)) decoder.add(k, getABI(c)); // validates c.abi
   }
+  // Default one-call decodeTx/decodeData should render clear signing. Caller-owned
+  // decoders stay exact: they attach clearSig only after explicit addClearSig().
+  const clearSig =
+    opt.clearSig !== undefined
+      ? opt.clearSig
+      : opt.noDefault || opt.decoder
+        ? undefined
+        : CLEARSIG_REPO;
+  if (clearSig) decoder.addClearSig(clearSig);
   return { decoder, contracts };
 };
 
@@ -292,52 +382,114 @@ const getDecoder = (opt: TArg<DecoderOpt> = {}) => {
 // 'to' should be part of real tx you want to parse, not hardcoded contract!
 // Even if contract is unknown, we still try to process by known function signatures
 // from other contracts.
-
 // Can be used to parse tx or 'eth_getTransactionReceipt' output
 /**
  * Decodes contract calldata using the built-in and custom ABI registry.
  * @param to - Contract address that received the calldata.
  * @param data - Hex calldata as returned by Ethereum RPC.
  * @param amount - Optional ETH amount that accompanied the call.
- * @param opt - Decoder registry overrides and defaults control. See {@link DecoderOpt}.
- * @returns Decoded call information with hints when a known ABI matches.
+ * @param opt - Decoder registry, clear-signing, and defaults control. See {@link TxDecodeOpt}.
+ * @returns Decoded call information. A single object is an exact registry match;
+ * an array is only a best-guess candidate list from the 4-byte selector when no
+ * exact contract match is available.
  * @throws If the contract address, calldata, amount, or decoder registry are invalid. {@link Error}
  * @example
  * Decode a known router call through the built-in ABI registry.
  * ```ts
  * const to = '0x7a250d5630b4cf539739df2c5dacb4c659f2488d';
  * const data =
- *   '7ff36ab5000000000000000000000000000000000000000000000000ab54a98ceb1f0ad30000000000000000000000000000000000000000000000000000000000000080000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa96045000000000000000000000000000000000000000000000000000000006fd9c6ea0000000000000000000000000000000000000000000000000000000000000002000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2000000000000000000000000106d3c66d22d2dd0446df23d7f5960752994d600';
- * decodeData(to, data, 100000000000000000n);
+ *   '7ff36ab5000000000000000000000000000000000000000000000000ab54a98c' +
+ *   'eb1f0ad300000000000000000000000000000000000000000000000000000000' +
+ *   '00000080000000000000000000000000d8da6bf26964af9d7eed9e03e53415d3' +
+ *   '7aa9604500000000000000000000000000000000000000000000000000000000' +
+ *   '6fd9c6ea00000000000000000000000000000000000000000000000000000000' +
+ *   '00000002000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead908' +
+ *   '3c756cc2000000000000000000000000106d3c66d22d2dd0446df23d7f596075' +
+ *   '2994d600';
+ * const info = decodeData(to, data, 100000000000000000n);
  * ```
  */
 export const decodeData = (
   to: string,
   data: string,
   amount?: bigint,
-  opt: TArg<DecoderOpt> = {}
-): SignatureInfo | SignatureInfo[] | undefined => {
+  opt: TArg<TxDecodeOpt> = {}
+): TxInfo | SignatureInfo[] | undefined => {
+  const options = opt as TxDecodeOpt;
   astring(to, 'to');
   if (!addr.isValid(to)) throw new Error(`decodeData: wrong to=${to}`);
   if (amount !== undefined && typeof amount !== 'bigint')
     throw new Error(`decodeData: wrong amount=${amount}`);
-  const { decoder, contracts } = getDecoder(opt);
-  return decoder.decode(to, ethHex.decode(data), {
+  const { decoder, contracts } = getDecoder(options);
+  const bytes = ethHex.decode(data);
+  const res = decoder.decode(to, bytes as Uint8Array, {
     contract: to,
-    contracts, // NOTE: we need whole contracts list here, since exchanges can use info about other contracts (tokens)
+    // Exchanges can use metadata about other contracts, especially tokens.
+    contracts,
     contractInfo: contracts[to.toLowerCase()], // current contract info (for tokens)
-    amount, // Amount is not neccesary, but some hints won't work without it (exchange eth to some tokens)
+    amount, // ETH-to-token router clear signing needs transaction value.
+    allowUnreadBytes: options.allowUnreadBytes,
   });
+  if (bytes.length < 4) return res;
+  const entry = decoder.clearSigEntry(to, bytes, options.chainId);
+  if (!entry) return res;
+  const clearSig = entry(
+    { to, from: options.from, data: bytes, value: amount, chainId: options.chainId },
+    Object.assign({}, options, {
+      contracts,
+      renderCalldata: (
+        desc: ClearSigSource,
+        input: TArg<CalldataInput>,
+        ropt: TArg<ClearSigOpt>
+      ) => {
+        const opt = Object.assign({}, options, ropt as ClearSigRenderOpt);
+        const call = input as CalldataInput;
+        if (!call.to || !call.data) return Promise.resolve(undefined);
+        const to = call.to;
+        const dataBytes = call.data;
+        const src = clearSigSource(desc);
+        const chainId = call.chainId;
+        const decoder = new Decoder().addClearSig(
+          src.files!,
+          src.inline ? { bind: { address: to, chainId } } : {}
+        );
+        const next: TxDecodeOpt = { ...opt, decoder, noDefault: true, chainId, from: call.from };
+        delete next.clearSig;
+        const data = ethHex.encode(dataBytes);
+        let out = decodeData(to, data, call.value, next);
+        if ((!out || Array.isArray(out) || !out.clearSig) && opt.resolveFactory) {
+          return decoder.resolve({ ...opt, address: to, chainId }).then(() => {
+            out = decodeData(to, data, call.value, next);
+            return out && !Array.isArray(out) ? out.clearSig : undefined;
+          });
+        }
+        return out && !Array.isArray(out) ? out.clearSig : undefined;
+      },
+    }) as ClearSigRenderOpt
+  );
+  if (res && !Array.isArray(res)) return { ...res, clearSig };
+  return res;
 };
+
+/** Exact decoded call from the ABI registry. `clearSig` is present when
+ * clear-signing descriptors were supplied and matched.
+ * Guess arrays never carry it, so `out && !Array.isArray(out)` is the whole
+ * clear-signing consumer check. */
+export type TxInfo = SignatureInfo & { clearSig?: Promise<ClearSigResult> };
 
 // Requires deps on tx, but nicer API.
 // Doesn't cover all use cases of decodeData, since it can't parse 'eth_getTransactionReceipt'
 /**
- * Decodes a signed raw transaction hex string.
- * @param transaction - Signed transaction encoded as hex.
- * @param opt - Decoder registry overrides and defaults control. See {@link DecoderOpt}.
+ * Decodes a signed raw transaction.
+ * @param transaction - Signed transaction encoded as hex, or an already parsed transaction.
+ * Single result = exact call info from the ABI registry, including ABI entries
+ * added by ERC-7730 descriptors; array = best-guess
+ * candidates from the 4-byte selector when no exact contract match is available
+ * (guesses never carry `clearSig`); undefined = unknown selector or creation.
+ * @param opt - Registry overrides plus ERC-7730 clear-signing descriptors/resolvers.
+ * See {@link TxDecodeOpt}.
  * @returns Decoded transaction call information for the transaction payload.
- * @throws If the transaction hex or decoder registry is invalid. {@link Error}
+ * @throws If transaction parsing or decoder validation fails. {@link Error}
  * @example
  * Parse a signed ERC-20 transfer and decode its calldata.
  * ```ts
@@ -347,13 +499,29 @@ export const decodeData = (
  * ```
  */
 export const decodeTx = (
-  transaction: string,
-  opt: TArg<DecoderOpt> = {}
-): SignatureInfo | SignatureInfo[] | undefined => {
-  const tx = Transaction.fromHex(transaction);
+  transaction: TArg<string | ReturnType<typeof Transaction.fromHex>>,
+  opt: TArg<TxDecodeOpt> = {}
+): TxInfo | SignatureInfo[] | undefined => {
+  const tx =
+    typeof transaction === 'string'
+      ? Transaction.fromHex(transaction)
+      : (transaction as ReturnType<typeof Transaction.fromHex>);
   // Contract creation carries initcode, not runtime calldata for an addressed contract.
   if (tx.raw.to === '0x') return;
-  return decodeData(tx.raw.to, tx.raw.data, tx.raw.value, opt);
+  let from = opt.from;
+  // Signed transactions must be internally valid: recover sender once here so
+  // clear-signing @.from paths and callers share the same authenticated sender.
+  if (tx.isSigned) {
+    const sender = tx.sender;
+    if (from && from.toLowerCase() !== sender.toLowerCase())
+      throw new Error(`decodeTx: wrong from=${from}, expected ${sender}`);
+    from = sender;
+  }
+  return decodeData(tx.raw.to, tx.raw.data, tx.raw.value, {
+    ...opt,
+    chainId: opt.chainId === undefined ? tx.raw.chainId : opt.chainId,
+    from,
+  });
 };
 
 // Parses output of eth_getLogs/eth_getTransactionReceipt
@@ -363,7 +531,9 @@ export const decodeTx = (
  * @param topics - Event topics from `eth_getLogs` or a receipt.
  * @param data - Event data payload as hex.
  * @param opt - Decoder registry overrides and defaults control. See {@link DecoderOpt}.
- * @returns Decoded event information with any matching contract metadata.
+ * @returns Decoded event information. A single object is an exact registry
+ * match; an array is only a best-guess candidate list from the topic signature
+ * when no exact contract match is available.
  * @throws If the contract address, topics, event payload, or decoder registry are invalid. {@link Error}
  * @example
  * Decode an Approval event with the built-in token registry.

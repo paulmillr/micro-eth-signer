@@ -231,6 +231,13 @@ function getTypes(types: EIP712Types) {
   return { names, fullNames, hashes, fields };
 }
 
+/** Returns the canonical EIP-712 encodeType string for a struct type. */
+export function encodeType(types: EIP712Types, type: string): string {
+  if (!isObject(types)) throw Error('wrong types');
+  if (typeof type !== 'string' || !Object.hasOwn(types, type)) throw Error(`wrong type=${type}`);
+  return getTypes(types).fullNames[type];
+}
+
 // This re-uses domain per multiple requests, which is based on assumption that domain is static for different requests with
 // different types. Please raise issue if you have different use case.
 export function encoder<T extends EIP712Types>(types: T, domain: TArg<GetType<T, 'EIP712Domain'>>) {
@@ -351,7 +358,7 @@ export type TypedData<T extends EIP712Types, K extends Key<T>> = {
 const getTypedTypes = <T extends EIP712Types, K extends Key<T>>(typed: TArg<TypedData<T, K>>) => ({
   // EIP-712 JSON-RPC payloads may include `types.EIP712Domain`; keep it authoritative
   // and use the derived domain type only as a fallback when the payload omits it.
-  EIP712Domain: getDomainType(typed.domain as any),
+  EIP712Domain: getDomainType(typed.domain as EIP712Domain),
   ...typed.types,
 });
 

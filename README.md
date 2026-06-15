@@ -4,10 +4,9 @@ Minimal library for Ethereum transactions, addresses and smart contracts.
 
 - 🔓 Secure: audited [noble](https://paulmillr.com/noble/) cryptography, no network code, [hedged signatures](#transactions-create-sign)
 - 🔻 Tree-shakeable: unused code is excluded from your builds
-- 🔍 Reliable: 150MB of test vectors from EIPs, ethers and viem
-- ✍️ Transactions, addresses, messages
-- 🦺 Type-safe ABI, RLP, SSZ, KZG, PeerDAS, BLS validator keys
-- 👓 Clear Signing
+- 🔍 Reliable: 800MB of test vectors from EIPs, ethers and viem
+- ✍️ Core: Transactions, addresses, messages
+- 🦺 Type-safe ABI, RLP, SSZ, KZG, PeerDAS, BLS validator keys, Clear Signing
 - 🌍 Archive node connector
 - 🪶 32KB (gzipped) for core+deps: 4x smaller than alternatives
 
@@ -29,7 +28,7 @@ If you don't like NPM, a standalone [eth-signer.js](https://github.com/paulmillr
   - [Addresses: create, checksum](#addresses-create-checksum)
   - [Messages: sign, verify](#messages-sign-verify)
 - Advanced
-  - [Type-safe ABI parsing](#type-safe-abi-parsing)
+  - [ABI parsing](#abi-parsing)
   - [Clear Signing](#clear-signing)
   - [BLS EIP-2333 validator keys](#bls-eip-2333-validator-keys)
   - [RLP & SSZ](#rlp--ssz)
@@ -321,7 +320,7 @@ async function main() {
 
 ## Advanced
 
-### Type-safe ABI parsing
+### ABI parsing
 
 The ABI is type-safe when `as const` is specified:
 
@@ -380,69 +379,125 @@ Check out [`src/net/ens.ts`](./src/net/ens.ts) for type-safe contract execution 
 
 ### Clear Signing
 
-The library supports [Clear Signing](https://clearsigning.org) initiative with three mechanisms:
+The library supports [Clear Signing](https://clearsigning.org) through
+ERC-7730 descriptor maps via `decodeTx`, `decodeData`, and `eip712`. The
+previous transaction-display strings are now ERC-7730 descriptors in `OURS`.
 
-1. ERC-7730 descriptors via `clearSign` and `clearSig.repository`
-2. Transaction hints
-3. Event hints
+#### ERC-7730 descriptor maps
 
-So, a user will see `Transfer 22588 USDT to 0xdac17f958d2ee523a2206206994597c13d831ec7` instead of
-`0xf8a901851d1a94a20082c12a94dac17f958d2ee523a2206206994597c13d831ec780b844a9059cbb000000000000000000000000dac17f958d2ee523a2206206994597c13d831ec7000000000000000000000000000000000000000000000000000000054259870025a066fcb560b50e577f6dc8c8b2e3019f760da78b4c04021382ba490c572a303a42a0078f5af8ac7e11caba9b7dc7a64f7bdc3b4ce1a6ab0a1246771d7cc3524a7200`.
-
-#### Transaction hints
-
-The transaction sent ERC-20 USDT token between addresses. The library produces a following hint:
-
-> Transfer 22588 USDT to 0xdac17f958d2ee523a2206206994597c13d831ec7
+`CLEARSIG_REPO` is the batteries-included descriptor map: the generic ERC
+interfaces (erc20/erc721/erc4626/...), curated and legacy contracts (uniswap
+v2/v3, kyber, the metamask swap router, weth), and the built-in token registry
+already bound to them - including an ERC-2612 permit binding per token.
 
 ```ts
+import { CLEARSIG_REPO, addTokens } from 'micro-eth-signer/advanced/abi.js';
+import { CLEARSIG_REPO_FULL } from 'micro-eth-signer/advanced/clearsig-repo-full.js';
+
+// basic: generic ERCs + curated contracts + built-in tokens
+const base = CLEARSIG_REPO;
+
+// your own tokens: binds erc20/erc721 interfaces + an ERC-2612 permit per token
+const mine = addTokens(CLEARSIG_REPO, {
+  '0x0000000000000000000000000000000000000123': {
+    abi: 'ERC20',
+    symbol: 'MTK',
+    decimals: 18,
+  },
+}); // chainId is optional, defaults to mainnet (1)
+
+// full: every descriptor from the upstream registry on top.
+// CLEARSIG_REPO_FULL is about 500KB of generated source; the normal ABI facade
+// does not re-export it, so import this separate subpath only when needed.
+const full = { ...CLEARSIG_REPO, ...CLEARSIG_REPO_FULL };
+```
+
+#### ERC-7730 transactions
+
+`decodeTx` decodes a raw transaction through the built-in ABI and clear-signing
+registries; matched transactions carry a `clearSig` promise with the rendered
+intent and fields. Use `decodeData(to, data, value, opts)` when you already
+have RPC calldata fields instead of full transaction hex.
+
+Both default to `CLEARSIG_REPO` when you omit `clearSig`; pass `{ clearSig }` to
+override it - with `addTokens(...)` output or your own descriptor map. Each call
+returns the exact decoded call (carrying `clearSig`), an array of ABI-shape
+guesses when no exact contract matches (these never carry `clearSig`), or
+`undefined` for unknown selectors and contract creation - so guard with
+`out && !Array.isArray(out)` before reading `clearSig`.
+
+```ts
+/// <reference types="node" />
 import { deepStrictEqual } from 'node:assert';
 import { decodeTx } from 'micro-eth-signer/advanced/abi.js';
 
 const tx =
   '0xf8a901851d1a94a20082c12a94dac17f958d2ee523a2206206994597c13d831ec780b844a9059cbb000000000000000000000000dac17f958d2ee523a2206206994597c13d831ec7000000000000000000000000000000000000000000000000000000054259870025a066fcb560b50e577f6dc8c8b2e3019f760da78b4c04021382ba490c572a303a42a0078f5af8ac7e11caba9b7dc7a64f7bdc3b4ce1a6ab0a1246771d7cc3524a7200';
-// Decode tx information
-deepStrictEqual(decodeTx(tx), {
-  name: 'transfer',
-  signature: 'transfer(address,uint256)',
-  value: {
-    to: '0xdac17f958d2ee523a2206206994597c13d831ec7',
-    value: 22588000000n,
+const decoded = decodeTx(tx);
+if (!decoded || Array.isArray(decoded)) throw new Error('expected exact ABI match');
+const clear = await decoded.clearSig;
+deepStrictEqual(decoded.value, {
+  to: '0xdac17f958d2ee523a2206206994597c13d831ec7',
+  value: 22588000000n,
+});
+deepStrictEqual(clear, {
+  intent: 'Send',
+  interpolatedIntent: 'Transfer 22588 USDT to 0xdac17f958d2ee523a2206206994597c13d831ec7',
+  structuredIntent: [
+    'Transfer ',
+    { value: '22588 USDT', format: 'tokenAmount', rawValue: 22588000000n },
+    ' to ',
+    {
+      value: '0xdac17f958d2ee523a2206206994597c13d831ec7',
+      format: 'addressName',
+      rawValue: '0xdac17f958d2ee523a2206206994597c13d831ec7',
+    },
+  ],
+  fields: {
+    Amount: { value: '22588 USDT', format: 'tokenAmount', rawValue: 22588000000n },
+    To: {
+      value: '0xdac17f958d2ee523a2206206994597c13d831ec7',
+      format: 'addressName',
+      rawValue: '0xdac17f958d2ee523a2206206994597c13d831ec7',
+    },
   },
-  hint: 'Transfer 22588 USDT to 0xdac17f958d2ee523a2206206994597c13d831ec7',
 });
 ```
 
-Or if you have already decoded tx:
+So, a user will see `Transfer 22588 USDT to 0xdac17f958d2ee523a2206206994597c13d831ec7` instead of
+`0xf8a901851d1a94a20082c12a94dac17f958d2ee523a2206206994597c13d831ec780b844a9059cbb000000000000000000000000dac17f958d2ee523a2206206994597c13d831ec7000000000000000000000000000000000000000000000000000000054259870025a066fcb560b50e577f6dc8c8b2e3019f760da78b4c04021382ba490c572a303a42a0078f5af8ac7e11caba9b7dc7a64f7bdc3b4ce1a6ab0a1246771d7cc3524a7200`.
+
+The result drives the signing screen: render `intent` as the headline and
+`fields` (label -> `{ value, format, rawValue }`) as the detail rows. When the
+descriptor defines an `interpolatedIntent`, the result also carries
+`interpolatedIntent` (a ready-to-print sentence) and `structuredIntent` (that
+sentence split into literal strings and formatted field objects, for inline
+highlighting); both are absent otherwise - the EIP-712 permit further down
+renders with only `intent` and `fields`, so treat those two keys as optional.
+
+Unsigned transactions decode through the same `decodeTx` - here with a custom
+token bound via `addTokens`:
 
 ```ts
+/// <reference types="node" />
 import { deepStrictEqual } from 'node:assert';
-import { decodeData } from 'micro-eth-signer/advanced/abi.js';
+import { Transaction } from 'micro-eth-signer';
+import { CLEARSIG_REPO, addTokens, decodeData, decodeTx } from 'micro-eth-signer/advanced/abi.js';
 
 const to = '0x7a250d5630b4cf539739df2c5dacb4c659f2488d';
 const data =
   '7ff36ab5000000000000000000000000000000000000000000000000ab54a98ceb1f0ad30000000000000000000000000000000000000000000000000000000000000080000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa96045000000000000000000000000000000000000000000000000000000006fd9c6ea0000000000000000000000000000000000000000000000000000000000000002000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2000000000000000000000000106d3c66d22d2dd0446df23d7f5960752994d600';
 const value = 100000000000000000n;
-
-deepStrictEqual(decodeData(to, data, value), {
-  name: 'swapExactETHForTokens',
-  signature: 'swapExactETHForTokens(uint256,address[],address,uint256)',
-  value: {
-    amountOutMin: 12345678901234567891n,
-    path: [
-      '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2',
-      '0x106d3c66d22d2dd0446df23d7f5960752994d600',
-    ],
-    to: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
-    deadline: 1876543210n,
-  },
-});
-
 // With custom tokens/contracts
 const customContracts = {
   '0x106d3c66d22d2dd0446df23d7f5960752994d600': { abi: 'ERC20', symbol: 'LABRA', decimals: 9 },
 } as const;
-deepStrictEqual(decodeData(to, data, value, { customContracts }), {
+
+const decodedData = decodeData(to, data, value, { customContracts })!;
+if (Array.isArray(decodedData) || !decodedData.clearSig)
+  throw new Error('expected exact ABI match');
+const { clearSig: _decodedClearSig, ...decodedCall } = decodedData;
+deepStrictEqual(decodedCall, {
   name: 'swapExactETHForTokens',
   signature: 'swapExactETHForTokens(uint256,address[],address,uint256)',
   value: {
@@ -454,17 +509,162 @@ deepStrictEqual(decodeData(to, data, value, { customContracts }), {
     to: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
     deadline: 1876543210n,
   },
-  hint: 'Swap 0.1 ETH for at least 12345678901.234567891 LABRA. Expires at Tue, 19 Jun 2029 06:00:10 GMT',
+});
+
+const customClearSig = addTokens(CLEARSIG_REPO, customContracts);
+const unsigned = Transaction.prepare({
+  to,
+  value,
+  data,
+  nonce: 0n,
+  maxFeePerGas: 2000000000n,
+  gasLimit: 250000n,
+}).toHex(false);
+const decodedSwap = decodeTx(unsigned, { clearSig: customClearSig });
+// Arrays are ABI shape guesses used when no exact contract match is available.
+if (!decodedSwap || Array.isArray(decodedSwap)) throw new Error('expected exact ABI match');
+deepStrictEqual(await decodedSwap.clearSig, {
+  intent: 'Swap',
+  interpolatedIntent:
+    'Swap 0.1 ETH for at least 12345678901.234567891 LABRA. Expires at Tue, 19 Jun 2029 06:00:10 GMT',
+  structuredIntent: [
+    'Swap ',
+    { value: '0.1 ETH', format: 'amount', rawValue: 100000000000000000n },
+    ' for at least ',
+    {
+      value: '12345678901.234567891 LABRA',
+      format: 'tokenAmount',
+      rawValue: 12345678901234567891n,
+    },
+    '. Expires at ',
+    { value: 'Tue, 19 Jun 2029 06:00:10 GMT', format: 'date', rawValue: 1876543210n },
+  ],
+  fields: {
+    'Amount to Send': {
+      value: '0.1 ETH',
+      format: 'amount',
+      rawValue: 100000000000000000n,
+    },
+    'Minimum to Receive': {
+      value: '12345678901.234567891 LABRA',
+      format: 'tokenAmount',
+      rawValue: 12345678901234567891n,
+    },
+    Beneficiary: {
+      value: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
+      format: 'addressName',
+      rawValue: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
+    },
+    Deadline: {
+      value: 'Tue, 19 Jun 2029 06:00:10 GMT',
+      format: 'date',
+      rawValue: 1876543210n,
+    },
+  },
 });
 ```
 
-#### Event hints
+ERC-7730 does not describe plain value transfers (`data: '0x'`), so `decodeTx`
+produces no `clearSig` for them; word those in the wallet itself (e.g.
+"Send 0.5 ETH to ...") instead of showing an unknown-transaction fallback.
 
-Decoding the event produces the following hint:
+#### Network-backed metadata
 
-> Allow 0xe592427a0aece92de3edee1f18e0157c05861564 spending up to 1000 BAT from 0xd8da6bf26964af9d7eed9e03e53415d37aa96045
+`Web3Provider.discoverTx` wires `decodeTx` to archive-node callbacks. The
+clear-signing renderer stays no-network by default; this path adds trusted
+token metadata, names, NFT metadata, block timestamps, and factory proofs when a
+provider is available.
 
 ```ts
+import { Web3Provider } from 'micro-eth-signer/net.js';
+
+async function reviewTx(prov: InstanceType<typeof Web3Provider>, txHex: string) {
+  const decoded = await prov.discoverTx(txHex);
+  if (!decoded || Array.isArray(decoded)) throw new Error('expected exact ABI match');
+  return decoded.clearSig;
+}
+```
+
+Resolvers are independent of the network path: any `ClearSigOpt` callback -
+`resolveAddress`, `resolveToken`, `resolveNft`, `resolveBlock`, `resolveChain` -
+can be passed to `decodeTx`/`eip712` alongside `clearSig`, e.g.
+`{ clearSig: CLEARSIG_REPO, resolveAddress: async ({ address }) => book[address] }`.
+`resolveAddress` is intentionally left out of `discoverTx`'s bundle - what counts
+as a trusted name is wallet policy. To teach the renderer about a non-token
+contract, merge your own ERC-7730 descriptor files into the map
+(`{ ...CLEARSIG_REPO, ...myDescriptors }`); descriptor maps are plain
+`Record<string, ClearSigDef>`.
+
+#### EIP-712 typed data
+
+`eip712` defaults to `CLEARSIG_REPO` like `decodeTx`. Signature requests render
+through the same repository. `addTokens` gives every ERC-20 an ERC-2612 permit
+binding (the upstream permit descriptor ships
+without deployments, so out of the box it matches nothing), and the bound
+token metadata makes amounts render offline:
+
+```ts
+/// <reference types="node" />
+import { deepStrictEqual } from 'node:assert';
+import { eip712 } from 'micro-eth-signer/advanced/abi.js';
+import type { ClearSigTypedInput } from 'micro-eth-signer/advanced/abi.js';
+
+const typed = {
+  types: {
+    Permit: [
+      { name: 'owner', type: 'address' },
+      { name: 'spender', type: 'address' },
+      { name: 'value', type: 'uint256' },
+      { name: 'nonce', type: 'uint256' },
+      { name: 'deadline', type: 'uint256' },
+    ],
+  },
+  primaryType: 'Permit',
+  domain: {
+    name: 'USD Coin',
+    version: '2',
+    chainId: 1,
+    verifyingContract: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48',
+  },
+  message: {
+    owner: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
+    spender: '0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45',
+    value: 25000000n,
+    nonce: 0n,
+    deadline: 1893456000n,
+  },
+} as const;
+const clear = (await eip712(typed as unknown as ClearSigTypedInput))!;
+deepStrictEqual(clear, {
+  intent: 'Authorize spending of tokens',
+  fields: {
+    Spender: {
+      value: '0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45',
+      format: 'raw',
+      rawValue: '0x68b3465833fb72A70ecDF485E0e4C7bD8665Fc45',
+    },
+    'Max spending amount': {
+      value: '25 USDC',
+      format: 'tokenAmount',
+      rawValue: 25000000n,
+    },
+    'Valid until': {
+      value: 'Tue, 01 Jan 2030 00:00:00 GMT',
+      format: 'date',
+      rawValue: 1893456000n,
+    },
+  },
+});
+```
+
+#### Decoding events
+
+Receipt logs are post-transaction facts, not ERC-7730 signing prompts. Minimal
+event hints still exist for decoded token events:
+
+```ts
+/// <reference types="node" />
+import { deepStrictEqual } from 'node:assert';
 import { decodeEvent } from 'micro-eth-signer/advanced/abi.js';
 
 const to = '0x0d8775f648430679a709e98d2b0cb6250d2887ef';
@@ -474,8 +674,19 @@ const topics = [
   '0x000000000000000000000000e592427a0aece92de3edee1f18e0157c05861564',
 ];
 const data = '0x00000000000000000000000000000000000000000000003635c9adc5dea00000';
-const einfo = decodeEvent(to, topics, data);
-console.log(einfo);
+const event = decodeEvent(to, topics, data)!;
+// Arrays are ABI topic guesses used when no exact contract match is available.
+if (Array.isArray(event)) throw new Error('expected exact event match');
+deepStrictEqual(event, {
+  name: 'Approval',
+  signature: 'Approval(address,address,uint256)',
+  value: {
+    value: 1000000000000000000000n,
+    owner: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
+    spender: '0xe592427a0aece92de3edee1f18e0157c05861564',
+  },
+  hint: 'Allow 0xe592427a0aece92de3edee1f18e0157c05861564 spending up to 1000 BAT from 0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
+});
 ```
 
 ### BLS EIP-2333 validator keys

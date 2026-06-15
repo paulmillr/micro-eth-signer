@@ -12,22 +12,12 @@ const _abi = () => [
 type ABI = ReturnType<typeof _abi>;
 const _ABI: ABI = /* @__PURE__ */ deepFreeze(/* @__PURE__ */ _abi());
 
-// WETH9 keeps legacy names as public ABI keys; map locally so generic ERC-20
-// hints stay strict.
-const _hints = () => ({
-  approve: (v: any, opt: TArg<HintOpt>): string =>
-    erc20hints.approve({ spender: v.guy, value: v.wad }, opt),
-  transferFrom: (v: any, opt: TArg<HintOpt>): string =>
-    erc20hints.transferFrom({ from: v.src, to: v.dst, value: v.wad }, opt),
-  transfer: (v: any, opt: TArg<HintOpt>): string =>
-    erc20hints.transfer({ to: v.dst, value: v.wad }, opt),
+const hints = {
   Approval: (v: any, opt: TArg<HintOpt>): string =>
     erc20hints.Approval({ owner: v.src, spender: v.guy, value: v.wad }, opt),
   Transfer: (v: any, opt: TArg<HintOpt>): string =>
     erc20hints.Transfer({ from: v.src, to: v.dst, value: v.wad }, opt),
-});
-type Hints = ReturnType<typeof _hints>;
-const hints: Hints = /* @__PURE__ */ _hints();
+};
 
 const ABI: ABI = /* @__PURE__ */ deepFreeze(/* @__PURE__ */ addHints(_ABI, hints));
 export default ABI;

@@ -2,6 +2,7 @@ import { keccak_256 } from '@noble/hashes/sha3.js';
 import { hexToBytes, utf8ToBytes } from '@noble/hashes/utils.js';
 import { describe, should } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual, throws } from 'node:assert';
+import { eip712 } from '../src/advanced/abi.ts';
 import * as typed from '../src/core/typed-data.ts';
 import { addr } from '../src/index.ts';
 import { jsonGZ } from './util.ts';
@@ -64,6 +65,65 @@ describe('typedData (EIP-712)', () => {
     deepStrictEqual(typed.signTyped(typedData, privateKey, false), sig);
     deepStrictEqual(typed.verifyTyped(sig, typedData, address), true);
     deepStrictEqual(typed.recoverPublicKeyTyped(sig, typedData), address);
+  });
+
+  should('renders ERC-7730 clear signing for typed-data signer input', async () => {
+    const descriptors = {
+      'mail.json': {
+        context: {
+          eip712: {
+            domain: {
+              name: 'Ether Mail',
+              chainId: 1,
+              verifyingContract: '0xCcCCccccCCCCcCCCCCCcCcCccCcCCCcCcccccccC',
+            },
+          },
+        },
+        display: {
+          formats: {
+            'Mail(Person from,Person to,string contents)Person(string name,address wallet)': {
+              intent: 'Mail',
+              interpolatedIntent: 'Mail from {from.wallet} to {to.wallet}',
+              fields: [
+                { path: 'from.wallet', label: 'From', format: 'raw', visible: 'always' },
+                { path: 'to.wallet', label: 'To', format: 'raw', visible: 'always' },
+              ],
+            },
+          },
+        },
+      },
+    };
+    deepStrictEqual(await eip712(typedData, { clearSig: descriptors }), {
+      intent: 'Mail',
+      interpolatedIntent:
+        'Mail from 0xCD2a3d9F938E13CD947Ec05AbC7FE734Df8DD826 to 0xbBbBBBBbbBBBbbbBbbBbbbbBBbBbbbbBbBbbBBbB',
+      structuredIntent: [
+        'Mail from ',
+        {
+          value: '0xCD2a3d9F938E13CD947Ec05AbC7FE734Df8DD826',
+          format: 'raw',
+          rawValue: '0xCD2a3d9F938E13CD947Ec05AbC7FE734Df8DD826',
+        },
+        ' to ',
+        {
+          value: '0xbBbBBBBbbBBBbbbBbbBbbbbBBbBbbbbBbBbbBBbB',
+          format: 'raw',
+          rawValue: '0xbBbBBBBbbBBBbbbBbbBbbbbBBbBbbbbBbBbbBBbB',
+        },
+      ],
+      fields: {
+        From: {
+          value: '0xCD2a3d9F938E13CD947Ec05AbC7FE734Df8DD826',
+          format: 'raw',
+          rawValue: '0xCD2a3d9F938E13CD947Ec05AbC7FE734Df8DD826',
+        },
+        To: {
+          value: '0xbBbBBBBbbBBBbbbBbbBbbbbBBbBbbbbBbBbbBBbB',
+          format: 'raw',
+          rawValue: '0xbBbBBBBbbBBBbbbBbbBbbbbBBbBbbbbBbBbbBBbB',
+        },
+      },
+    });
   });
 
   describe('Utils', () => {
@@ -308,6 +368,23 @@ describe('typedData (EIP-712)', () => {
       );
     });
     should('getTypes', () => {
+      deepStrictEqual(
+        typed.encodeType(
+          {
+            Person: [
+              { name: 'name', type: 'string' },
+              { name: 'wallet', type: 'address' },
+            ],
+            Mail: [
+              { name: 'from', type: 'Person' },
+              { name: 'to', type: 'Person' },
+              { name: 'contents', type: 'string' },
+            ],
+          },
+          'Mail'
+        ),
+        'Mail(Person from,Person to,string contents)Person(string name,address wallet)'
+      );
       deepStrictEqual(
         getTypes({
           Person: [

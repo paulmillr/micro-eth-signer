@@ -1,9 +1,9 @@
 import { bytesToHex } from '@noble/hashes/utils.js';
-import { add0x, createDecimal, deepFreeze, type TArg } from '../utils.ts';
-import { addHints, addHook } from './abi-common.ts';
+import { add0x, deepFreeze, type TArg } from '../utils.ts';
+import { addHook } from './abi-common.ts';
 import { type Decoder, type HintOpt, type SignatureInfo } from './abi-decoder.ts';
 
-// Raw SwapRouter ABI: net/uniswap-v3.ts, multicall decoding, and the hint layer
+// Raw SwapRouter ABI: net/uniswap-v3.ts, multicall decoding, and clear signing
 // depend on these exact method and tuple field names.
 // prettier-ignore
 const _ABI = /* @__PURE__ */ deepFreeze([
@@ -29,88 +29,11 @@ const ABI_MULTICALL = /* @__PURE__ */ deepFreeze(
       info.name = `multicall(${decoded.map((i: any) => i.name).join(', ')})`;
       info.signature = `multicall(${decoded.map((i: any) => i.signature).join(', ')})`;
       info.value = decoded.map((i: any) => i.value);
-      let hasHint = false;
-      for (let i of decoded) if (i.hint) hasHint = true;
-      if (hasHint) {
-        info.hint = decoded
-          .filter((i: any) => i.hint)
-          .map((i: any) => i.hint)
-          .join(' ');
-      }
       return info;
     }
   )
 );
 
-// Hint-only endpoint extractor for packed V3 paths: valid paths are token || fee(3 bytes) || token ...,
-// and only the first/last token addresses are rendered.
-const decodePath = (b: TArg<Uint8Array>) => {
-  if (b.length < 43 || (b.length - 20) % 23 !== 0)
-    throw new Error(`Invalid Uniswap V3 path: expected 20+n*23 bytes, got ${b.length}`);
-  return [b.slice(0, 20), b.slice(-20)].map((i) => add0x(bytesToHex(i)));
-};
-
-function uniToken(contract: string, amount: bigint, opt: TArg<HintOpt>): string | undefined {
-  // Hint rendering expects caller-supplied token metadata keyed by normalized lowercase addresses,
-  // and zero-decimal tokens are still valid metadata.
-  if (!contract || !opt.contracts || !opt.contracts[contract]) return;
-  const info = opt.contracts[contract];
-  if (info.decimals === undefined || !info.symbol) return;
-  return `${createDecimal(info.decimals).encode(amount)} ${info.symbol}`;
-}
-// Deadlines are uint256 on-chain, but hint rendering goes through JS Number/Date and therefore
-// assumes the value fits the host date range.
-const uniTs = (ts: number) => `Expires at ${new Date(Number(ts) * 1000).toUTCString()}`;
-
-const hints = {
-  // Single-hop exact-input hints show the exact tokenIn amount and the minimum tokenOut floor;
-  // fee tier and sqrtPriceLimitX96 stay implicit.
-  exactInputSingle(v: any, opt: TArg<HintOpt>) {
-    const [from, to] = [
-      uniToken(v.tokenIn, v.amountIn, opt),
-      uniToken(v.tokenOut, v.amountOutMinimum, opt),
-    ];
-    if (!from || !to) throw new Error('Not enough info');
-    return `Swap exact ${from} for at least ${to}. ${uniTs(v.deadline)}`;
-  },
-  // Single-hop exact-output hints show the maximum tokenIn spend and the exact tokenOut amount;
-  // fee tier and sqrtPriceLimitX96 stay implicit.
-  exactOutputSingle(v: any, opt: TArg<HintOpt>) {
-    const [from, to] = [
-      uniToken(v.tokenIn, v.amountInMaximum, opt),
-      uniToken(v.tokenOut, v.amountOut, opt),
-    ];
-    if (!from || !to) throw new Error('Not enough info');
-    return `Swap up to ${from} for exact ${to}. ${uniTs(v.deadline)}`;
-  },
-  // Path-based exact-input hints only show the first/last token endpoints and the minimum output floor;
-  // intermediate hops and fee tiers stay implicit.
-  exactInput(v: any, opt: TArg<HintOpt>) {
-    const [tokenIn, tokenOut] = decodePath(v.path);
-    const [from, to] = [
-      uniToken(tokenIn, v.amountIn, opt),
-      uniToken(tokenOut, v.amountOutMinimum, opt),
-    ];
-    if (!from || !to) throw new Error('Not enough info');
-    return `Swap exact ${from} for at least ${to}. ${uniTs(v.deadline)}`;
-  },
-  // Path-based exact-output hints reverse the packed path to recover input/output endpoints and
-  // only show the max input bound plus exact output target; intermediate hops and fee tiers stay implicit.
-  exactOutput(v: any, opt: TArg<HintOpt>) {
-    const [tokenIn, tokenOut] = decodePath(v.path).reverse();
-    const [from, to] = [
-      uniToken(tokenIn, v.amountInMaximum, opt),
-      uniToken(tokenOut, v.amountOut, opt),
-    ];
-    if (!from || !to) throw new Error('Not enough info');
-    return `Swap up to ${from} for exact ${to}. ${uniTs(v.deadline)}`;
-  },
-};
-
-// Compose the default router export by keeping the multicall expansion hook and layering the four
-// swap hint renderers onto the same ABI surface.
-const ABI = /* @__PURE__ */ deepFreeze(/* @__PURE__ */ addHints(ABI_MULTICALL, hints));
-
-export default ABI;
+export default ABI_MULTICALL;
 // Mainnet Uniswap V3 SwapRouter address used by the built-in contract registry and V3 net helpers.
 export const UNISWAP_V3_ROUTER_CONTRACT = '0xe592427a0aece92de3edee1f18e0157c05861564';

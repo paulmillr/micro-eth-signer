@@ -4,7 +4,7 @@ import type { TArg } from '../utils.ts';
 export function addHint<T extends ContractABI>(abi: T, name: string, fn: TArg<HintFn>): T {
   const res = [];
   for (const elm of abi) {
-    if (elm.name === name) res.push({ ...elm, hint: fn });
+    if (elm.type === 'event' && elm.name === name) res.push({ ...elm, hint: fn });
     else res.push(elm);
   }
   return res as unknown as T;
@@ -13,8 +13,8 @@ export function addHint<T extends ContractABI>(abi: T, name: string, fn: TArg<Hi
 export function addHints<T extends ContractABI>(abi: T, map: TArg<Record<string, HintFn>>): T {
   const res = [];
   for (const elm of abi) {
-    // ABI names can be `toString`; only explicit hint-map entries should affect output.
-    if (['event', 'function'].includes(elm.type) && elm.name && Object.hasOwn(map, elm.name)) {
+    // ABI event names can be `toString`; only explicit hint-map entries affect output.
+    if (elm.type === 'event' && elm.name && Object.hasOwn(map, elm.name)) {
       res.push({ ...elm, hint: map[elm.name!] });
     } else res.push(elm);
   }

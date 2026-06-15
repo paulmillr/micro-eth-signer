@@ -9,7 +9,7 @@ import * as snappy from 'snappyjs';
 import * as micro from '../../src/advanced/ssz.ts';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-const VECTORS_PATH = __dirname + `/../vectors/consensus-spec-tests/tests/mainnet/deneb/ssz_static`;
+const VECTORS_PATH = getVectorsPath('consensus-spec-tests/tests/mainnet/deneb/ssz_static');
 
 // eth-signer is x2-x4+ slower than chainsafe.
 // - packed executes a lot of checks, which contributes to slow-down
@@ -338,14 +338,15 @@ const TYPES = {
   },
   AttesterSlashing: {
     dataPath: `${VECTORS_PATH}/AttesterSlashing/ssz_random/case_0/serialized.ssz_snappy`,
-    micro: micro.ETH2_TYPES.AttesterSlashing,
+    // Deneb vectors need Deneb list limits; latest ETH2_TYPES is Fulu.
+    micro: micro.ETH2_PROFILES.deneb.AttesterSlashing,
     chainsafe: AttesterSlashing,
   },
 
   BeaconBlock: {
     dataPath: `${VECTORS_PATH}/BeaconBlock/ssz_random/case_0/serialized.ssz_snappy`,
     // We have slightly different field names (we are closer to spec/eth field names in consensus-spec)
-    micro: micro.ETH2_TYPES.BeaconBlock,
+    micro: micro.ETH2_PROFILES.deneb.BeaconBlock,
     //chainsafe: lodestar.ssz.deneb.BeaconBlock,
     chainsafe: BeaconBlock,
   },

@@ -32,6 +32,7 @@
   "scripts": {
     "build": "tsc",
     "build:clean": "rm -f *.{js,d.ts,js.map,d.ts.map}; rm -rf {advanced,core,net}",
+    "build:clearsig": "node test/misc/build-clearsig.ts test/vectors/clear-signing",
     "build:release": "jsbt esbuild test/build",
     "check": "jsbt check package.json",
     "bench": "cd test/benchmark; npm install; node tx.ts",
@@ -48,6 +49,8 @@
     "./utils.js": "./utils.js",
     "./advanced/abi.js": "./advanced/abi.js",
     "./advanced/bls.js": "./advanced/bls.js",
+    "./advanced/clearsig-repo.js": "./advanced/clearsig-repo.js",
+    "./advanced/clearsig-repo-full.js": "./advanced/clearsig-repo-full.js",
     "./advanced/kzg.js": "./advanced/kzg.js",
     "./advanced/ssz.js": "./advanced/ssz.js"
   },

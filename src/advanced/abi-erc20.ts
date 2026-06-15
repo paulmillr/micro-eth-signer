@@ -11,49 +11,26 @@ const _abi = () => [
 type ABI = ReturnType<typeof _abi>;
 export const ABI: ABI = /* @__PURE__ */ deepFreeze(/* @__PURE__ */ _abi());
 
-// https://eips.ethereum.org/EIPS/eip-20
-// Zero-decimal tokens are valid; only missing decimals metadata should disable hints.
-const _hints = () => ({
-  approve(v: any, opt: TArg<HintOpt>) {
-    if (!opt.contractInfo || opt.contractInfo.decimals === undefined || !opt.contractInfo.symbol)
-      throw new Error('Not enough info');
-    return `Allow spending ${createDecimal(opt.contractInfo.decimals).encode(v.value)} ${
-      opt.contractInfo.symbol
-    } by ${v.spender}`;
-  },
-
-  transferFrom(v: any, opt: TArg<HintOpt>) {
-    if (!opt.contractInfo || opt.contractInfo.decimals === undefined || !opt.contractInfo.symbol)
-      throw new Error('Not enough info');
-    return `Transfer ${createDecimal(opt.contractInfo.decimals).encode(v.value)} ${
-      opt.contractInfo.symbol
-    } from ${v.from} to ${v.to}`;
-  },
-
-  transfer(v: any, opt: TArg<HintOpt>) {
-    if (!opt.contractInfo || opt.contractInfo.decimals === undefined || !opt.contractInfo.symbol)
-      throw new Error('Not enough info');
-    return `Transfer ${createDecimal(opt.contractInfo.decimals).encode(v.value)} ${
-      opt.contractInfo.symbol
-    } to ${v.to}`;
-  },
+const meta = (opt: TArg<HintOpt>): { decimals: number; symbol: string } => {
+  const info = opt.contractInfo;
+  if (!info || info.decimals === undefined || !info.symbol) throw new Error('Not enough info');
+  return { decimals: info.decimals, symbol: info.symbol };
+};
+export const hints = {
   Approval(v: any, opt: TArg<HintOpt>) {
-    if (!opt.contractInfo || opt.contractInfo.decimals === undefined || !opt.contractInfo.symbol)
-      throw new Error('Not enough info');
-    return `Allow ${v.spender} spending up to ${createDecimal(opt.contractInfo.decimals).encode(
-      v.value
-    )} ${opt.contractInfo.symbol} from ${v.owner}`;
+    const m = meta(opt);
+    return `Allow ${v.spender} spending up to ${createDecimal(m.decimals).encode(v.value)} ${
+      m.symbol
+    } from ${v.owner}`;
   },
   Transfer(v: any, opt: TArg<HintOpt>) {
-    if (!opt.contractInfo || opt.contractInfo.decimals === undefined || !opt.contractInfo.symbol)
-      throw new Error('Not enough info');
-    return `Transfer ${createDecimal(opt.contractInfo.decimals).encode(v.value)} ${
-      opt.contractInfo.symbol
-    } from ${v.from} to ${v.to}`;
+    const m = meta(opt);
+    return `Transfer ${createDecimal(m.decimals).encode(v.value)} ${m.symbol} from ${v.from} to ${
+      v.to
+    }`;
   },
-});
-type Hints = ReturnType<typeof _hints>;
-export const hints: Hints = /* @__PURE__ */ _hints();
+};
 
+// Keep default export on a distinct value; `ABI` is also a type under verbatimModuleSyntax.
 const ERC20ABI: ABI = /* @__PURE__ */ deepFreeze(/* @__PURE__ */ addHints(ABI, hints));
 export default ERC20ABI;

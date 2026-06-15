@@ -8,6 +8,8 @@ import * as abi from '../src/advanced/abi-decoder.ts';
 import { mapArgs, mapComponent } from '../src/advanced/abi-mapper.ts';
 import {
   CONTRACTS,
+  CLEARSIG_REPO,
+  Decoder,
   TOKENS,
   decodeData,
   decodeEvent,
@@ -15,6 +17,7 @@ import {
   deployContract,
   tokenFromSymbol,
 } from '../src/advanced/abi.ts';
+import { Transaction } from '../src/index.ts';
 import { strip0x } from '../src/utils.ts';
 
 import ERC20, { hints as ERC20_HINTS } from '../src/advanced/abi-erc20.ts';
@@ -30,9 +33,20 @@ import {
   default as UNISWAP_V3_ROUTER,
   UNISWAP_V3_ROUTER_CONTRACT,
 } from '../src/advanced/abi-uniswap-v3.ts';
-import WETH_ABI from '../src/advanced/abi-weth.ts';
+import { WETH_CONTRACT } from '../src/advanced/abi-weth.ts';
 
 const hex = { encode: bytesToHex, decode: hexToBytes };
+const clearSigFor = (to: string, data: Uint8Array, opt: Record<string, unknown>) => {
+  const decoder = new Decoder().addClearSig(CLEARSIG_REPO);
+  const res = decodeData(to, hex.encode(data), opt.amount as bigint | undefined, {
+    decoder,
+    customContracts: opt.contracts as Record<string, any> | undefined,
+    chainId: 1n,
+    allowUnreadBytes: opt.allowUnreadBytes as boolean | undefined,
+  });
+  if (!res || Array.isArray(res)) return;
+  return res.clearSig;
+};
 
 // Based on ethers.js test cases (MIT licensed)
 const abiTestEvents = {
@@ -1383,7 +1397,7 @@ should('mapArgs', () => {
     ] as const)
   );
 });
-should('Decoder', () => {
+should('Decoder', async () => {
   const USDT = '0xdac17f958d2ee523a2206206994597c13d831ec7';
   const WETH = '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2';
   let d = new abi.Decoder();
@@ -1402,12 +1416,28 @@ should('Decoder', () => {
   // Sig-hash match: we don't know anything about contract, but we know sighash
   deepStrictEqual(d.decode(WETH, data), [value]);
   // Hint
-  deepStrictEqual(
-    d.decode(USDT, data, {
-      contractInfo: { decimals: 6, symbol: 'USDT' },
-    }).hint,
-    'Transfer 22588 USDT to 0xdac17f958d2ee523a2206206994597c13d831ec7'
-  );
+  deepStrictEqual(await clearSigFor(USDT, data, {}), {
+    intent: 'Send',
+    interpolatedIntent: 'Transfer 22588 USDT to 0xdac17f958d2ee523a2206206994597c13d831ec7',
+    structuredIntent: [
+      'Transfer ',
+      { value: '22588 USDT', format: 'tokenAmount', rawValue: 22588000000n },
+      ' to ',
+      {
+        value: '0xdac17f958d2ee523a2206206994597c13d831ec7',
+        format: 'addressName',
+        rawValue: '0xdac17f958d2ee523a2206206994597c13d831ec7',
+      },
+    ],
+    fields: {
+      Amount: { value: '22588 USDT', format: 'tokenAmount', rawValue: 22588000000n },
+      To: {
+        value: '0xdac17f958d2ee523a2206206994597c13d831ec7',
+        format: 'addressName',
+        rawValue: '0xdac17f958d2ee523a2206206994597c13d831ec7',
+      },
+    },
+  });
   // Uni
   const UNISWAP = UNISWAP_V2_ROUTER_CONTRACT;
   d.add(UNISWAP, UNISWAP_V2_ROUTER);
@@ -1444,31 +1474,183 @@ should('Decoder', () => {
   const tx0 = hex.decode(
     '7ff36ab5000000000000000000000000000000000000000000000000ab54a98ceb1f0ad30000000000000000000000000000000000000000000000000000000000000080000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa96045000000000000000000000000000000000000000000000000000000006fd9c6ea0000000000000000000000000000000000000000000000000000000000000002000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2000000000000000000000000106d3c66d22d2dd0446df23d7f5960752994d600'
   );
-  deepStrictEqual(
-    d.decode(UNISWAP, tx0, Object.assign(uniOpt, { amount: 100000000000000000n })).hint,
-    'Swap 0.1 ETH for at least 12345678901.234567891 LABRA. Expires at Tue, 19 Jun 2029 06:00:10 GMT'
-  );
+  d.decode(UNISWAP, tx0, Object.assign(uniOpt, { amount: 100000000000000000n }));
+  deepStrictEqual(await clearSigFor(UNISWAP, tx0, uniOpt), {
+    intent: 'Swap',
+    interpolatedIntent:
+      'Swap 0.1 ETH for at least 12345678901.234567891 LABRA. Expires at Tue, 19 Jun 2029 06:00:10 GMT',
+    structuredIntent: [
+      'Swap ',
+      { value: '0.1 ETH', format: 'amount', rawValue: 100000000000000000n },
+      ' for at least ',
+      {
+        value: '12345678901.234567891 LABRA',
+        format: 'tokenAmount',
+        rawValue: 12345678901234567891n,
+      },
+      '. Expires at ',
+      { value: 'Tue, 19 Jun 2029 06:00:10 GMT', format: 'date', rawValue: 1876543210n },
+    ],
+    fields: {
+      'Amount to Send': { value: '0.1 ETH', format: 'amount', rawValue: 100000000000000000n },
+      'Minimum to Receive': {
+        value: '12345678901.234567891 LABRA',
+        format: 'tokenAmount',
+        rawValue: 12345678901234567891n,
+      },
+      Beneficiary: {
+        value: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
+        format: 'addressName',
+        rawValue: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
+      },
+      Deadline: {
+        value: 'Tue, 19 Jun 2029 06:00:10 GMT',
+        format: 'date',
+        rawValue: 1876543210n,
+      },
+    },
+  });
   const tx1 = hex.decode(
     '38ed17390000000000000000000000000000000000000000000000055aa54d38e5267eec000000000000000000000000000000000000000000000000ab54a98ceb1f0ad300000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa96045000000000000000000000000000000000000000000000000000000006fd9c6ea00000000000000000000000000000000000000000000000000000000000000030000000000000000000000000ff6ffcfda92c53f615a4a75d982f399c989366b000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2000000000000000000000000dac17f958d2ee523a2206206994597c13d831ec7'
   );
-  deepStrictEqual(
-    d.decode(UNISWAP, tx1, Object.assign(uniOpt, { amount: 0n })).hint,
-    'Swap exact 98.765432109876543212 LAYER for at least 12345678901234.567891 USDT. Expires at Tue, 19 Jun 2029 06:00:10 GMT'
-  );
+  d.decode(UNISWAP, tx1, Object.assign(uniOpt, { amount: 0n }));
+  deepStrictEqual(await clearSigFor(UNISWAP, tx1, uniOpt), {
+    intent: 'Swap',
+    interpolatedIntent:
+      'Swap exact 98.765432109876543212 LAYER for at least 12345678901234.567891 USDT. Expires at Tue, 19 Jun 2029 06:00:10 GMT',
+    structuredIntent: [
+      'Swap exact ',
+      {
+        value: '98.765432109876543212 LAYER',
+        format: 'tokenAmount',
+        rawValue: 98765432109876543212n,
+      },
+      ' for at least ',
+      {
+        value: '12345678901234.567891 USDT',
+        format: 'tokenAmount',
+        rawValue: 12345678901234567891n,
+      },
+      '. Expires at ',
+      { value: 'Tue, 19 Jun 2029 06:00:10 GMT', format: 'date', rawValue: 1876543210n },
+    ],
+    fields: {
+      'Amount to Send': {
+        value: '98.765432109876543212 LAYER',
+        format: 'tokenAmount',
+        rawValue: 98765432109876543212n,
+      },
+      'Minimum to Receive': {
+        value: '12345678901234.567891 USDT',
+        format: 'tokenAmount',
+        rawValue: 12345678901234567891n,
+      },
+      Beneficiary: {
+        value: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
+        format: 'addressName',
+        rawValue: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
+      },
+      Deadline: {
+        value: 'Tue, 19 Jun 2029 06:00:10 GMT',
+        format: 'date',
+        rawValue: 1876543210n,
+      },
+    },
+  });
   const tx2 = hex.decode(
     '18cbafe50000000000000000000000000000000000000000000000055aa54d38e5267eec000000000000000000000000000000000000000000000000ab54a98ceb1f0ad300000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa96045000000000000000000000000000000000000000000000000000000006fd9c6ea0000000000000000000000000000000000000000000000000000000000000002000000000000000000000000d8912c10681d8b21fd3742244f44658dba12264e000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2'
   );
-  deepStrictEqual(
-    d.decode(UNISWAP, tx2, Object.assign(uniOpt, { amount: 0n })).hint,
-    'Swap exact 98.765432109876543212 PLUTON for at least 12.345678901234567891 ETH. Expires at Tue, 19 Jun 2029 06:00:10 GMT'
-  );
+  d.decode(UNISWAP, tx2, Object.assign(uniOpt, { amount: 0n }));
+  deepStrictEqual(await clearSigFor(UNISWAP, tx2, uniOpt), {
+    intent: 'Swap',
+    interpolatedIntent:
+      'Swap exact 98.765432109876543212 PLUTON for at least 12.345678901234567891 ETH. Expires at Tue, 19 Jun 2029 06:00:10 GMT',
+    structuredIntent: [
+      'Swap exact ',
+      {
+        value: '98.765432109876543212 PLUTON',
+        format: 'tokenAmount',
+        rawValue: 98765432109876543212n,
+      },
+      ' for at least ',
+      {
+        value: '12.345678901234567891 ETH',
+        format: 'amount',
+        rawValue: 12345678901234567891n,
+      },
+      '. Expires at ',
+      { value: 'Tue, 19 Jun 2029 06:00:10 GMT', format: 'date', rawValue: 1876543210n },
+    ],
+    fields: {
+      'Amount to Send': {
+        value: '98.765432109876543212 PLUTON',
+        format: 'tokenAmount',
+        rawValue: 98765432109876543212n,
+      },
+      'Minimum to Receive': {
+        value: '12.345678901234567891 ETH',
+        format: 'amount',
+        rawValue: 12345678901234567891n,
+      },
+      Beneficiary: {
+        value: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
+        format: 'addressName',
+        rawValue: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
+      },
+      Deadline: {
+        value: 'Tue, 19 Jun 2029 06:00:10 GMT',
+        format: 'date',
+        rawValue: 1876543210n,
+      },
+    },
+  });
   const tx3 = hex.decode(
     'fb3bdb41000000000000000000000000000000000000000000000000ab54a98ceb1f0ad30000000000000000000000000000000000000000000000000000000000000080000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa96045000000000000000000000000000000000000000000000000000000006fd9c6ea0000000000000000000000000000000000000000000000000000000000000002000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2000000000000000000000000f65b5c5104c4fafd4b709d9d60a185eae063276c'
   );
-  deepStrictEqual(
-    d.decode(UNISWAP, tx3, Object.assign(uniOpt, { amount: 98765432109876543212n })).hint,
-    'Swap up to 98.765432109876543212 ETH for exact 12.345678901234567891 TRU. Expires at Tue, 19 Jun 2029 06:00:10 GMT'
-  );
+  d.decode(UNISWAP, tx3, Object.assign(uniOpt, { amount: 98765432109876543212n }));
+  deepStrictEqual(await clearSigFor(UNISWAP, tx3, uniOpt), {
+    intent: 'Swap',
+    interpolatedIntent:
+      'Swap up to 98.765432109876543212 ETH for exact 12.345678901234567891 TRU. Expires at Tue, 19 Jun 2029 06:00:10 GMT',
+    structuredIntent: [
+      'Swap up to ',
+      {
+        value: '98.765432109876543212 ETH',
+        format: 'amount',
+        rawValue: 98765432109876543212n,
+      },
+      ' for exact ',
+      {
+        value: '12.345678901234567891 TRU',
+        format: 'tokenAmount',
+        rawValue: 12345678901234567891n,
+      },
+      '. Expires at ',
+      { value: 'Tue, 19 Jun 2029 06:00:10 GMT', format: 'date', rawValue: 1876543210n },
+    ],
+    fields: {
+      'Maximum to Send': {
+        value: '98.765432109876543212 ETH',
+        format: 'amount',
+        rawValue: 98765432109876543212n,
+      },
+      'Amount to Receive': {
+        value: '12.345678901234567891 TRU',
+        format: 'tokenAmount',
+        rawValue: 12345678901234567891n,
+      },
+      Beneficiary: {
+        value: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
+        format: 'addressName',
+        rawValue: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
+      },
+      Deadline: {
+        value: 'Tue, 19 Jun 2029 06:00:10 GMT',
+        format: 'date',
+        rawValue: 1876543210n,
+      },
+    },
+  });
   // Kyber
   const KYBER = KYBER_NETWORK_PROXY_CONTRACT;
   d.add(KYBER, KYBER_NETWORK_PROXY);
@@ -1480,74 +1662,180 @@ should('Decoder', () => {
   const tx4 = hex.decode(
     'ae591d540000000000000000000000007fc66500c84a76ad7e9c93437bfc5ac33e2ddae90000000000000000000000000000000000000000000000055aa54d38e5267eec000000000000000000000000f629cbd94d3791c9250152bd8dfbdf380e2a3b9c000000000000000000000000dc083bf73176bd3ed63907424d26d02571d92b95000000000000000000000000000000000000000000000000ab54a98ceb1f0ad300000000000000000000000000000000000000000000000aef84762139eb8000000000000000000000000000de63aef60307655405835da74ba02ce4db1a42fb000000000000000000000000000000000000000000000000000000000000001200000000000000000000000000000000000000000000000000000000000001200000000000000000000000000000000000000000000000000000000000000000'
   );
-  const kyberTx4 = d.decode(
-    KYBER,
-    tx4,
-    Object.assign(kyberOpt, { amount: 0n })
-  ) as abi.SignatureInfo;
-  deepStrictEqual(
-    kyberTx4.hint,
-    'Swap 98.765432109876543212 AAVE For 19923.60398191190745624 ENJ (with platform fee: 0.177777777797777777 AAVE)'
-  );
+  d.decode(KYBER, tx4, Object.assign(kyberOpt, { amount: 0n }));
+  deepStrictEqual(await clearSigFor(KYBER, tx4, kyberOpt), {
+    intent: 'Swap',
+    interpolatedIntent:
+      'Swap 98.765432109876543212 AAVE for up to 12.345678901234567891 ENJ to recipient 0xdc083bf73176bd3ed63907424d26d02571d92b95 with platform fee 0.18 %',
+    structuredIntent: [
+      'Swap ',
+      {
+        value: '98.765432109876543212 AAVE',
+        format: 'tokenAmount',
+        rawValue: 98765432109876543212n,
+      },
+      ' for up to ',
+      {
+        value: '12.345678901234567891 ENJ',
+        format: 'tokenAmount',
+        rawValue: 12345678901234567891n,
+      },
+      ' to recipient ',
+      {
+        value: '0xdc083bf73176bd3ed63907424d26d02571d92b95',
+        format: 'addressName',
+        rawValue: '0xdc083bf73176bd3ed63907424d26d02571d92b95',
+      },
+      ' with platform fee ',
+      { value: '0.18 %', format: 'unit', rawValue: 18n },
+    ],
+    fields: {
+      'Amount to Send': {
+        value: '98.765432109876543212 AAVE',
+        format: 'tokenAmount',
+        rawValue: 98765432109876543212n,
+      },
+      'Maximum to Receive': {
+        value: '12.345678901234567891 ENJ',
+        format: 'tokenAmount',
+        rawValue: 12345678901234567891n,
+      },
+      'Minimum Conversion Rate': {
+        value: '201726490294163832832',
+        format: 'raw',
+        rawValue: 201726490294163832832n,
+      },
+      Beneficiary: {
+        value: '0xdc083bf73176bd3ed63907424d26d02571d92b95',
+        format: 'addressName',
+        rawValue: '0xdc083bf73176bd3ed63907424d26d02571d92b95',
+      },
+      'Platform Fee': { value: '0.18 %', format: 'unit', rawValue: 18n },
+      'Platform Wallet': {
+        value: '0xde63aef60307655405835da74ba02ce4db1a42fb',
+        format: 'addressName',
+        rawValue: '0xde63aef60307655405835da74ba02ce4db1a42fb',
+      },
+    },
+  });
   const tx5 = hex.decode(
     'ae591d54000000000000000000000000eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee0000000000000000000000000000000000000000000000055aa54d38e5267eec000000000000000000000000e5a3229ccb22b6484594973a03a3851dcd9487560000000000000000000000004f8f521ce1a74a2fc62ce75db676f56965b7d957000000000000000000000000000000000000000000000000ab54a98ceb1f0ad300000000000000000000000000000000000000000000005ac6d2e744f38f9272000000000000000000000000440bbd6a888a36de6e2f6a25f65bc4e16874faa90000000000000000000000000000000000000000000000000000000000000008000000000000000000000000000000000000000000000000000000000000012000000000000000000000000000000000000000000000000000000000000000e00000000000000000000000000000000000000000000000000000000000000003000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000001aa5241452041505200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000002710'
   );
-  deepStrictEqual(
-    d.decode(KYBER, tx5, Object.assign(kyberOpt, { amount: 7864074000000000n })).hint,
-    'Swap 98.765432109876543212 ETH For 165386.047848908022190687 RAE (with platform fee: 0.079012345687901234 ETH)'
-  );
+  d.decode(KYBER, tx5, Object.assign(kyberOpt, { amount: 7864074000000000n }));
+  deepStrictEqual(await clearSigFor(KYBER, tx5, kyberOpt), {
+    intent: 'Swap',
+    interpolatedIntent:
+      'Swap 98.765432109876543212 ETH for up to 12.345678901234567891 RAE to recipient 0x4f8f521ce1a74a2fc62ce75db676f56965b7d957 with platform fee 0.08 %',
+    structuredIntent: [
+      'Swap ',
+      {
+        value: '98.765432109876543212 ETH',
+        format: 'tokenAmount',
+        rawValue: 98765432109876543212n,
+      },
+      ' for up to ',
+      {
+        value: '12.345678901234567891 RAE',
+        format: 'tokenAmount',
+        rawValue: 12345678901234567891n,
+      },
+      ' to recipient ',
+      {
+        value: '0x4f8f521ce1a74a2fc62ce75db676f56965b7d957',
+        format: 'addressName',
+        rawValue: '0x4f8f521ce1a74a2fc62ce75db676f56965b7d957',
+      },
+      ' with platform fee ',
+      { value: '0.08 %', format: 'unit', rawValue: 8n },
+    ],
+    fields: {
+      'Amount to Send': {
+        value: '98.765432109876543212 ETH',
+        format: 'tokenAmount',
+        rawValue: 98765432109876543212n,
+      },
+      'Maximum to Receive': {
+        value: '12.345678901234567891 RAE',
+        format: 'tokenAmount',
+        rawValue: 12345678901234567891n,
+      },
+      'Minimum Conversion Rate': {
+        value: '1674533734281808679538',
+        format: 'raw',
+        rawValue: 1674533734281808679538n,
+      },
+      Beneficiary: {
+        value: '0x4f8f521ce1a74a2fc62ce75db676f56965b7d957',
+        format: 'addressName',
+        rawValue: '0x4f8f521ce1a74a2fc62ce75db676f56965b7d957',
+      },
+      'Platform Fee': { value: '0.08 %', format: 'unit', rawValue: 8n },
+      'Platform Wallet': {
+        value: '0x440bbd6a888a36de6e2f6a25f65bc4e16874faa9',
+        format: 'addressName',
+        rawValue: '0x440bbd6a888a36de6e2f6a25f65bc4e16874faa9',
+      },
+    },
+  });
   const tx6 = hex.decode(
     'ae591d54000000000000000000000000e5a3229ccb22b6484594973a03a3851dcd9487560000000000000000000000000000000000000000000000055aa54d38e5267eec000000000000000000000000eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee000000000000000000000000f2ec13ceda50f54544a209840d8f734706cb8f7c000000000000000000000000000000000000000000000000ab54a98ceb1f0ad30000000000000000000000000000000000000000000000000002043a4218e5e6000000000000000000000000440bbd6a888a36de6e2f6a25f65bc4e16874faa90000000000000000000000000000000000000000000000000000000000000008000000000000000000000000000000000000000000000000000000000000012000000000000000000000000000000000000000000000000000000000000000e00000000000000000000000000000000000000000000000000000000000000003000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000000a00000000000000000000000000000000000000000000000000000000000000001aa5241452041505200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000002710'
   );
-  deepStrictEqual(
-    d.decode(KYBER, tx6, Object.assign(kyberOpt, { amount: 0n })).hint,
-    'Swap 98.765432109876543212 RAE For 0.056059083163201264 ETH (with platform fee: 0.079012345687901234 RAE)'
-  );
-  const kyberHint = (KYBER_NETWORK_PROXY as abi.ContractABI).find(
-    (fn) => fn.type === 'function' && fn.name === 'tradeWithHintAndFee'
-  )?.hint;
-  if (!kyberHint) throw new Error('missing Kyber hint');
-  throws(
-    () =>
-      kyberHint(kyberTx4.value, {
-        ...kyberOpt,
-        contracts: Object.assign({}, kyberOpt.contracts, {
-          [ENJ]: { abi: 'ERC20', symbol: 'ENJ' },
-        }),
-      }),
-    /Not enough info/
-  );
-  throws(
-    () =>
-      kyberHint(kyberTx4.value, {
-        ...kyberOpt,
-        contracts: Object.assign({}, kyberOpt.contracts, {
-          [AAVE]: { abi: 'ERC20', decimals: 18 },
-        }),
-      }),
-    /Not enough info/
-  );
-  const zeroSrc = '0x1111111111111111111111111111111111111111';
-  const zeroDest = '0x2222222222222222222222222222222222222222';
-  deepStrictEqual(
-    kyberHint(
+  d.decode(KYBER, tx6, Object.assign(kyberOpt, { amount: 0n }));
+  deepStrictEqual(await clearSigFor(KYBER, tx6, kyberOpt), {
+    intent: 'Swap',
+    interpolatedIntent:
+      'Swap 98.765432109876543212 RAE for up to 12.345678901234567891 ETH to recipient 0xf2ec13ceda50f54544a209840d8f734706cb8f7c with platform fee 0.08 %',
+    structuredIntent: [
+      'Swap ',
       {
-        src: zeroSrc,
-        srcAmount: 7n,
-        dest: zeroDest,
-        minConversionRate: 10n ** 18n,
-        platformFeeBps: 100n,
+        value: '98.765432109876543212 RAE',
+        format: 'tokenAmount',
+        rawValue: 98765432109876543212n,
       },
+      ' for up to ',
       {
-        ...kyberOpt,
-        contracts: Object.assign({}, kyberOpt.contracts, {
-          [zeroSrc]: { abi: 'ERC20', symbol: 'ZSRC', decimals: 0 },
-          [zeroDest]: { abi: 'ERC20', symbol: 'ZDST', decimals: 0 },
-        }),
-      }
-    ),
-    'Swap 7 ZSRC For 7 ZDST (with platform fee: 0 ZSRC)'
-  );
+        value: '12.345678901234567891 ETH',
+        format: 'tokenAmount',
+        rawValue: 12345678901234567891n,
+      },
+      ' to recipient ',
+      {
+        value: '0xf2ec13ceda50f54544a209840d8f734706cb8f7c',
+        format: 'addressName',
+        rawValue: '0xf2ec13ceda50f54544a209840d8f734706cb8f7c',
+      },
+      ' with platform fee ',
+      { value: '0.08 %', format: 'unit', rawValue: 8n },
+    ],
+    fields: {
+      'Amount to Send': {
+        value: '98.765432109876543212 RAE',
+        format: 'tokenAmount',
+        rawValue: 98765432109876543212n,
+      },
+      'Maximum to Receive': {
+        value: '12.345678901234567891 ETH',
+        format: 'tokenAmount',
+        rawValue: 12345678901234567891n,
+      },
+      'Minimum Conversion Rate': {
+        value: '567598216963558',
+        format: 'raw',
+        rawValue: 567598216963558n,
+      },
+      Beneficiary: {
+        value: '0xf2ec13ceda50f54544a209840d8f734706cb8f7c',
+        format: 'addressName',
+        rawValue: '0xf2ec13ceda50f54544a209840d8f734706cb8f7c',
+      },
+      'Platform Fee': { value: '0.08 %', format: 'unit', rawValue: 8n },
+      'Platform Wallet': {
+        value: '0x440bbd6a888a36de6e2f6a25f65bc4e16874faa9',
+        format: 'addressName',
+        rawValue: '0x440bbd6a888a36de6e2f6a25f65bc4e16874faa9',
+      },
+    },
+  });
   const UNISWAP3 = UNISWAP_V3_ROUTER_CONTRACT;
   d.add(UNISWAP3, UNISWAP_V3_ROUTER);
   const uni3Opt = {
@@ -1559,26 +1847,56 @@ should('Decoder', () => {
     'ac9650d800000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000001c00000000000000000000000000000000000000000000000000000000000000144f28c0498000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa96045000000000000000000000000000000000000000000000000000000006fd9c6ea0000000000000000000000000000000000000000000000056bc75e2d63100000000000000000000000000000000000000000000000000000ab54a98ceb1f0ad30000000000000000000000000000000000000000000000000000000000000042852e5427c86a3b46dd25e5fe027bb15f53c4bcb8000bb8dac17f958d2ee523a2206206994597c13d831ec7000bb8c02aaa39b223fe8d0a0e5c4f27ead9083c756cc200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000412210e8a00000000000000000000000000000000000000000000000000000000'
   );
   // Multi-call signature unwrap
-  deepStrictEqual(
-    d.decode(UNISWAP3, mtx0, Object.assign(uni3Opt, { amount: 4308416152274164000n })),
-    {
-      name: 'multicall(exactOutput, refundETH)',
-      signature: 'multicall(exactOutput((bytes,address,uint256,uint256,uint256)), refundETH())',
-      value: [
-        {
-          path: hex.decode(
-            '852e5427c86a3b46dd25e5fe027bb15f53c4bcb8000bb8dac17f958d2ee523a2206206994597c13d831ec7000bb8c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2'
-          ),
-          recipient: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
-          deadline: 1876543210n,
-          amountOut: 100000000000000000000n,
-          amountInMaximum: 12345678901234567891n,
-        },
-        undefined,
-      ],
-      hint: 'Swap up to 12.345678901234567891 WETH for exact 100000 NIIFI. Expires at Tue, 19 Jun 2029 06:00:10 GMT',
-    }
-  );
+  const uni3Mtx0 = d.decode(
+    UNISWAP3,
+    mtx0,
+    Object.assign(uni3Opt, { amount: 4308416152274164000n })
+  ) as abi.SignatureInfo;
+  deepStrictEqual(uni3Mtx0, {
+    name: 'multicall(exactOutput, refundETH)',
+    signature: 'multicall(exactOutput((bytes,address,uint256,uint256,uint256)), refundETH())',
+    value: [
+      {
+        path: hex.decode(
+          '852e5427c86a3b46dd25e5fe027bb15f53c4bcb8000bb8dac17f958d2ee523a2206206994597c13d831ec7000bb8c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2'
+        ),
+        recipient: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
+        deadline: 1876543210n,
+        amountOut: 100000000000000000000n,
+        amountInMaximum: 12345678901234567891n,
+      },
+      undefined,
+    ],
+  });
+  deepStrictEqual(await clearSigFor(UNISWAP3, mtx0, uni3Opt), {
+    intent: 'Execute',
+    interpolatedIntent:
+      'Execute Swap up to 12.345678901234567891 WETH for exact 100000 NIIFI. Expires at Tue, 19 Jun 2029 06:00:10 GMT, Refund ETH',
+    structuredIntent: [
+      'Execute ',
+      {
+        value:
+          'Swap up to 12.345678901234567891 WETH for exact 100000 NIIFI. Expires at Tue, 19 Jun 2029 06:00:10 GMT',
+        format: 'calldata',
+        rawValue: hex.decode(
+          'f28c0498000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa96045000000000000000000000000000000000000000000000000000000006fd9c6ea0000000000000000000000000000000000000000000000056bc75e2d63100000000000000000000000000000000000000000000000000000ab54a98ceb1f0ad30000000000000000000000000000000000000000000000000000000000000042852e5427c86a3b46dd25e5fe027bb15f53c4bcb8000bb8dac17f958d2ee523a2206206994597c13d831ec7000bb8c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2000000000000000000000000000000000000000000000000000000000000'
+        ),
+      },
+      ', ',
+      { value: 'Refund ETH', format: 'calldata', rawValue: hex.decode('12210e8a') },
+    ],
+    fields: {
+      Call: {
+        value:
+          'Swap up to 12.345678901234567891 WETH for exact 100000 NIIFI. Expires at Tue, 19 Jun 2029 06:00:10 GMT',
+        format: 'calldata',
+        rawValue: hex.decode(
+          'f28c0498000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa96045000000000000000000000000000000000000000000000000000000006fd9c6ea0000000000000000000000000000000000000000000000056bc75e2d63100000000000000000000000000000000000000000000000000000ab54a98ceb1f0ad30000000000000000000000000000000000000000000000000000000000000042852e5427c86a3b46dd25e5fe027bb15f53c4bcb8000bb8dac17f958d2ee523a2206206994597c13d831ec7000bb8c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2000000000000000000000000000000000000000000000000000000000000'
+        ),
+      },
+      'Call 2': { value: 'Refund ETH', format: 'calldata', rawValue: hex.decode('12210e8a') },
+    },
+  });
   const multicall = (UNISWAP_V3_ROUTER as any).find((i: any) => i.name === 'multicall');
   const refundETH = (UNISWAP_V3_ROUTER as any).find((i: any) => i.name === 'refundETH');
   const unknownAbi = hex.decode('12345678');
@@ -1600,99 +1918,195 @@ should('Decoder', () => {
   const tx7 = hex.decode(
     '414bf389000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc200000000000000000000000095ad61b0a150d79219dcf64e1e6cc01f0b64c4ce0000000000000000000000000000000000000000000000000000000000000bb8000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa96045000000000000000000000000000000000000000000000000000000006fd9c6ea0000000000000000000000000000000000000000000000055aa54d38e5267eec000000000000000000000000000000000000000000000000ab54a98ceb1f0ad30000000000000000000000000000000000000000000000000000000000000000'
   );
-  deepStrictEqual(
-    d.decode(UNISWAP3, tx7, Object.assign(uni3Opt, { amount: 12345678901234567891n })).hint,
-    'Swap exact 98.765432109876543212 WETH for at least 12.345678901234567891 SHIB. Expires at Tue, 19 Jun 2029 06:00:10 GMT'
-  );
+  d.decode(UNISWAP3, tx7, Object.assign(uni3Opt, { amount: 12345678901234567891n }));
+  deepStrictEqual(await clearSigFor(UNISWAP3, tx7, uni3Opt), {
+    intent: 'Swap',
+    interpolatedIntent:
+      'Swap exact 98.765432109876543212 WETH for at least 12.345678901234567891 SHIB. Expires at Tue, 19 Jun 2029 06:00:10 GMT',
+    structuredIntent: [
+      'Swap exact ',
+      {
+        value: '98.765432109876543212 WETH',
+        format: 'tokenAmount',
+        rawValue: 98765432109876543212n,
+      },
+      ' for at least ',
+      {
+        value: '12.345678901234567891 SHIB',
+        format: 'tokenAmount',
+        rawValue: 12345678901234567891n,
+      },
+      '. Expires at ',
+      { value: 'Tue, 19 Jun 2029 06:00:10 GMT', format: 'date', rawValue: 1876543210n },
+    ],
+    fields: {
+      'Amount to Send': {
+        value: '98.765432109876543212 WETH',
+        format: 'tokenAmount',
+        rawValue: 98765432109876543212n,
+      },
+      'Minimum to Receive': {
+        value: '12.345678901234567891 SHIB',
+        format: 'tokenAmount',
+        rawValue: 12345678901234567891n,
+      },
+      'Uniswap Fee': { value: '0.3 %', format: 'unit', rawValue: 3000n },
+      Beneficiary: {
+        value: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
+        format: 'addressName',
+        rawValue: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
+      },
+      Deadline: {
+        value: 'Tue, 19 Jun 2029 06:00:10 GMT',
+        format: 'date',
+        rawValue: 1876543210n,
+      },
+    },
+  });
   const tx8 = hex.decode(
     '414bf389000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc20000000000000000000000003301ee63fb29f863f2333bd4466acb46cd8323e60000000000000000000000000000000000000000000000000000000000002710000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa96045000000000000000000000000000000000000000000000000000000006fd9c6ea0000000000000000000000000000000000000000000000055aa54d38e5267eec000000000000000000000000000000000000000000000000ab54a98ceb1f0ad30000000000000000000000000000000000000000000000000000000000000000'
   );
-  deepStrictEqual(
-    d.decode(UNISWAP3, tx8, Object.assign(uni3Opt, { amount: 40000000000000000n })).hint,
-    'Swap exact 98.765432109876543212 WETH for at least 12.345678901234567891 AKITA. Expires at Tue, 19 Jun 2029 06:00:10 GMT'
-  );
+  d.decode(UNISWAP3, tx8, Object.assign(uni3Opt, { amount: 40000000000000000n }));
+  deepStrictEqual(await clearSigFor(UNISWAP3, tx8, uni3Opt), {
+    intent: 'Swap',
+    interpolatedIntent:
+      'Swap exact 98.765432109876543212 WETH for at least 12.345678901234567891 AKITA. Expires at Tue, 19 Jun 2029 06:00:10 GMT',
+    structuredIntent: [
+      'Swap exact ',
+      {
+        value: '98.765432109876543212 WETH',
+        format: 'tokenAmount',
+        rawValue: 98765432109876543212n,
+      },
+      ' for at least ',
+      {
+        value: '12.345678901234567891 AKITA',
+        format: 'tokenAmount',
+        rawValue: 12345678901234567891n,
+      },
+      '. Expires at ',
+      { value: 'Tue, 19 Jun 2029 06:00:10 GMT', format: 'date', rawValue: 1876543210n },
+    ],
+    fields: {
+      'Amount to Send': {
+        value: '98.765432109876543212 WETH',
+        format: 'tokenAmount',
+        rawValue: 98765432109876543212n,
+      },
+      'Minimum to Receive': {
+        value: '12.345678901234567891 AKITA',
+        format: 'tokenAmount',
+        rawValue: 12345678901234567891n,
+      },
+      'Uniswap Fee': { value: '1 %', format: 'unit', rawValue: 10000n },
+      Beneficiary: {
+        value: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
+        format: 'addressName',
+        rawValue: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
+      },
+      Deadline: {
+        value: 'Tue, 19 Jun 2029 06:00:10 GMT',
+        format: 'date',
+        rawValue: 1876543210n,
+      },
+    },
+  });
   const tx9 = hex.decode(
     '414bf389000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2000000000000000000000000a0b86991c6218b36c1d19d4a2e9eb0ce3606eb4800000000000000000000000000000000000000000000000000000000000001f4000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa96045000000000000000000000000000000000000000000000000000000006fd9c6ea0000000000000000000000000000000000000000000000055aa54d38e5267eec000000000000000000000000000000000000000000000000ab54a98ceb1f0ad30000000000000000000000000000000000000000000000000000000000000000'
   );
-  deepStrictEqual(
-    d.decode(UNISWAP3, tx9, Object.assign(uni3Opt, { amount: 0n })).hint,
-    'Swap exact 98.765432109876543212 WETH for at least 12345678901234.567891 USDC. Expires at Tue, 19 Jun 2029 06:00:10 GMT'
-  );
+  d.decode(UNISWAP3, tx9, Object.assign(uni3Opt, { amount: 0n }));
+  deepStrictEqual(await clearSigFor(UNISWAP3, tx9, uni3Opt), {
+    intent: 'Swap',
+    interpolatedIntent:
+      'Swap exact 98.765432109876543212 WETH for at least 12345678901234.567891 USDC. Expires at Tue, 19 Jun 2029 06:00:10 GMT',
+    structuredIntent: [
+      'Swap exact ',
+      {
+        value: '98.765432109876543212 WETH',
+        format: 'tokenAmount',
+        rawValue: 98765432109876543212n,
+      },
+      ' for at least ',
+      {
+        value: '12345678901234.567891 USDC',
+        format: 'tokenAmount',
+        rawValue: 12345678901234567891n,
+      },
+      '. Expires at ',
+      { value: 'Tue, 19 Jun 2029 06:00:10 GMT', format: 'date', rawValue: 1876543210n },
+    ],
+    fields: {
+      'Amount to Send': {
+        value: '98.765432109876543212 WETH',
+        format: 'tokenAmount',
+        rawValue: 98765432109876543212n,
+      },
+      'Minimum to Receive': {
+        value: '12345678901234.567891 USDC',
+        format: 'tokenAmount',
+        rawValue: 12345678901234567891n,
+      },
+      'Uniswap Fee': { value: '0.05 %', format: 'unit', rawValue: 500n },
+      Beneficiary: {
+        value: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
+        format: 'addressName',
+        rawValue: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
+      },
+      Deadline: {
+        value: 'Tue, 19 Jun 2029 06:00:10 GMT',
+        format: 'date',
+        rawValue: 1876543210n,
+      },
+    },
+  });
   // TODO
   const tx10 = hex.decode(
     'c04b8d59000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa96045000000000000000000000000000000000000000000000000000000006fd9c6ea0000000000000000000000000000000000000000000000055aa54d38e5267eec000000000000000000000000000000000000000000000000ab54a98ceb1f0ad30000000000000000000000000000000000000000000000000000000000000042dac17f958d2ee523a2206206994597c13d831ec70001f4a0b86991c6218b36c1d19d4a2e9eb0ce3606eb480001f457ab1ec28d129707052df4df418d58a2d46d5f51000000000000000000000000000000000000000000000000000000000000'
   );
-  deepStrictEqual(
-    d.decode(UNISWAP3, tx10, Object.assign(uni3Opt, { amount: 0n })).hint,
-    'Swap exact 98765432109876.543212 USDT for at least 12.345678901234567891 SUSD. Expires at Tue, 19 Jun 2029 06:00:10 GMT'
-  );
-  const exactInput = (UNISWAP_V3_ROUTER as any).find((i: any) => i.name === 'exactInput');
-  const exactInputSingle = (UNISWAP_V3_ROUTER as any).find(
-    (i: any) => i.name === 'exactInputSingle'
-  );
-  const exactOutput = (UNISWAP_V3_ROUTER as any).find((i: any) => i.name === 'exactOutput');
-  const noFeePath = hex.decode(strip0x(WETH) + strip0x(SHIB));
-  const wrongFeePath = hex.decode(strip0x(WETH) + '000bb800' + strip0x(SHIB));
-  throws(
-    () =>
-      exactInput.hint(
-        {
-          path: noFeePath,
-          deadline: 1876543210n,
-          amountIn: 12345678901234567891n,
-          amountOutMinimum: 12345678901234567891n,
-        },
-        uni3Opt
-      ),
-    /Invalid Uniswap V3 path/
-  );
-  throws(
-    () =>
-      exactOutput.hint(
-        {
-          path: wrongFeePath,
-          deadline: 1876543210n,
-          amountOut: 12345678901234567891n,
-          amountInMaximum: 12345678901234567891n,
-        },
-        uni3Opt
-      ),
-    /Invalid Uniswap V3 path/
-  );
-  const zeroIn = '0x1111111111111111111111111111111111111111';
-  const zeroOut = '0x2222222222222222222222222222222222222222';
-  const zeroOpt = {
-    ...uni3Opt,
-    contracts: Object.assign({}, uni3Opt.contracts, {
-      [zeroIn]: { decimals: 0, symbol: 'ZIN' },
-      [zeroOut]: { decimals: 0, symbol: 'ZOUT' },
-    }),
-  };
-  deepStrictEqual(
-    exactInputSingle.hint(
+  d.decode(UNISWAP3, tx10, Object.assign(uni3Opt, { amount: 0n }));
+  deepStrictEqual(await clearSigFor(UNISWAP3, tx10, uni3Opt), {
+    intent: 'Swap',
+    interpolatedIntent:
+      'Swap exact 98765432109876.543212 USDT for at least 12.345678901234567891 SUSD. Expires at Tue, 19 Jun 2029 06:00:10 GMT',
+    structuredIntent: [
+      'Swap exact ',
       {
-        tokenIn: zeroIn,
-        tokenOut: zeroOut,
-        deadline: 0n,
-        amountIn: 7n,
-        amountOutMinimum: 9n,
+        value: '98765432109876.543212 USDT',
+        format: 'tokenAmount',
+        rawValue: 98765432109876543212n,
       },
-      zeroOpt
-    ),
-    'Swap exact 7 ZIN for at least 9 ZOUT. Expires at Thu, 01 Jan 1970 00:00:00 GMT'
-  );
-  deepStrictEqual(
-    exactInput.hint(
+      ' for at least ',
       {
-        path: hex.decode(strip0x(zeroIn) + '000bb8' + strip0x(zeroOut)),
-        deadline: 0n,
-        amountIn: 7n,
-        amountOutMinimum: 9n,
+        value: '12.345678901234567891 SUSD',
+        format: 'tokenAmount',
+        rawValue: 12345678901234567891n,
       },
-      zeroOpt
-    ),
-    'Swap exact 7 ZIN for at least 9 ZOUT. Expires at Thu, 01 Jan 1970 00:00:00 GMT'
-  );
+      '. Expires at ',
+      { value: 'Tue, 19 Jun 2029 06:00:10 GMT', format: 'date', rawValue: 1876543210n },
+    ],
+    fields: {
+      'Amount to Send': {
+        value: '98765432109876.543212 USDT',
+        format: 'tokenAmount',
+        rawValue: 98765432109876543212n,
+      },
+      'Minimum to Receive': {
+        value: '12.345678901234567891 SUSD',
+        format: 'tokenAmount',
+        rawValue: 12345678901234567891n,
+      },
+      Beneficiary: {
+        value: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
+        format: 'addressName',
+        rawValue: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
+      },
+      Deadline: {
+        value: 'Tue, 19 Jun 2029 06:00:10 GMT',
+        format: 'date',
+        rawValue: 1876543210n,
+      },
+    },
+  });
 });
 should('Decoder rejects trailing calldata for zero-arg functions', () => {
   const contract = '0x1111111111111111111111111111111111111111';
@@ -1718,7 +2132,7 @@ should('Decoder rejects trailing calldata for zero-arg functions', () => {
   throws(() => d.decode(contract, trailing), /Unexpected trailing calldata/);
   deepStrictEqual(d.decode(unknown, trailing), undefined);
 });
-should('addHints only uses own hint-map properties', () => {
+should('addHints only annotates events from own hint-map properties', () => {
   const hint = () => 'hint';
   const a = [
     { type: 'function', name: 'transfer' },
@@ -1731,25 +2145,16 @@ should('addHints only uses own hint-map properties', () => {
   deepStrictEqual(addHints(a, { toString: hint, Approval: hint }), [
     { type: 'function', name: 'transfer' },
     { type: 'event', name: 'Approval', hint },
-    { type: 'function', name: 'toString', hint },
+    { type: 'function', name: 'toString' },
     { type: 'constructor', name: 'transfer' },
   ]);
 });
-should('ERC20 hints accept zero-decimal token metadata', () => {
+should('ERC20 event hints accept zero-decimal token metadata', () => {
   const opt = { contractInfo: { decimals: 0, symbol: 'ZERO' } };
   const owner = '0x1111111111111111111111111111111111111111';
   const spender = '0x2222222222222222222222222222222222222222';
   const from = '0x3333333333333333333333333333333333333333';
   const to = '0x4444444444444444444444444444444444444444';
-  deepStrictEqual(
-    ERC20_HINTS.approve({ spender, value: 7n }, opt),
-    `Allow spending 7 ZERO by ${spender}`
-  );
-  deepStrictEqual(
-    ERC20_HINTS.transferFrom({ from, to, value: 7n }, opt),
-    `Transfer 7 ZERO from ${from} to ${to}`
-  );
-  deepStrictEqual(ERC20_HINTS.transfer({ to, value: 7n }, opt), `Transfer 7 ZERO to ${to}`);
   deepStrictEqual(
     ERC20_HINTS.Approval({ owner, spender, value: 7n }, opt),
     `Allow ${spender} spending up to 7 ZERO from ${owner}`
@@ -1759,30 +2164,80 @@ should('ERC20 hints accept zero-decimal token metadata', () => {
     `Transfer 7 ZERO from ${from} to ${to}`
   );
 });
-should('WETH hints map legacy field names to ERC20 hints', () => {
-  const opt = { contractInfo: { decimals: 18, symbol: 'WETH' } };
-  const src = '0x1111111111111111111111111111111111111111';
-  const guy = '0x2222222222222222222222222222222222222222';
-  const dst = '0x3333333333333333333333333333333333333333';
-  const wad = 7000000000000000000n;
-  const hint = (name: string) => {
-    const item = (WETH_ABI as any).find((i: any) => i.name === name);
-    if (!item?.hint) throw new Error(`missing WETH hint: ${name}`);
-    return item.hint;
-  };
-  deepStrictEqual(hint('approve')({ guy, wad }, opt), `Allow spending 7 WETH by ${guy}`);
+should('WETH clearSig maps legacy field names', async () => {
+  const weth = abi.createContract(CONTRACTS[WETH_CONTRACT].abi as any);
+  const guy = '0xd8da6bf26964af9d7eed9e03e53415d37aa96045';
+  const src = '0x000000000000000000000000000000000000000f';
   deepStrictEqual(
-    hint('transferFrom')({ src, dst, wad }, opt),
-    `Transfer 7 WETH from ${src} to ${dst}`
+    await clearSigFor(WETH_CONTRACT, weth.approve.encodeInput({ guy, wad: 7n }), {}),
+    {
+      intent: 'Approve',
+      interpolatedIntent:
+        'Allow spending 0.000000000000000007 WETH by 0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
+      structuredIntent: [
+        'Allow spending ',
+        { value: '0.000000000000000007 WETH', format: 'tokenAmount', rawValue: 7n },
+        ' by ',
+        {
+          value: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
+          format: 'addressName',
+          rawValue: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
+        },
+      ],
+      fields: {
+        Spender: {
+          value: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
+          format: 'addressName',
+          rawValue: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
+        },
+        Amount: {
+          value: '0.000000000000000007 WETH',
+          format: 'tokenAmount',
+          rawValue: 7n,
+        },
+      },
+    }
   );
-  deepStrictEqual(hint('transfer')({ dst, wad }, opt), `Transfer 7 WETH to ${dst}`);
   deepStrictEqual(
-    hint('Approval')({ src, guy, wad }, opt),
-    `Allow ${guy} spending up to 7 WETH from ${src}`
-  );
-  deepStrictEqual(
-    hint('Transfer')({ src, dst, wad }, opt),
-    `Transfer 7 WETH from ${src} to ${dst}`
+    await clearSigFor(WETH_CONTRACT, weth.transferFrom.encodeInput({ src, dst: guy, wad: 7n }), {}),
+    {
+      intent: 'Transfer',
+      interpolatedIntent:
+        'Transfer 0.000000000000000007 WETH from 0x000000000000000000000000000000000000000f to 0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
+      structuredIntent: [
+        'Transfer ',
+        { value: '0.000000000000000007 WETH', format: 'tokenAmount', rawValue: 7n },
+        ' from ',
+        {
+          value: '0x000000000000000000000000000000000000000f',
+          format: 'addressName',
+          rawValue: '0x000000000000000000000000000000000000000f',
+        },
+        ' to ',
+        {
+          value: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
+          format: 'addressName',
+          rawValue: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
+        },
+      ],
+      fields: {
+        Amount: {
+          value: '0.000000000000000007 WETH',
+          format: 'tokenAmount',
+          rawValue: 7n,
+        },
+        From: {
+          value: '0x000000000000000000000000000000000000000f',
+          format: 'addressName',
+          rawValue: '0x000000000000000000000000000000000000000f',
+        },
+        To: {
+          value: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
+          format: 'addressName',
+          rawValue: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
+        },
+      },
+    }
   );
 });
 should('built-in registries deep-freeze metadata and ABIs', () => {
@@ -1840,82 +2295,369 @@ should('tokenFromSymbol ignores inherited token registry entries', () => {
     else delete (Object.prototype as Record<string, unknown>)[key];
   }
 });
-should('Uniswap V2 hints accept zero-decimal route token metadata', () => {
-  const swap = (UNISWAP_V2_ROUTER as any).find((i: any) => i.name === 'swapExactTokensForTokens');
+should('Uniswap V2 clearSig preserves zero-value hint regressions', async () => {
+  const uniswap = abi.createContract(UNISWAP_V2_ROUTER);
   const zeroIn = '0x1111111111111111111111111111111111111111';
   const zeroOut = '0x2222222222222222222222222222222222222222';
+  const mid = '0x3333333333333333333333333333333333333333';
+  const beneficiary = '0x4444444444444444444444444444444444444444';
   deepStrictEqual(
-    swap.hint(
-      {
+    await clearSigFor(
+      UNISWAP_V2_ROUTER_CONTRACT,
+      uniswap.swapExactTokensForTokens.encodeInput({
         amountIn: 7n,
         amountOutMin: 9n,
-        path: [zeroIn, '0x3333333333333333333333333333333333333333', zeroOut],
+        path: [zeroIn, mid, zeroOut],
+        to: beneficiary,
         deadline: 0n,
-      },
+      }),
       {
+        amount: 0n,
         contracts: {
-          [zeroIn]: { decimals: 0, symbol: 'ZIN' },
-          [zeroOut]: { decimals: 0, symbol: 'ZOUT' },
+          [zeroIn]: { abi: 'ERC20', decimals: 0, symbol: 'ZIN' },
+          [zeroOut]: { abi: 'ERC20', decimals: 0, symbol: 'ZOUT' },
+          [mid]: { abi: 'ERC20', decimals: 18, symbol: 'MID' },
         },
       }
     ),
-    'Swap exact 7 ZIN for at least 9 ZOUT. Expires at Thu, 01 Jan 1970 00:00:00 GMT'
+    {
+      intent: 'Swap',
+      interpolatedIntent:
+        'Swap exact 7 ZIN for at least 9 ZOUT. Expires at Thu, 01 Jan 1970 00:00:00 GMT',
+      structuredIntent: [
+        'Swap exact ',
+        { value: '7 ZIN', format: 'tokenAmount', rawValue: 7n },
+        ' for at least ',
+        { value: '9 ZOUT', format: 'tokenAmount', rawValue: 9n },
+        '. Expires at ',
+        { value: 'Thu, 01 Jan 1970 00:00:00 GMT', format: 'date', rawValue: 0n },
+      ],
+      fields: {
+        'Amount to Send': { value: '7 ZIN', format: 'tokenAmount', rawValue: 7n },
+        'Minimum to Receive': { value: '9 ZOUT', format: 'tokenAmount', rawValue: 9n },
+        Beneficiary: {
+          value: '0x4444444444444444444444444444444444444444',
+          format: 'addressName',
+          rawValue: '0x4444444444444444444444444444444444444444',
+        },
+        Deadline: {
+          value: 'Thu, 01 Jan 1970 00:00:00 GMT',
+          format: 'date',
+          rawValue: 0n,
+        },
+      },
+    }
   );
-});
-should('Uniswap V2 swapETHForExactTokens hint accepts zero ETH amount', () => {
-  const swap = (UNISWAP_V2_ROUTER as any).find((i: any) => i.name === 'swapETHForExactTokens');
-  const token = '0x2222222222222222222222222222222222222222';
   deepStrictEqual(
-    swap.hint(
-      {
+    await clearSigFor(
+      UNISWAP_V2_ROUTER_CONTRACT,
+      uniswap.swapETHForExactTokens.encodeInput({
         amountOut: 9000000000000000000n,
-        path: ['0x1111111111111111111111111111111111111111', token],
+        path: [mid, zeroOut],
+        to: beneficiary,
         deadline: 0n,
-      },
+      }),
       {
         amount: 0n,
-        contracts: { [token]: { decimals: 18, symbol: 'TOK' } },
+        contracts: {
+          [zeroOut]: { abi: 'ERC20', decimals: 18, symbol: 'TOK' },
+          [mid]: { abi: 'ERC20', decimals: 18, symbol: 'MID' },
+        },
       }
     ),
-    'Swap up to 0 ETH for exact 9 TOK. Expires at Thu, 01 Jan 1970 00:00:00 GMT'
+    {
+      intent: 'Swap',
+      interpolatedIntent:
+        'Swap up to 0 ETH for exact 9 TOK. Expires at Thu, 01 Jan 1970 00:00:00 GMT',
+      structuredIntent: [
+        'Swap up to ',
+        { value: '0 ETH', format: 'amount', rawValue: 0n },
+        ' for exact ',
+        { value: '9 TOK', format: 'tokenAmount', rawValue: 9000000000000000000n },
+        '. Expires at ',
+        { value: 'Thu, 01 Jan 1970 00:00:00 GMT', format: 'date', rawValue: 0n },
+      ],
+      fields: {
+        'Maximum to Send': { value: '0 ETH', format: 'amount', rawValue: 0n },
+        'Amount to Receive': {
+          value: '9 TOK',
+          format: 'tokenAmount',
+          rawValue: 9000000000000000000n,
+        },
+        Beneficiary: {
+          value: '0x4444444444444444444444444444444444444444',
+          format: 'addressName',
+          rawValue: '0x4444444444444444444444444444444444444444',
+        },
+        Deadline: {
+          value: 'Thu, 01 Jan 1970 00:00:00 GMT',
+          format: 'date',
+          rawValue: 0n,
+        },
+      },
+    }
+  );
+  deepStrictEqual(
+    await clearSigFor(
+      UNISWAP_V2_ROUTER_CONTRACT,
+      uniswap.swapExactETHForTokens.encodeInput({
+        amountOutMin: 9000000000000000000n,
+        path: [mid, zeroOut],
+        to: beneficiary,
+        deadline: 0n,
+      }),
+      {
+        amount: 0n,
+        contracts: {
+          [zeroOut]: { abi: 'ERC20', decimals: 18, symbol: 'TOK' },
+          [mid]: { abi: 'ERC20', decimals: 18, symbol: 'MID' },
+        },
+      }
+    ),
+    {
+      intent: 'Swap',
+      interpolatedIntent: 'Swap 0 ETH for at least 9 TOK. Expires at Thu, 01 Jan 1970 00:00:00 GMT',
+      structuredIntent: [
+        'Swap ',
+        { value: '0 ETH', format: 'amount', rawValue: 0n },
+        ' for at least ',
+        { value: '9 TOK', format: 'tokenAmount', rawValue: 9000000000000000000n },
+        '. Expires at ',
+        { value: 'Thu, 01 Jan 1970 00:00:00 GMT', format: 'date', rawValue: 0n },
+      ],
+      fields: {
+        'Amount to Send': { value: '0 ETH', format: 'amount', rawValue: 0n },
+        'Minimum to Receive': {
+          value: '9 TOK',
+          format: 'tokenAmount',
+          rawValue: 9000000000000000000n,
+        },
+        Beneficiary: {
+          value: '0x4444444444444444444444444444444444444444',
+          format: 'addressName',
+          rawValue: '0x4444444444444444444444444444444444444444',
+        },
+        Deadline: {
+          value: 'Thu, 01 Jan 1970 00:00:00 GMT',
+          format: 'date',
+          rawValue: 0n,
+        },
+      },
+    }
+  );
+  deepStrictEqual(
+    await clearSigFor(
+      UNISWAP_V2_ROUTER_CONTRACT,
+      uniswap.swapExactETHForTokensSupportingFeeOnTransferTokens.encodeInput({
+        amountOutMin: 9000000000000000000n,
+        path: [mid, zeroOut],
+        to: beneficiary,
+        deadline: 0n,
+      }),
+      {
+        amount: 0n,
+        contracts: {
+          [zeroOut]: { abi: 'ERC20', decimals: 18, symbol: 'TOK' },
+          [mid]: { abi: 'ERC20', decimals: 18, symbol: 'MID' },
+        },
+      }
+    ),
+    {
+      intent: 'Swap',
+      interpolatedIntent: 'Swap 0 ETH for at least 9 TOK. Expires at Thu, 01 Jan 1970 00:00:00 GMT',
+      structuredIntent: [
+        'Swap ',
+        { value: '0 ETH', format: 'amount', rawValue: 0n },
+        ' for at least ',
+        { value: '9 TOK', format: 'tokenAmount', rawValue: 9000000000000000000n },
+        '. Expires at ',
+        { value: 'Thu, 01 Jan 1970 00:00:00 GMT', format: 'date', rawValue: 0n },
+      ],
+      fields: {
+        'Amount to Send': { value: '0 ETH', format: 'amount', rawValue: 0n },
+        'Minimum to Receive': {
+          value: '9 TOK',
+          format: 'tokenAmount',
+          rawValue: 9000000000000000000n,
+        },
+        Beneficiary: {
+          value: '0x4444444444444444444444444444444444444444',
+          format: 'addressName',
+          rawValue: '0x4444444444444444444444444444444444444444',
+        },
+        Deadline: {
+          value: 'Thu, 01 Jan 1970 00:00:00 GMT',
+          format: 'date',
+          rawValue: 0n,
+        },
+      },
+    }
   );
 });
-should('Uniswap V2 swapExactETHForTokens hint accepts zero ETH amount', () => {
-  const swap = (UNISWAP_V2_ROUTER as any).find((i: any) => i.name === 'swapExactETHForTokens');
-  const token = '0x2222222222222222222222222222222222222222';
+should('Uniswap V3 clearSig preserves zero-decimal hint regressions', async () => {
+  const uniswap = abi.createContract(UNISWAP_V3_ROUTER);
+  const zeroIn = '0x1111111111111111111111111111111111111111';
+  const zeroOut = '0x2222222222222222222222222222222222222222';
+  const beneficiary = '0x4444444444444444444444444444444444444444';
+  const opt = {
+    contracts: {
+      [zeroIn]: { abi: 'ERC20', decimals: 0, symbol: 'ZIN' },
+      [zeroOut]: { abi: 'ERC20', decimals: 0, symbol: 'ZOUT' },
+    },
+  };
   deepStrictEqual(
-    swap.hint(
-      {
-        amountOutMin: 9000000000000000000n,
-        path: ['0x1111111111111111111111111111111111111111', token],
+    await clearSigFor(
+      UNISWAP_V3_ROUTER_CONTRACT,
+      uniswap.exactInputSingle.encodeInput({
+        tokenIn: zeroIn,
+        tokenOut: zeroOut,
+        fee: 3000,
+        recipient: beneficiary,
         deadline: 0n,
-      },
-      {
-        amount: 0n,
-        contracts: { [token]: { decimals: 18, symbol: 'TOK' } },
-      }
+        amountIn: 7n,
+        amountOutMinimum: 9n,
+        sqrtPriceLimitX96: 0n,
+      }),
+      opt
     ),
-    'Swap 0 ETH for at least 9 TOK. Expires at Thu, 01 Jan 1970 00:00:00 GMT'
+    {
+      intent: 'Swap',
+      interpolatedIntent:
+        'Swap exact 7 ZIN for at least 9 ZOUT. Expires at Thu, 01 Jan 1970 00:00:00 GMT',
+      structuredIntent: [
+        'Swap exact ',
+        { value: '7 ZIN', format: 'tokenAmount', rawValue: 7n },
+        ' for at least ',
+        { value: '9 ZOUT', format: 'tokenAmount', rawValue: 9n },
+        '. Expires at ',
+        { value: 'Thu, 01 Jan 1970 00:00:00 GMT', format: 'date', rawValue: 0n },
+      ],
+      fields: {
+        'Amount to Send': { value: '7 ZIN', format: 'tokenAmount', rawValue: 7n },
+        'Minimum to Receive': { value: '9 ZOUT', format: 'tokenAmount', rawValue: 9n },
+        'Uniswap Fee': { value: '0.3 %', format: 'unit', rawValue: 3000n },
+        Beneficiary: {
+          value: '0x4444444444444444444444444444444444444444',
+          format: 'addressName',
+          rawValue: '0x4444444444444444444444444444444444444444',
+        },
+        Deadline: {
+          value: 'Thu, 01 Jan 1970 00:00:00 GMT',
+          format: 'date',
+          rawValue: 0n,
+        },
+      },
+    }
+  );
+  deepStrictEqual(
+    await clearSigFor(
+      UNISWAP_V3_ROUTER_CONTRACT,
+      uniswap.exactInput.encodeInput({
+        path: hex.decode(strip0x(zeroIn) + '000bb8' + strip0x(zeroOut)),
+        recipient: beneficiary,
+        deadline: 0n,
+        amountIn: 7n,
+        amountOutMinimum: 9n,
+      }),
+      opt
+    ),
+    {
+      intent: 'Swap',
+      interpolatedIntent:
+        'Swap exact 7 ZIN for at least 9 ZOUT. Expires at Thu, 01 Jan 1970 00:00:00 GMT',
+      structuredIntent: [
+        'Swap exact ',
+        { value: '7 ZIN', format: 'tokenAmount', rawValue: 7n },
+        ' for at least ',
+        { value: '9 ZOUT', format: 'tokenAmount', rawValue: 9n },
+        '. Expires at ',
+        { value: 'Thu, 01 Jan 1970 00:00:00 GMT', format: 'date', rawValue: 0n },
+      ],
+      fields: {
+        'Amount to Send': { value: '7 ZIN', format: 'tokenAmount', rawValue: 7n },
+        'Minimum to Receive': { value: '9 ZOUT', format: 'tokenAmount', rawValue: 9n },
+        Beneficiary: {
+          value: '0x4444444444444444444444444444444444444444',
+          format: 'addressName',
+          rawValue: '0x4444444444444444444444444444444444444444',
+        },
+        Deadline: {
+          value: 'Thu, 01 Jan 1970 00:00:00 GMT',
+          format: 'date',
+          rawValue: 0n,
+        },
+      },
+    }
   );
 });
-should('Uniswap V2 fee-on-transfer ETH swap hint accepts zero ETH amount', () => {
-  const swap = (UNISWAP_V2_ROUTER as any).find(
-    (i: any) => i.name === 'swapExactETHForTokensSupportingFeeOnTransferTokens'
-  );
-  const token = '0x2222222222222222222222222222222222222222';
+should('Kyber clearSig preserves zero-decimal token metadata', async () => {
+  const kyber = abi.createContract(KYBER_NETWORK_PROXY);
+  const zeroSrc = '0x1111111111111111111111111111111111111111';
+  const zeroDest = '0x2222222222222222222222222222222222222222';
+  const platformWallet = '0x3333333333333333333333333333333333333333';
+  const destAddress = '0x4444444444444444444444444444444444444444';
+  // ERC-7730 has no calculated-field arithmetic here, so this preserves the old
+  // zero-decimal metadata coverage but not the removed hint's derived fee amount.
   deepStrictEqual(
-    swap.hint(
+    await clearSigFor(
+      KYBER_NETWORK_PROXY_CONTRACT,
+      kyber.tradeWithHintAndFee.encodeInput({
+        src: zeroSrc,
+        srcAmount: 7n,
+        dest: zeroDest,
+        destAddress,
+        maxDestAmount: 9n,
+        minConversionRate: 1000000000000000000n,
+        platformWallet,
+        platformFeeBps: 100n,
+        hint: new Uint8Array([]),
+      }),
       {
-        amountOutMin: 9000000000000000000n,
-        path: ['0x1111111111111111111111111111111111111111', token],
-        deadline: 0n,
-      },
-      {
-        amount: 0n,
-        contracts: { [token]: { decimals: 18, symbol: 'TOK' } },
+        contracts: {
+          [zeroSrc]: { abi: 'ERC20', decimals: 0, symbol: 'ZSRC' },
+          [zeroDest]: { abi: 'ERC20', decimals: 0, symbol: 'ZDST' },
+        },
       }
     ),
-    'Swap 0 ETH for at least 9 TOK. Expires at Thu, 01 Jan 1970 00:00:00 GMT'
+    {
+      intent: 'Swap',
+      interpolatedIntent:
+        'Swap 7 ZSRC for up to 9 ZDST to recipient 0x4444444444444444444444444444444444444444 with platform fee 1 %',
+      structuredIntent: [
+        'Swap ',
+        { value: '7 ZSRC', format: 'tokenAmount', rawValue: 7n },
+        ' for up to ',
+        { value: '9 ZDST', format: 'tokenAmount', rawValue: 9n },
+        ' to recipient ',
+        {
+          value: '0x4444444444444444444444444444444444444444',
+          format: 'addressName',
+          rawValue: '0x4444444444444444444444444444444444444444',
+        },
+        ' with platform fee ',
+        { value: '1 %', format: 'unit', rawValue: 100n },
+      ],
+      fields: {
+        'Amount to Send': { value: '7 ZSRC', format: 'tokenAmount', rawValue: 7n },
+        'Maximum to Receive': { value: '9 ZDST', format: 'tokenAmount', rawValue: 9n },
+        'Minimum Conversion Rate': {
+          value: '1000000000000000000',
+          format: 'raw',
+          rawValue: 1000000000000000000n,
+        },
+        Beneficiary: {
+          value: '0x4444444444444444444444444444444444444444',
+          format: 'addressName',
+          rawValue: '0x4444444444444444444444444444444444444444',
+        },
+        'Platform Fee': { value: '1 %', format: 'unit', rawValue: 100n },
+        'Platform Wallet': {
+          value: '0x3333333333333333333333333333333333333333',
+          format: 'addressName',
+          rawValue: '0x3333333333333333333333333333333333333333',
+        },
+      },
+    }
   );
 });
 describe('ABI events', () => {
@@ -2111,10 +2853,42 @@ should('example/libra', async () => {
   const tx0 = hex.decode(
     '7ff36ab5000000000000000000000000000000000000000000000000ab54a98ceb1f0ad30000000000000000000000000000000000000000000000000000000000000080000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa96045000000000000000000000000000000000000000000000000000000006fd9c6ea0000000000000000000000000000000000000000000000000000000000000002000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2000000000000000000000000106d3c66d22d2dd0446df23d7f5960752994d600'
   );
-  deepStrictEqual(
-    d.decode(UNISWAP, tx0, Object.assign(uniOpt, { amount: 100000000000000000n })).hint,
-    'Swap 0.1 ETH for at least 12345678901.234567891 LABRA. Expires at Tue, 19 Jun 2029 06:00:10 GMT'
-  );
+  d.decode(UNISWAP, tx0, Object.assign(uniOpt, { amount: 100000000000000000n }));
+  deepStrictEqual(await clearSigFor(UNISWAP, tx0, uniOpt), {
+    intent: 'Swap',
+    interpolatedIntent:
+      'Swap 0.1 ETH for at least 12345678901.234567891 LABRA. Expires at Tue, 19 Jun 2029 06:00:10 GMT',
+    structuredIntent: [
+      'Swap ',
+      { value: '0.1 ETH', format: 'amount', rawValue: 100000000000000000n },
+      ' for at least ',
+      {
+        value: '12345678901.234567891 LABRA',
+        format: 'tokenAmount',
+        rawValue: 12345678901234567891n,
+      },
+      '. Expires at ',
+      { value: 'Tue, 19 Jun 2029 06:00:10 GMT', format: 'date', rawValue: 1876543210n },
+    ],
+    fields: {
+      'Amount to Send': { value: '0.1 ETH', format: 'amount', rawValue: 100000000000000000n },
+      'Minimum to Receive': {
+        value: '12345678901.234567891 LABRA',
+        format: 'tokenAmount',
+        rawValue: 12345678901234567891n,
+      },
+      Beneficiary: {
+        value: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
+        format: 'addressName',
+        rawValue: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
+      },
+      Deadline: {
+        value: 'Tue, 19 Jun 2029 06:00:10 GMT',
+        format: 'date',
+        rawValue: 1876543210n,
+      },
+    },
+  });
   // console.log(d.decode(UNISWAP, tx0, Object.assign(uniOpt, { amount: 100000000000000000n })));
 });
 
@@ -2381,22 +3155,47 @@ should('Junk data from real tx', () => {
 });
 
 describe('simple decoder API', () => {
-  should('decodeData', () => {
+  should('decodeData', async () => {
     // tx hash: 0x6fd66d7b306f77fc01a397f55d4efe19256458badd8782d523d06ed450851d0a
     const to0 = '0xdac17f958d2ee523a2206206994597c13d831ec7'; // USDT, but we don't know that. It is part of tx
     const data =
       'a9059cbb000000000000000000000000dac17f958d2ee523a2206206994597c13d831ec70000000000000000000000000000000000000000000000000000000542598700';
-    deepStrictEqual(decodeData(to0, data), {
+    const decoded = decodeData(to0, data);
+    if (!decoded || Array.isArray(decoded) || !decoded.clearSig)
+      throw new Error('missing clearSig result');
+    const { clearSig, ...rest } = decoded;
+    deepStrictEqual(rest, {
       name: 'transfer',
       signature: 'transfer(address,uint256)',
       value: {
         to: '0xdac17f958d2ee523a2206206994597c13d831ec7',
         value: 22588000000n,
       },
-      hint: 'Transfer 22588 USDT to 0xdac17f958d2ee523a2206206994597c13d831ec7',
+    });
+    deepStrictEqual(await clearSig, {
+      intent: 'Send',
+      interpolatedIntent: 'Transfer 22588 USDT to 0xdac17f958d2ee523a2206206994597c13d831ec7',
+      structuredIntent: [
+        'Transfer ',
+        { value: '22588 USDT', format: 'tokenAmount', rawValue: 22588000000n },
+        ' to ',
+        {
+          value: '0xdac17f958d2ee523a2206206994597c13d831ec7',
+          format: 'addressName',
+          rawValue: '0xdac17f958d2ee523a2206206994597c13d831ec7',
+        },
+      ],
+      fields: {
+        Amount: { value: '22588 USDT', format: 'tokenAmount', rawValue: 22588000000n },
+        To: {
+          value: '0xdac17f958d2ee523a2206206994597c13d831ec7',
+          format: 'addressName',
+          rawValue: '0xdac17f958d2ee523a2206206994597c13d831ec7',
+        },
+      },
     });
   });
-  should('decodeData with custom tokens', () => {
+  should('decodeData with custom tokens', async () => {
     // User defines other tokens
     const customContracts = {
       '0x106d3c66d22d2dd0446df23d7f5960752994d600': { abi: 'ERC20', symbol: 'LABRA', decimals: 9 },
@@ -2406,7 +3205,11 @@ describe('simple decoder API', () => {
     const data =
       '7ff36ab5000000000000000000000000000000000000000000000000ab54a98ceb1f0ad30000000000000000000000000000000000000000000000000000000000000080000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa96045000000000000000000000000000000000000000000000000000000006fd9c6ea0000000000000000000000000000000000000000000000000000000000000002000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2000000000000000000000000106d3c66d22d2dd0446df23d7f5960752994d600';
 
-    deepStrictEqual(decodeData(to, data, 100000000000000000n, { customContracts }), {
+    const decoded = decodeData(to, data, 100000000000000000n, { customContracts });
+    if (!decoded || Array.isArray(decoded) || !decoded.clearSig)
+      throw new Error('missing clearSig result');
+    const { clearSig, ...rest } = decoded;
+    deepStrictEqual(rest, {
       name: 'swapExactETHForTokens',
       signature: 'swapExactETHForTokens(uint256,address[],address,uint256)',
       value: {
@@ -2418,10 +3221,48 @@ describe('simple decoder API', () => {
         to: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
         deadline: 1876543210n,
       },
-      hint: 'Swap 0.1 ETH for at least 12345678901.234567891 LABRA. Expires at Tue, 19 Jun 2029 06:00:10 GMT',
     });
-    // Without information about custom contracts/tokens there is no hint, but we still try to decode what we can
-    deepStrictEqual(decodeData(to, data, 100000000000000000n), {
+    deepStrictEqual(await clearSig, {
+      intent: 'Swap',
+      interpolatedIntent:
+        'Swap 0.1 ETH for at least 12345678901.234567891 LABRA. Expires at Tue, 19 Jun 2029 06:00:10 GMT',
+      structuredIntent: [
+        'Swap ',
+        { value: '0.1 ETH', format: 'amount', rawValue: 100000000000000000n },
+        ' for at least ',
+        {
+          value: '12345678901.234567891 LABRA',
+          format: 'tokenAmount',
+          rawValue: 12345678901234567891n,
+        },
+        '. Expires at ',
+        { value: 'Tue, 19 Jun 2029 06:00:10 GMT', format: 'date', rawValue: 1876543210n },
+      ],
+      fields: {
+        'Amount to Send': { value: '0.1 ETH', format: 'amount', rawValue: 100000000000000000n },
+        'Minimum to Receive': {
+          value: '12345678901.234567891 LABRA',
+          format: 'tokenAmount',
+          rawValue: 12345678901234567891n,
+        },
+        Beneficiary: {
+          value: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
+          format: 'addressName',
+          rawValue: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
+        },
+        Deadline: {
+          value: 'Tue, 19 Jun 2029 06:00:10 GMT',
+          format: 'date',
+          rawValue: 1876543210n,
+        },
+      },
+    });
+    // Without custom token metadata, display falls back; ABI decoding still works.
+    const fallback = decodeData(to, data, 100000000000000000n);
+    if (!fallback || Array.isArray(fallback) || !fallback.clearSig)
+      throw new Error('missing fallback clearSig result');
+    const { clearSig: fallbackSig, ...fallbackRest } = fallback;
+    deepStrictEqual(fallbackRest, {
       name: 'swapExactETHForTokens',
       signature: 'swapExactETHForTokens(uint256,address[],address,uint256)',
       value: {
@@ -2432,6 +3273,41 @@ describe('simple decoder API', () => {
         ],
         to: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
         deadline: 1876543210n,
+      },
+    });
+    deepStrictEqual(await fallbackSig, {
+      intent: 'Swap',
+      interpolatedIntent:
+        'Swap 0.1 ETH for at least 12345678901234567891 ???. Expires at Tue, 19 Jun 2029 06:00:10 GMT',
+      structuredIntent: [
+        'Swap ',
+        { value: '0.1 ETH', format: 'amount', rawValue: 100000000000000000n },
+        ' for at least ',
+        {
+          value: '12345678901234567891 ???',
+          format: 'tokenAmount',
+          rawValue: 12345678901234567891n,
+        },
+        '. Expires at ',
+        { value: 'Tue, 19 Jun 2029 06:00:10 GMT', format: 'date', rawValue: 1876543210n },
+      ],
+      fields: {
+        'Amount to Send': { value: '0.1 ETH', format: 'amount', rawValue: 100000000000000000n },
+        'Minimum to Receive': {
+          value: '12345678901234567891 ???',
+          format: 'tokenAmount',
+          rawValue: 12345678901234567891n,
+        },
+        Beneficiary: {
+          value: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
+          format: 'addressName',
+          rawValue: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
+        },
+        Deadline: {
+          value: 'Tue, 19 Jun 2029 06:00:10 GMT',
+          format: 'date',
+          rawValue: 1876543210n,
+        },
       },
     });
   });
@@ -2448,20 +3324,530 @@ describe('simple decoder API', () => {
       undefined
     );
   });
-  should('decodeTx', () => {
+  should('decodeTx', async () => {
     // tx hash 0x6fd66d7b306f77fc01a397f55d4efe19256458badd8782d523d06ed450851d0a
     const tx =
       '0xf8a901851d1a94a20082c12a94dac17f958d2ee523a2206206994597c13d831ec780b844a9059cbb000000000000000000000000dac17f958d2ee523a2206206994597c13d831ec7000000000000000000000000000000000000000000000000000000054259870025a066fcb560b50e577f6dc8c8b2e3019f760da78b4c04021382ba490c572a303a42a0078f5af8ac7e11caba9b7dc7a64f7bdc3b4ce1a6ab0a1246771d7cc3524a7200';
     // Decode tx information
-    deepStrictEqual(decodeTx(tx), {
+    const decoded = decodeTx(tx);
+    // Guess arrays never carry clearSig, so this is the whole consumer check.
+    if (!decoded || Array.isArray(decoded) || !decoded.clearSig)
+      throw new Error('missing clearSig result');
+    const { clearSig: sig, ...rest } = decoded;
+    deepStrictEqual(rest, {
       name: 'transfer',
       signature: 'transfer(address,uint256)',
       value: {
         to: '0xdac17f958d2ee523a2206206994597c13d831ec7',
         value: 22588000000n,
       },
-      hint: 'Transfer 22588 USDT to 0xdac17f958d2ee523a2206206994597c13d831ec7',
     });
+    deepStrictEqual(await sig, {
+      intent: 'Send',
+      interpolatedIntent: 'Transfer 22588 USDT to 0xdac17f958d2ee523a2206206994597c13d831ec7',
+      structuredIntent: [
+        'Transfer ',
+        { value: '22588 USDT', format: 'tokenAmount', rawValue: 22588000000n },
+        ' to ',
+        {
+          value: '0xdac17f958d2ee523a2206206994597c13d831ec7',
+          format: 'addressName',
+          rawValue: '0xdac17f958d2ee523a2206206994597c13d831ec7',
+        },
+      ],
+      fields: {
+        Amount: { value: '22588 USDT', format: 'tokenAmount', rawValue: 22588000000n },
+        To: {
+          value: '0xdac17f958d2ee523a2206206994597c13d831ec7',
+          format: 'addressName',
+          rawValue: '0xdac17f958d2ee523a2206206994597c13d831ec7',
+        },
+      },
+    });
+  });
+  should('decodeData and decodeTx attach clearSig from descriptor files', async () => {
+    const tx =
+      '0xf8a901851d1a94a20082c12a94dac17f958d2ee523a2206206994597c13d831ec780b844a9059cbb000000000000000000000000dac17f958d2ee523a2206206994597c13d831ec7000000000000000000000000000000000000000000000000000000054259870025a066fcb560b50e577f6dc8c8b2e3019f760da78b4c04021382ba490c572a303a42a0078f5af8ac7e11caba9b7dc7a64f7bdc3b4ce1a6ab0a1246771d7cc3524a7200';
+    const data =
+      '0xa9059cbb000000000000000000000000dac17f958d2ee523a2206206994597c13d831ec7' +
+      '0000000000000000000000000000000000000000000000000000000542598700';
+    const decoder = new Decoder().addClearSig(CLEARSIG_REPO);
+    const decodedData = decodeData('0xdac17f958d2ee523a2206206994597c13d831ec7', data, 0n, {
+      decoder,
+    });
+    if (!decodedData || Array.isArray(decodedData) || !decodedData.clearSig)
+      throw new Error('missing decodeData clearSig result');
+    const { clearSig: dataSig, ...dataRest } = decodedData;
+    deepStrictEqual(dataRest, {
+      name: 'transfer',
+      signature: 'transfer(address,uint256)',
+      value: {
+        _to: '0xdac17f958d2ee523a2206206994597c13d831ec7',
+        _value: 22588000000n,
+      },
+    });
+    deepStrictEqual(await dataSig, {
+      intent: 'Send',
+      interpolatedIntent: 'Transfer 22588 USDT to 0xdac17f958d2ee523a2206206994597c13d831ec7',
+      structuredIntent: [
+        'Transfer ',
+        { value: '22588 USDT', format: 'tokenAmount', rawValue: 22588000000n },
+        ' to ',
+        {
+          value: '0xdac17f958d2ee523a2206206994597c13d831ec7',
+          format: 'addressName',
+          rawValue: '0xdac17f958d2ee523a2206206994597c13d831ec7',
+        },
+      ],
+      fields: {
+        Amount: { value: '22588 USDT', format: 'tokenAmount', rawValue: 22588000000n },
+        To: {
+          value: '0xdac17f958d2ee523a2206206994597c13d831ec7',
+          format: 'addressName',
+          rawValue: '0xdac17f958d2ee523a2206206994597c13d831ec7',
+        },
+      },
+    });
+    const decodedTx = decodeTx(Transaction.fromHex(tx), { decoder });
+    if (!decodedTx || Array.isArray(decodedTx) || !decodedTx.clearSig)
+      throw new Error('missing decodeTx clearSig result');
+    const { clearSig: txSig, ...txRest } = decodedTx;
+    deepStrictEqual(txRest, {
+      name: 'transfer',
+      signature: 'transfer(address,uint256)',
+      value: {
+        _to: '0xdac17f958d2ee523a2206206994597c13d831ec7',
+        _value: 22588000000n,
+      },
+    });
+    deepStrictEqual(await txSig, {
+      intent: 'Send',
+      interpolatedIntent: 'Transfer 22588 USDT to 0xdac17f958d2ee523a2206206994597c13d831ec7',
+      structuredIntent: [
+        'Transfer ',
+        { value: '22588 USDT', format: 'tokenAmount', rawValue: 22588000000n },
+        ' to ',
+        {
+          value: '0xdac17f958d2ee523a2206206994597c13d831ec7',
+          format: 'addressName',
+          rawValue: '0xdac17f958d2ee523a2206206994597c13d831ec7',
+        },
+      ],
+      fields: {
+        Amount: { value: '22588 USDT', format: 'tokenAmount', rawValue: 22588000000n },
+        To: {
+          value: '0xdac17f958d2ee523a2206206994597c13d831ec7',
+          format: 'addressName',
+          rawValue: '0xdac17f958d2ee523a2206206994597c13d831ec7',
+        },
+      },
+    });
+  });
+  should('decodeData and decodeTx pass from into clearSig context', async () => {
+    const target = '0x0000000000000000000000000000000000001200';
+    const mark = [
+      { type: 'function', name: 'mark', inputs: [{ name: 'value', type: 'uint256' }] },
+    ] as const;
+    const data = hex.encode(abi.createContract(mark).mark.encodeInput(7n));
+    const files = {
+      'from.json': {
+        context: { contract: { deployments: [{ chainId: 1, address: target }] } },
+        display: {
+          formats: {
+            'mark(uint256 value)': {
+              intent: 'Mark',
+              interpolatedIntent: 'Mark {@.from} with {value}',
+              fields: [
+                { path: '@.from', label: 'From', format: 'raw' },
+                { path: 'value', label: 'Value', format: 'raw' },
+              ],
+            },
+          },
+        },
+      },
+    };
+    const decodedData = decodeData(target, data, 0n, {
+      noDefault: true,
+      clearSig: files,
+      from: '0x2222222222222222222222222222222222222222',
+      chainId: 1n,
+    });
+    if (!decodedData || Array.isArray(decodedData) || !decodedData.clearSig)
+      throw new Error('missing decodeData from clearSig');
+    deepStrictEqual(await decodedData.clearSig, {
+      intent: 'Mark',
+      interpolatedIntent: 'Mark 0x2222222222222222222222222222222222222222 with 7',
+      structuredIntent: [
+        'Mark ',
+        {
+          value: '0x2222222222222222222222222222222222222222',
+          format: 'raw',
+          rawValue: '0x2222222222222222222222222222222222222222',
+        },
+        ' with ',
+        { value: '7', format: 'raw', rawValue: 7n },
+      ],
+      fields: {
+        From: {
+          value: '0x2222222222222222222222222222222222222222',
+          format: 'raw',
+          rawValue: '0x2222222222222222222222222222222222222222',
+        },
+        Value: { value: '7', format: 'raw', rawValue: 7n },
+      },
+    });
+    const unsigned = Transaction.prepare({
+      to: target,
+      chainId: 1n,
+      nonce: 0n,
+      maxFeePerGas: 10_000_000_000n,
+      value: 0n,
+      data,
+    });
+    const unsignedWithFrom = decodeTx(unsigned, {
+      noDefault: true,
+      clearSig: files,
+      from: '0x2222222222222222222222222222222222222222',
+    });
+    if (!unsignedWithFrom || Array.isArray(unsignedWithFrom) || !unsignedWithFrom.clearSig)
+      throw new Error('missing unsigned from clearSig');
+    deepStrictEqual(await unsignedWithFrom.clearSig, {
+      intent: 'Mark',
+      interpolatedIntent: 'Mark 0x2222222222222222222222222222222222222222 with 7',
+      structuredIntent: [
+        'Mark ',
+        {
+          value: '0x2222222222222222222222222222222222222222',
+          format: 'raw',
+          rawValue: '0x2222222222222222222222222222222222222222',
+        },
+        ' with ',
+        { value: '7', format: 'raw', rawValue: 7n },
+      ],
+      fields: {
+        From: {
+          value: '0x2222222222222222222222222222222222222222',
+          format: 'raw',
+          rawValue: '0x2222222222222222222222222222222222222222',
+        },
+        Value: { value: '7', format: 'raw', rawValue: 7n },
+      },
+    });
+    const unsignedNoFrom = decodeTx(unsigned, { noDefault: true, clearSig: files });
+    if (!unsignedNoFrom || Array.isArray(unsignedNoFrom) || !unsignedNoFrom.clearSig)
+      throw new Error('missing unsigned no-from clearSig');
+    deepStrictEqual(await unsignedNoFrom.clearSig, {
+      intent: 'Mark',
+      interpolatedIntent: 'Mark',
+      fields: {
+        Value: { value: '7', format: 'raw', rawValue: 7n },
+      },
+    });
+    const signed = unsigned.signBy(`0x${'11'.repeat(32)}`, false).toHex();
+    const signedDecoded = decodeTx(signed, { noDefault: true, clearSig: files });
+    if (!signedDecoded || Array.isArray(signedDecoded) || !signedDecoded.clearSig)
+      throw new Error('missing signed from clearSig');
+    deepStrictEqual(await signedDecoded.clearSig, {
+      intent: 'Mark',
+      interpolatedIntent: 'Mark 0x19E7E376E7C213B7E7e7e46cc70A5dD086DAff2A with 7',
+      structuredIntent: [
+        'Mark ',
+        {
+          value: '0x19E7E376E7C213B7E7e7e46cc70A5dD086DAff2A',
+          format: 'raw',
+          rawValue: '0x19E7E376E7C213B7E7e7e46cc70A5dD086DAff2A',
+        },
+        ' with ',
+        { value: '7', format: 'raw', rawValue: 7n },
+      ],
+      fields: {
+        From: {
+          value: '0x19E7E376E7C213B7E7e7e46cc70A5dD086DAff2A',
+          format: 'raw',
+          rawValue: '0x19E7E376E7C213B7E7e7e46cc70A5dD086DAff2A',
+        },
+        Value: { value: '7', format: 'raw', rawValue: 7n },
+      },
+    });
+    throws(
+      () =>
+        decodeTx(signed, {
+          noDefault: true,
+          clearSig: files,
+          from: '0x2222222222222222222222222222222222222222',
+        }),
+      /decodeTx: wrong from=0x2222222222222222222222222222222222222222/
+    );
+    const bad = Transaction.fromHex(signed);
+    (bad.raw as { s: bigint }).s =
+      0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364140n;
+    throws(
+      () =>
+        decodeTx(bad, {
+          noDefault: true,
+          clearSig: files,
+          from: '0x19E7E376E7C213B7E7e7e46cc70A5dD086DAff2A',
+        }),
+      /invalid s/
+    );
+  });
+  should('decodeData handles public clearSig no-match boundaries', async () => {
+    const target = '0x0000000000000000000000000000000000001300';
+    const known = '0x0000000000000000000000000000000000001301';
+    const mark = [
+      { type: 'function', name: 'mark', inputs: [{ name: 'value', type: 'uint256' }] },
+    ] as const;
+    const data = hex.encode(abi.createContract(mark).mark.encodeInput(7n));
+    const files = {
+      'chain.json': {
+        context: { contract: { deployments: [{ chainId: 5, address: target }] } },
+        display: {
+          formats: {
+            'mark(uint256 value)': {
+              intent: 'Chain',
+              interpolatedIntent: 'Chain {value}',
+              fields: [{ path: 'value', label: 'Value', format: 'raw' }],
+            },
+          },
+        },
+      },
+    };
+    deepStrictEqual(decodeData(target, '0x', 0n, { noDefault: true, clearSig: files }), undefined);
+    // ClearSig lookup is chain-scoped, but descriptor ABI stays usable for decode.
+    deepStrictEqual(decodeData(target, data, 0n, { noDefault: true, clearSig: files }), {
+      name: 'mark',
+      signature: 'mark(uint256)',
+      value: 7n,
+    });
+    const matched = decodeData(target, data, 0n, {
+      noDefault: true,
+      clearSig: files,
+      chainId: 5n,
+    });
+    if (!matched || Array.isArray(matched) || !matched.clearSig)
+      throw new Error('missing chain clearSig');
+    const { clearSig, ...info } = matched;
+    deepStrictEqual(info, { name: 'mark', signature: 'mark(uint256)', value: 7n });
+    deepStrictEqual(await clearSig, {
+      intent: 'Chain',
+      interpolatedIntent: 'Chain 7',
+      structuredIntent: ['Chain ', { value: '7', format: 'raw', rawValue: 7n }],
+      fields: { Value: { value: '7', format: 'raw', rawValue: 7n } },
+    });
+    const decoder = new Decoder();
+    decoder.add(known, mark);
+    deepStrictEqual(decodeData(target, data, 0n, { decoder }), [
+      { name: 'mark', signature: 'mark(uint256)', value: 7n },
+    ]);
+    throws(
+      () =>
+        decodeData(target, `${data}11`, 0n, {
+          noDefault: true,
+          clearSig: files,
+          chainId: 5n,
+        }),
+      /left after unpack|unread byte ranges/
+    );
+    const loose = decodeData(target, `${data}11`, 0n, {
+      noDefault: true,
+      clearSig: files,
+      chainId: 5n,
+      allowUnreadBytes: true,
+    });
+    if (!loose || Array.isArray(loose) || !loose.clearSig)
+      throw new Error('missing unread-byte clearSig');
+    deepStrictEqual(await loose.clearSig, {
+      intent: 'Chain',
+      interpolatedIntent: 'Chain 7',
+      structuredIntent: ['Chain ', { value: '7', format: 'raw', rawValue: 7n }],
+      fields: { Value: { value: '7', format: 'raw', rawValue: 7n } },
+    });
+  });
+  should('Decoder.addClearSig keeps generic descriptors for later bind', async () => {
+    const target = '0x0000000000000000000000000000000000000104';
+    const data = hex.encode(
+      abi
+        .createContract([
+          {
+            type: 'function',
+            name: 'transfer',
+            inputs: [
+              { name: 'to', type: 'address' },
+              { name: 'value', type: 'uint256' },
+            ],
+          },
+        ] as const)
+        .transfer.encodeInput({
+          to: '0x0000000000000000000000000000000000000105',
+          value: 9n,
+        })
+    );
+    const decoder = new Decoder().addClearSig({
+      'generic.json': {
+        context: { contract: {} },
+        display: {
+          formats: {
+            'transfer(address to,uint256 value)': {
+              intent: 'Transfer',
+              interpolatedIntent: 'Transfer {value} to {to}',
+              fields: [
+                { path: 'value', label: 'Value', format: 'raw' },
+                { path: 'to', label: 'To', format: 'raw' },
+              ],
+            },
+          },
+        },
+      },
+    });
+    deepStrictEqual(decodeData(target, data, 0n, { decoder }), undefined);
+    decoder.addClearSig({}, { bind: { address: target, chainId: 1n } });
+    const decoded = decodeData(target, data, 0n, { decoder });
+    if (!decoded || Array.isArray(decoded) || !decoded.clearSig)
+      throw new Error('missing bound generic clearSig result');
+    const { clearSig, ...rest } = decoded;
+    deepStrictEqual(rest, {
+      name: 'transfer',
+      signature: 'transfer(address,uint256)',
+      value: {
+        to: '0x0000000000000000000000000000000000000105',
+        value: 9n,
+      },
+    });
+    deepStrictEqual(await clearSig, {
+      intent: 'Transfer',
+      interpolatedIntent: 'Transfer 9 to 0x0000000000000000000000000000000000000105',
+      structuredIntent: [
+        'Transfer ',
+        { value: '9', format: 'raw', rawValue: 9n },
+        ' to ',
+        {
+          value: '0x0000000000000000000000000000000000000105',
+          format: 'raw',
+          rawValue: '0x0000000000000000000000000000000000000105',
+        },
+      ],
+      fields: {
+        Value: { value: '9', format: 'raw', rawValue: 9n },
+        To: {
+          value: '0x0000000000000000000000000000000000000105',
+          format: 'raw',
+          rawValue: '0x0000000000000000000000000000000000000105',
+        },
+      },
+    });
+  });
+  should('Decoder.resolve binds factory-backed clearSig descriptors', async () => {
+    const target = '0x0000000000000000000000000000000000000102';
+    const factory = '0x0000000000000000000000000000000000000103';
+    const files = {
+      'factory.json': {
+        context: {
+          contract: {
+            factory: {
+              deployEvent: 'Made(address indexed instance)',
+              deployments: [{ chainId: 1, address: factory }],
+            },
+          },
+        },
+        display: {
+          formats: {
+            'resolve(uint256 value)': {
+              intent: 'Resolve',
+              interpolatedIntent: 'Resolve {value}',
+              fields: [{ path: 'value', label: 'Value', format: 'raw' }],
+            },
+          },
+        },
+      },
+    };
+    const data = hex.encode(
+      abi
+        .createContract([
+          {
+            type: 'function',
+            name: 'resolve',
+            inputs: [{ name: 'value', type: 'uint256' }],
+          },
+        ] as const)
+        .resolve.encodeInput(7n)
+    );
+    const staged = new Decoder();
+    deepStrictEqual(
+      await staged.resolve({
+        address: target,
+        chainId: 1n,
+        async resolveFactory() {
+          throw new Error('no factory candidates should not call back');
+        },
+      }),
+      false
+    );
+    staged.addClearSig(files);
+    deepStrictEqual(
+      await staged.resolve({
+        address: target,
+        chainId: 1n,
+        async resolveFactory() {
+          return 0;
+        },
+      }),
+      true
+    );
+    const decoder = new Decoder().addClearSig(files);
+    deepStrictEqual(decodeData(target, data, 0n, { decoder }), undefined);
+    deepStrictEqual(
+      await decoder.resolve({
+        address: target,
+        chainId: 1n,
+        async resolveFactory(req) {
+          deepStrictEqual(req, {
+            address: target,
+            chainId: 1n,
+            factories: [
+              {
+                factory: {
+                  deployEvent: 'Made(address indexed instance)',
+                  deployments: [{ chainId: 1, address: factory }],
+                },
+                deployments: [{ address: factory, chainId: 1n }],
+                deployEvent: 'Made(address indexed instance)',
+              },
+            ],
+            descriptor: undefined,
+            context: { to: target, chainId: 1n },
+          });
+          return 0;
+        },
+      }),
+      true
+    );
+    const decoded = decodeData(target, data, 0n, { decoder });
+    if (!decoded || Array.isArray(decoded) || !decoded.clearSig)
+      throw new Error('missing resolved clearSig result');
+    const { clearSig, ...rest } = decoded;
+    deepStrictEqual(rest, {
+      name: 'resolve',
+      signature: 'resolve(uint256)',
+      value: 7n,
+    });
+    deepStrictEqual(await clearSig, {
+      intent: 'Resolve',
+      interpolatedIntent: 'Resolve 7',
+      structuredIntent: ['Resolve ', { value: '7', format: 'raw', rawValue: 7n }],
+      fields: {
+        Value: { value: '7', format: 'raw', rawValue: 7n },
+      },
+    });
+    deepStrictEqual(
+      await decoder.resolve({
+        address: target,
+        chainId: 1n,
+        async resolveFactory() {
+          throw new Error('cached factory resolution should not call back');
+        },
+      }),
+      true
+    );
   });
   should('decodeTx ignores contract creation transactions', () => {
     const tx =
@@ -2486,6 +3872,62 @@ describe('simple decoder API', () => {
       },
       hint: 'Allow 0xe592427a0aece92de3edee1f18e0157c05861564 spending up to 1000 BAT from 0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
     });
+  });
+  should('decodeEvent with WETH event hint', () => {
+    const transferTopics = [
+      '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef',
+      '0x0000000000000000000000001111111111111111111111111111111111111111',
+      '0x0000000000000000000000002222222222222222222222222222222222222222',
+    ];
+    const data = '0x0000000000000000000000000000000000000000000000000de0b6b3a7640000';
+    deepStrictEqual(decodeEvent(WETH_CONTRACT, transferTopics, data), {
+      name: 'Transfer',
+      signature: 'Transfer(address,address,uint256)',
+      value: {
+        wad: 1000000000000000000n,
+        src: '0x1111111111111111111111111111111111111111',
+        dst: '0x2222222222222222222222222222222222222222',
+      },
+      hint: 'Transfer 1 WETH from 0x1111111111111111111111111111111111111111 to 0x2222222222222222222222222222222222222222',
+    });
+    const approvalTopics = [
+      '0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925',
+      '0x0000000000000000000000001111111111111111111111111111111111111111',
+      '0x0000000000000000000000002222222222222222222222222222222222222222',
+    ];
+    deepStrictEqual(decodeEvent(WETH_CONTRACT, approvalTopics, data), {
+      name: 'Approval',
+      signature: 'Approval(address,address,uint256)',
+      value: {
+        wad: 1000000000000000000n,
+        src: '0x1111111111111111111111111111111111111111',
+        guy: '0x2222222222222222222222222222222222222222',
+      },
+      hint: 'Allow 0x2222222222222222222222222222222222222222 spending up to 1 WETH from 0x1111111111111111111111111111111111111111',
+    });
+  });
+  should('decodeEvent with custom ERC20 event hint', () => {
+    const to = '0x1111111111111111111111111111111111111111';
+    const from = '0x3333333333333333333333333333333333333333';
+    const dst = '0x4444444444444444444444444444444444444444';
+    const topics = [
+      '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef',
+      `0x000000000000000000000000${strip0x(from)}`,
+      `0x000000000000000000000000${strip0x(dst)}`,
+    ];
+    const data = '0x0000000000000000000000000000000000000000000000000000000000000007';
+    deepStrictEqual(
+      decodeEvent(to, topics, data, {
+        noDefault: true,
+        customContracts: { [to]: { abi: 'ERC20', decimals: 0, symbol: 'ZERO' } },
+      }),
+      {
+        name: 'Transfer',
+        signature: 'Transfer(address,address,uint256)',
+        value: { value: 7n, from, to: dst },
+        hint: 'Transfer 7 ZERO from 0x3333333333333333333333333333333333333333 to 0x4444444444444444444444444444444444444444',
+      }
+    );
   });
   should('decodeEvent with custom ERC1155 tag', () => {
     const to = '0x1111111111111111111111111111111111111111';

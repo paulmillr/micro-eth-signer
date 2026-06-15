@@ -6,6 +6,8 @@ import './rlp.test.ts';
 import './tx.test.ts';
 // ABI stuff
 import './abi.test.ts';
+import './clearsig-archive.test.ts';
+import './clearsig.test.ts';
 import './ens.test.ts';
 import './kzg.test.ts';
 import './net.test.ts';

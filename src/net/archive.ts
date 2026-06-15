@@ -1,7 +1,29 @@
-import { ERC1155, ERC20, ERC721, WETH, createContract, events } from '../advanced/abi.ts';
+import {
+  ERC1155,
+  ERC20,
+  ERC721,
+  WETH,
+  CLEARSIG_REPO,
+  addTokens,
+  createContract,
+  decodeTx,
+  events,
+  type ClearSigDef,
+  type ClearSigOpt,
+  type TxDecodeOpt,
+} from '../advanced/abi.ts';
+import type { ClearSigTokens } from '../advanced/clearsig.ts';
 import { TxVersions, legacySig, type AccessList } from '../core/tx-internal.ts';
 import { Transaction } from '../core/tx.ts';
-import { amounts, ethHex, ethHexNum, type IWeb3Provider, type Web3CallArgs } from '../utils.ts';
+import {
+  amounts,
+  ethHex,
+  ethHexNum,
+  type IWeb3Provider,
+  type TArg,
+  type TRet,
+  type Web3CallArgs,
+} from '../utils.ts';
 
 /*
 Methods to fetch list of transactions from any ETH node RPC.
@@ -1166,6 +1188,69 @@ export class Web3Provider implements IWeb3Provider {
       res[l.address][decoded.spender] = decoded.value;
     }
     return res;
+  }
+
+  /**
+   * Online companion to airgapped decodeTx: probes the transaction target, binds
+   * generic ERC-7730 descriptors, then decodes with archive-backed resolvers.
+   * Omitted `clearSig` uses `CLEARSIG_REPO`; probe and RPC failures propagate.
+   */
+  async discoverTx(
+    transaction: string,
+    clearSig: Record<string, ClearSigDef> = CLEARSIG_REPO,
+    opt: TArg<TxDecodeOpt & { tokens?: ClearSigTokens }> = {}
+  ): Promise<ReturnType<typeof decodeTx>> {
+    const tx = Transaction.fromHex(transaction);
+    const tokens: ClearSigTokens = { ...opt.tokens };
+    const to = tx.raw.to.toLowerCase();
+    if (tx.raw.to !== '0x' && !tokens[to]) {
+      const info = await this.tokenInfo(tx.raw.to);
+      if (!('error' in info)) {
+        const token: ClearSigTokens[string] = { abi: info.abi, chainId: tx.raw.chainId };
+        if ('name' in info) token.name = info.name;
+        if ('symbol' in info) token.symbol = info.symbol;
+        if ('decimals' in info) token.decimals = info.decimals;
+        tokens[to] = token;
+      }
+    }
+    // Caller options override the standard resolvers; the repository is rebuilt with
+    // the discovered binding, so user descriptors belong in `clearSig`/`tokens`.
+    return decodeTx(transaction, {
+      ...this.clearSigCallbacks(),
+      ...opt,
+      clearSig: addTokens(clearSig, tokens, tx.raw.chainId),
+    });
+  }
+
+  /**
+   * Standard ERC-7730 clear-signing resolvers backed by this archive node.
+   * Spread into render options and extend with wallet-policy callbacks.
+   */
+  clearSigCallbacks(): TRet<ClearSigOpt> {
+    const net = this;
+    return {
+      async resolveToken(req) {
+        const info = await net.tokenInfo(req.address);
+        if ('error' in info || info.abi !== 'ERC20') return undefined;
+        return { name: info.name, symbol: info.symbol, decimals: info.decimals };
+      },
+      async resolveNft(req) {
+        const info = await net.tokenInfo(req.collection);
+        // ERC-1155 metadata lives behind per-token URIs; without a collection name the
+        // renderer's raw token-id fallback reads better than an 'undefined #1' label.
+        if ('error' in info || info.abi !== 'ERC721' || !info.name) return undefined;
+        const uri = await net.tokenURI(info, req.tokenId);
+        return {
+          name: `${info.name} #${req.tokenId}`,
+          source: typeof uri === 'string' ? uri : undefined,
+          verified: true,
+        };
+      },
+      async resolveBlock(req) {
+        // BlockInfo.timestamp is in milliseconds; ERC-7730 dates want Unix seconds.
+        return Math.floor((await net.blockInfo(Number(req.block))).timestamp / 1000);
+      },
+    };
   }
 }
 

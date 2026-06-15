@@ -27,6 +27,14 @@ import {
   type NamedComponent,
   type Writable,
 } from './abi-mapper.ts';
+import {
+  _chain as clearSigChain,
+  repository as clearSigRepository,
+  type ClearSigDef,
+  type ClearSigFactoryEntry,
+  type ClearSigOpt,
+  type ClearSigRepositoryEntry,
+} from './clearsig.ts';
 
 /*
 There is NO network code in the file. However, a user can pass
@@ -347,8 +355,7 @@ export function events<T extends ArrLike<FnArg>>(abi: T): TRet<ContractEventType
   return res as any;
 }
 
-// Same as 'Transaction Action' on Etherscan, provides human readable interpritation of decoded data
-export type ContractABI = ReadonlyArray<FnArg & { readonly hint?: HintFn; readonly hook?: HookFn }>;
+export type ContractABI = ReadonlyArray<FnArg & { readonly hook?: HookFn; readonly hint?: HintFn }>;
 export type ContractInfo = {
   abi: 'ERC20' | 'ERC721' | 'ERC1155' | ContractABI;
   symbol?: string;
@@ -363,19 +370,33 @@ export type HintOpt = {
   amount?: bigint;
   contractInfo?: ContractInfo;
   contracts?: Record<string, ContractInfo>;
+  /** Some aggregators append referral/fingerprint bytes after ABI args. */
+  allowUnreadBytes?: boolean;
 };
-export type HintFn = (value: unknown, opt: HintOpt) => string;
 export type HookFn = (
   decoder: Decoder,
   contract: string,
   info: SignatureInfo,
   opt: HintOpt
 ) => SignatureInfo;
+/** Compact post-transaction label for a decoded receipt log. */
+export type HintFn = (value: unknown, opt: HintOpt) => string;
+/** Factory-resolution options for decoder-owned ERC-7730 bindings. */
+export type ClearSigResolveOpt = ClearSigOpt & {
+  /** Contract instance to resolve against cached factory descriptors. */
+  address: string;
+  /** EIP-155 chain id; defaults to mainnet. */
+  chainId?: bigint;
+};
+/** Decoder indexing options for ERC-7730 descriptors. */
+export type ClearSigAddOpt = {
+  /** Bind deployment-less descriptor entries to one concrete target for direct rendering. */
+  bind?: { address: string; chainId?: bigint };
+};
 type SignaturePacker = {
   name: string;
   signature: string;
   packer: P.CoderType<unknown>;
-  hint?: HintFn;
   // Modifies decoder output. For multicall calls.
   hook?: HookFn;
 };
@@ -385,13 +406,163 @@ type EventSignatureDecoder = {
   decoder: (topics: string[], _data: string) => unknown;
   hint?: HintFn;
 };
-
-export type SignatureInfo = { name: string; signature: string; value: unknown; hint?: string };
+// ERC-7730 clear signing deliberately lives outside this file: the ABI detector
+// answers "which known function shape is this", descriptors answer "how should a
+// wallet display it" - decodeTx in abi.ts composes both, neither gates the other.
+export type SignatureInfo = {
+  name: string;
+  signature: string;
+  value: unknown;
+  /** Optional receipt-log label; ERC-7730 signing prompts are exposed separately. */
+  hint?: string;
+};
+/**
+ * Mutable ABI decoder registry for exact contract matches and selector guesses.
+ * @example
+ * Decode calldata through a caller-owned registry.
+ * ```ts
+ * const decoder = new Decoder();
+ * ```
+ */
 export class Decoder {
   contracts: Record<string, Record<string, SignaturePacker>> = {};
   sighashes: Record<string, SignaturePacker[]> = {};
   evContracts: Record<string, Record<string, EventSignatureDecoder>> = {};
   evSighashes: Record<string, EventSignatureDecoder[]> = {};
+  clearSig?: {
+    contracts: Record<string, Record<string, ClearSigRepositoryEntry[]>>;
+    generic: ClearSigRepositoryEntry[];
+  };
+  clearSigFactories: ClearSigFactoryEntry[] = [];
+  clearSigResolved: Record<string, boolean> = {};
+  // Repository arrays preserve descriptor order; this mirror keeps per-call selector lookup O(1).
+  private clearSigSelectors: Record<
+    string,
+    Record<string, Record<string, ClearSigRepositoryEntry>>
+  > = {};
+  private addClearSigEntry(
+    chain: string,
+    address: string,
+    entry_: TArg<ClearSigRepositoryEntry>,
+    seen?: Record<string, boolean>
+  ) {
+    const entry = entry_ as ClearSigRepositoryEntry;
+    if (!entry.fn) return;
+    const contract = strip0x(address, 'contract').toLowerCase();
+    const sh = fnSigHash(entry.fn);
+    if (seen) {
+      const key = `${chain}:${contract}:${entry.source}:${sh}`;
+      if (seen[key]) throw new Error(`clearSig: duplicate selector ${sh}`);
+      seen[key] = true;
+    }
+    const cur = this.contracts[contract] && this.contracts[contract][sh];
+    const byAddr = this.clearSigSelectors[chain] || (this.clearSigSelectors[chain] = {});
+    const bySel = byAddr[add0x(contract)] || (byAddr[add0x(contract)] = {});
+    if (!bySel[sh]) bySel[sh] = entry;
+    if (cur) return;
+    this.add(add0x(contract), [entry.fn]);
+  }
+  /** Adds ERC-7730 descriptors to this decoder, hashing ABI selectors through the normal ABI path. */
+  addClearSig(files: TArg<Record<string, ClearSigDef>>, opt: TArg<ClearSigAddOpt> = {}): this {
+    const repo = clearSigRepository(files as Record<string, ClearSigDef>);
+    const local = this.clearSig || (this.clearSig = { contracts: {}, generic: [] });
+    const seen: Record<string, boolean> = {};
+    for (const chain of Object.keys(repo.contracts)) {
+      const byAddr = repo.contracts[chain];
+      const dstChain = local.contracts[chain] || (local.contracts[chain] = {});
+      for (const address of Object.keys(byAddr)) {
+        const dst = dstChain[address] || (dstChain[address] = []);
+        for (const entry of byAddr[address]) {
+          dst.push(entry);
+          this.addClearSigEntry(chain, address, entry, seen);
+        }
+      }
+    }
+    // Deployment-less descriptors can be loaded once and bound later to a concrete tx target.
+    local.generic.push(...repo.generic);
+    if ((opt as ClearSigAddOpt).bind) {
+      const bind = (opt as ClearSigAddOpt).bind!;
+      const id = clearSigChain(bind.chainId);
+      const address = add0x(strip0x(bind.address, 'address').toLowerCase());
+      const byAddr = local.contracts[`${id}`] || (local.contracts[`${id}`] = {});
+      const dst = byAddr[address] || (byAddr[address] = []);
+      for (const entry of local.generic) {
+        dst.push(entry);
+        this.addClearSigEntry(`${id}`, address, entry, seen);
+      }
+    }
+    this.clearSigFactories.push(...repo.factories);
+    return this;
+  }
+  /** Resolves factory-backed ERC-7730 descriptors into exact contract bindings. */
+  async resolve(opt: TArg<ClearSigResolveOpt>): Promise<boolean> {
+    const o = opt as ClearSigResolveOpt;
+    const id = clearSigChain(o.chainId);
+    const address = strip0x(o.address, 'address').toLowerCase();
+    const candidates = this.clearSigFactories.filter(
+      (i) => !i.deployments.length || i.deployments.some((d) => d.chainId === id)
+    );
+    if (!candidates.length || !o.resolveFactory) return false;
+    // Factory descriptors may be added after an earlier resolve attempt. Cache
+    // against the candidate set, not just the target, or a pre-index miss poisons
+    // later addClearSig() calls for the same address.
+    const fp = candidates
+      .map((i) =>
+        [
+          i.deployEvent || '',
+          i.deployments.map((d) => `${d.chainId}:${d.address}`).join(','),
+          i.entries
+            .map((e) => {
+              const src = e.source === undefined ? '' : e.source;
+              const sig = e.fn ? fnSigHash(e.fn) : '';
+              return `${src}:${sig}`;
+            })
+            .join(','),
+        ].join(';')
+      )
+      .join('|');
+    const key = `${id}:${address}:${fp}`;
+    if (Object.hasOwn(this.clearSigResolved, key)) return this.clearSigResolved[key];
+    const proved = await o.resolveFactory({
+      address: add0x(address),
+      chainId: id,
+      factories: candidates.map((i) => ({
+        factory: i.factory,
+        deployments: i.deployments,
+        deployEvent: i.deployEvent,
+      })),
+      descriptor: undefined,
+      context: { to: add0x(address), chainId: id },
+    });
+    let ok = false;
+    for (const idx of Array.isArray(proved) ? proved : proved === undefined ? [] : [proved]) {
+      if (typeof idx !== 'number' || !Number.isSafeInteger(idx) || idx < 0 || !candidates[idx])
+        throw new Error(`clearSig: wrong factory result index ${idx}`);
+      if (!this.clearSig) this.clearSig = { contracts: {}, generic: [] };
+      const branch = this.clearSig.contracts;
+      const byAddr = branch[`${id}`] || (branch[`${id}`] = {});
+      const entries = byAddr[add0x(address)] || (byAddr[add0x(address)] = []);
+      for (const entry of candidates[idx].entries) {
+        entries.push(entry);
+        this.addClearSigEntry(`${id}`, add0x(address), entry);
+        if (entry.fn) ok = true;
+      }
+    }
+    return (this.clearSigResolved[key] = ok);
+  }
+  /** Looks up a chain-scoped ERC-7730 renderer for already-decoded calldata. */
+  clearSigEntry(
+    contract: string,
+    data: TArg<Uint8Array>,
+    chainId?: bigint
+  ): ClearSigRepositoryEntry | undefined {
+    data = abytes(data, undefined, 'data');
+    if (data.length < 4) return;
+    const id = clearSigChain(chainId);
+    const address = add0x(strip0x(contract, 'contract').toLowerCase());
+    const selector = bytesToHex(data.slice(0, 4));
+    return this.clearSigSelectors[`${id}`]?.[address]?.[selector];
+  }
   add(contract: string, abi: ContractABI): void {
     contract = strip0x(contract, 'contract').toLowerCase();
     aarray(abi, 'abi');
@@ -406,7 +577,6 @@ export class Decoder {
           name: fn.name || 'function',
           signature: fnSignature(fn),
           packer: fn.inputs && fn.inputs.length ? (mapArgs(fn.inputs) as any) : undefined,
-          hint: fn.hint,
           hook: fn.hook,
         };
         this.contracts[contract][selector] = value;
@@ -442,23 +612,22 @@ export class Decoder {
   decode(
     contract: string,
     _data: Uint8Array,
-    opt: HintOpt
+    opt: HintOpt = {}
   ): SignatureInfo | SignatureInfo[] | undefined {
     contract = strip0x(contract, 'contract').toLowerCase();
     _data = abytes(_data, undefined, 'data');
     const sh = bytesToHex(_data.slice(0, 4));
     const data = _data.slice(4);
+    const unread = opt.allowUnreadBytes ? { allowUnreadBytes: true } : undefined;
     if (this.contracts[contract] && this.contracts[contract][sh]) {
-      let { name, signature, packer, hint, hook } = this.contracts[contract][sh];
+      let { name, signature, packer, hook } = this.contracts[contract][sh];
       // Zero-arg functions have no packer, but calldata after the selector is still invalid.
-      if (!packer && data.length) throw new Error('Unexpected trailing calldata');
-      const value = packer ? packer.decode(data) : undefined;
+      if (!packer && data.length && !opt.allowUnreadBytes)
+        throw new Error('Unexpected trailing calldata');
+      const value = packer ? packer.decode(data, unread) : undefined;
       let res: SignatureInfo = { name, signature, value };
-      // NOTE: hint && hook fn is used only on exact match of contract!
+      // Hook functions run only on exact contract matches, never on selector guesses.
       if (hook) res = hook(this, contract, res, opt);
-      try {
-        if (hint) res.hint = hint(value, Object.assign({ contract: add0x(contract) }, opt));
-      } catch (e) {}
       return res;
     }
     if (!this.sighashes[sh] || !this.sighashes[sh].length) return;
@@ -476,7 +645,7 @@ export class Decoder {
     contract: string,
     topics: string[],
     data: string,
-    opt: HintOpt
+    _opt: HintOpt
   ): SignatureInfo | SignatureInfo[] | undefined {
     contract = strip0x(contract, 'contract').toLowerCase();
     aarray(topics, 'topics');
@@ -487,9 +656,12 @@ export class Decoder {
       let { name, signature, decoder, hint } = event[sh];
       const value = decoder(topics, data);
       let res: SignatureInfo = { name, signature, value };
+      // Event hints are post-transaction receipt labels. Keep them separate from
+      // ERC-7730 signing prompts. They run only on exact contract matches, never
+      // on topic guesses, and decode stays robust if metadata is incomplete.
       try {
-        if (hint) res.hint = hint(value, Object.assign({ contract: add0x(contract) }, opt));
-      } catch (e) {}
+        if (hint) res.hint = hint(value, Object.assign({ contract: add0x(contract) }, _opt));
+      } catch (err) {}
       return res;
     }
     if (!this.evSighashes[sh] || !this.evSighashes[sh].length) return;
