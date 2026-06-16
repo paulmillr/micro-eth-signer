@@ -6,7 +6,8 @@ Minimal library for Ethereum transactions, addresses and smart contracts.
 - 🔻 Tree-shakeable: unused code is excluded from your builds
 - 🔍 Reliable: 800MB of test vectors from EIPs, ethers and viem
 - ✍️ Core: Transactions, addresses, messages
-- 🦺 Type-safe ABI, RLP, SSZ, KZG, PeerDAS, BLS validator keys, Clear Signing
+- 🦺 Type-safe ABI, RLP, SSZ, KZG, PeerDAS, BLS validator keystore
+- 👓 Clear Signing
 - 🌍 Archive node connector
 - 🪶 32KB (gzipped) for core+deps: 4x smaller than alternatives
 
@@ -30,7 +31,7 @@ If you don't like NPM, a standalone [eth-signer.js](https://github.com/paulmillr
 - Advanced
   - [ABI parsing](#abi-parsing)
   - [Clear Signing](#clear-signing)
-  - [BLS EIP-2333 validator keys](#bls-eip-2333-validator-keys)
+  - [Keystore: EIP-2333 & legacy](#keystore-eip-2333--legacy)
   - [RLP & SSZ](#rlp--ssz)
   - [KZG & PeerDAS](#kzg--peerdas)
 - Archive node connector
@@ -689,10 +690,23 @@ deepStrictEqual(event, {
 });
 ```
 
-### BLS EIP-2333 validator keys
+### Keystore: EIP-2333 & legacy
 
-`micro-eth-signer/advanced/bls.js` implements EIP-2333, EIP-2334, and EIP-2335
-for Ethereum consensus validator keys.
+`micro-eth-signer/advanced/keystore.js` implements various keystores:
+
+- The module exposes EIP-2333, EIP-2334, and EIP-2335 for Ethereum consensus validator keys
+- It also implements legacy v3 / sale keystores.
+- bip32 is not included, but can be easily combined with [scure-bip32](https://github.com/paulmillr/scure-bip32)
+- bip39 can be used from [scure-bip39](https://github.com/paulmillr/scure-bip39)
+
+Public helpers:
+
+- `hkdfModR`, `deriveMaster`, `deriveChild`, `deriveSeedTree`: low-level EIP-2333 / EIP-2334 BLS key derivation.
+- `deriveEIP2334Key`, `deriveEIP2334SigningKey`: derive validator withdrawal or signing keys and paths.
+- `EIP2335Keystore`, `decryptEIP2335Keystore`: encrypt and decrypt EIP-2335 consensus-layer keystore objects.
+- `createDerivedEIP2334Keystores`: export multiple EIP-2335 keystores from one seed and password.
+- `privToLegacyKeystore`, `privFromLegacyKeystore`: export and import execution-layer Web3 v3 keystores.
+- `privFromLegacySaleKeystore`: import Ethereum legacy sale wallet files.
 
 Online demo: [eip2333-tool](https://iancoleman.io/eip2333/)
 
@@ -700,7 +714,10 @@ Online demo: [eip2333-tool](https://iancoleman.io/eip2333/)
 
 ```ts
 import { mnemonicToSeedSync } from '@scure/bip39';
-import { createDerivedEIP2334Keystores } from 'micro-eth-signer/advanced/bls.js';
+import {
+  createDerivedEIP2334Keystores,
+  decryptEIP2335Keystore,
+} from 'micro-eth-signer/advanced/keystore.js';
 
 const password = 'my_password';
 const mnemonic = 'letter advice cage absurd amount doctor acoustic avoid letter advice cage above';
@@ -714,6 +731,21 @@ const keystores = createDerivedEIP2334Keystores(
   keyType,
   indexes
 );
+const firstPrivateKey = decryptEIP2335Keystore(keystores[0], password);
+```
+
+Legacy Web3 v3 keystores protect execution-layer secp256k1 account keys:
+
+```ts
+import { addr } from 'micro-eth-signer';
+import {
+  privFromLegacyKeystore,
+  privToLegacyKeystore,
+} from 'micro-eth-signer/advanced/keystore.js';
+
+const account = addr.random();
+const legacyStore = await privToLegacyKeystore(account.privateKey, 'my_password');
+const recoveredPrivateKey = await privFromLegacyKeystore(legacyStore, 'my_password');
 ```
 
 ### RLP & SSZ

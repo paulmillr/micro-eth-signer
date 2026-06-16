@@ -1,37 +1,47 @@
 /**
- * Deterministic producer of ETH validator keys. Implements:
+ * Deterministic producer of ETH validator keys. Supports:
  *
  * - [EIP-2333](https://eips.ethereum.org/EIPS/eip-2333): BLS12-381 Key Generation
  * - [EIP-2334](https://eips.ethereum.org/EIPS/eip-2334): BLS12-381 Deterministic Account Hierarchy
  * - [EIP-2335](https://eips.ethereum.org/EIPS/eip-2335): BLS12-381 Keystore
+ * - Legacy ETH v3 keystore
+ * - Legacy ETH sale keystore
  *
  * @module
  */
-import { ctr } from '@noble/ciphers/aes.js';
+import { cbc, ctr } from '@noble/ciphers/aes.js';
+import { equalBytes } from '@noble/ciphers/utils.js';
 import { bls12_381 } from '@noble/curves/bls12-381.js';
+import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { abytes, numberToBytesBE } from '@noble/curves/utils.js';
 import { hkdf } from '@noble/hashes/hkdf.js';
-import { pbkdf2 } from '@noble/hashes/pbkdf2.js';
-import { scrypt } from '@noble/hashes/scrypt.js';
+import { pbkdf2, pbkdf2Async } from '@noble/hashes/pbkdf2.js';
+import { scrypt, scryptAsync } from '@noble/hashes/scrypt.js';
 import { sha256 } from '@noble/hashes/sha2.js';
+import { keccak_256 } from '@noble/hashes/sha3.js';
 import {
   bytesToHex,
   concatBytes,
   hexToBytes,
-  isBytes,
   randomBytes,
-  type TArg,
-  type TRet,
   utf8ToBytes,
 } from '@noble/hashes/utils.js';
-import { deepFreeze } from '../utils.ts';
+import { addr } from '../index.ts';
+import { deepFreeze, isBytes, strip0x, type TArg, type TRet } from '../utils.ts';
 
 // treeshake: single helpers should not keep the full longSignatures/fields objects live.
-const getPublicKey = /* @__PURE__ */ (() => bls12_381.longSignatures.getPublicKey)();
-const Fr = /* @__PURE__ */ (() => bls12_381.fields.Fr)();
 const _0n = /* @__PURE__ */ BigInt(0);
 const _1n = /* @__PURE__ */ BigInt(1);
 const _8n = /* @__PURE__ */ BigInt(8);
+
+// ## Consensus layer keystores
+// ============================
+
+function clean(...bufs: TArg<Uint8Array>[]) {
+  for (let buf of bufs) {
+    buf.fill(0);
+  }
+}
 
 // Octet Stream to Integer
 function os2ip(bytes: TArg<Uint8Array>): bigint {
@@ -99,7 +109,7 @@ function parentSKToLamportPK(parentSK: TArg<Uint8Array>, index: number): TRet<Ui
  * Feed raw input keying material into the EIP-2333 keygen primitive.
  * ```ts
  * import { randomBytes } from '@noble/hashes/utils.js';
- * import { hkdfModR } from 'micro-eth-signer/advanced/bls.js';
+ * import { hkdfModR } from 'micro-eth-signer/advanced/keystore.js';
  * hkdfModR(randomBytes(32));
  * ```
  */
@@ -118,7 +128,7 @@ export function hkdfModR(
   while (SK === _0n) {
     salt = sha256(salt);
     const okm = hkdf(sha256, input, salt, label, 48);
-    SK = Fr.create(os2ip(okm));
+    SK = bls12_381.fields.Fr.create(os2ip(okm));
   }
   return numberToBytesBE(SK, 32);
 }
@@ -133,7 +143,7 @@ export function hkdfModR(
  * Start from fresh entropy and derive the BLS root secret defined by EIP-2333.
  * ```ts
  * import { randomBytes } from '@noble/hashes/utils.js';
- * import { deriveMaster } from 'micro-eth-signer/advanced/bls.js';
+ * import { deriveMaster } from 'micro-eth-signer/advanced/keystore.js';
  * const seed = randomBytes(32);
  * deriveMaster(seed);
  * ```
@@ -156,7 +166,7 @@ export function deriveMaster(seed: TArg<Uint8Array>): TRet<Uint8Array> {
  * First derive the master key, then walk one hardened child step.
  * ```ts
  * import { randomBytes } from '@noble/hashes/utils.js';
- * import { deriveChild, deriveMaster } from 'micro-eth-signer/advanced/bls.js';
+ * import { deriveChild, deriveMaster } from 'micro-eth-signer/advanced/keystore.js';
  * const seed = randomBytes(32);
  * deriveChild(deriveMaster(seed), 0);
  * ```
@@ -177,7 +187,7 @@ export function deriveChild(parentKey: TArg<Uint8Array>, index: number): TRet<Ui
  * Follow a full validator derivation path directly from the seed bytes.
  * ```ts
  * import { randomBytes } from '@noble/hashes/utils.js';
- * import { deriveSeedTree } from 'micro-eth-signer/advanced/bls.js';
+ * import { deriveSeedTree } from 'micro-eth-signer/advanced/keystore.js';
  * const seed = randomBytes(32);
  * deriveSeedTree(seed, 'm/12381/3600/0/0');
  * ```
@@ -220,7 +230,7 @@ export type EIP2334KeyType = (typeof EIP2334_KEY_TYPES)[number];
  * Ask for either the withdrawal or signing branch and keep the returned path string.
  * ```ts
  * import { randomBytes } from '@noble/hashes/utils.js';
- * import { deriveEIP2334Key } from 'micro-eth-signer/advanced/bls.js';
+ * import { deriveEIP2334Key } from 'micro-eth-signer/advanced/keystore.js';
  * const seed = randomBytes(32);
  * deriveEIP2334Key(seed, 'signing', 0).path;
  * ```
@@ -263,7 +273,7 @@ export function deriveEIP2334Key(
  * Show that the signing branch can be reconstructed later from the withdrawal branch.
  * ```ts
  * import { bytesToHex, randomBytes } from '@noble/hashes/utils.js';
- * import { deriveEIP2334Key, deriveEIP2334SigningKey } from 'micro-eth-signer/advanced/bls.js';
+ * import { deriveEIP2334Key, deriveEIP2334SigningKey } from 'micro-eth-signer/advanced/keystore.js';
  * const seed = randomBytes(64);
  * const signing = deriveEIP2334Key(seed, 'signing', 0);
  * const withdrawal = deriveEIP2334Key(seed, 'withdrawal', 0);
@@ -429,18 +439,18 @@ function deriveEIP2335Key(
   }
 }
 /**
- * Decrypts EIP2335 Keystore
- * NOTE: it validates publicKey if present (which mean you can use it from store if decryption is success)
- * @param store - js object
+ * Decrypts an EIP-2335 keystore object.
+ * If `store.pubkey` is present, the decrypted secret is checked against it as a BLS private key.
+ * @param store - Parsed EIP-2335 keystore JSON object.
  * @param password - Password used by the keystore KDF.
- * @returns decrypted secret bytes
- * @throws If the keystore uses an unsupported KDF or fails checksum/public-key validation. {@link Error}
+ * @returns Decrypted secret bytes.
+ * @throws If the keystore shape is invalid, the password is wrong, or checksum/public-key validation fails. {@link Error}
  * @throws On wrong KDF output length. {@link RangeError}
  * @example
  * Decrypt the keystore back into the original secret bytes.
  * ```ts
  * import { randomBytes } from '@noble/hashes/utils.js';
- * import { EIP2335Keystore, decryptEIP2335Keystore } from 'micro-eth-signer/advanced/bls.js';
+ * import { EIP2335Keystore, decryptEIP2335Keystore } from 'micro-eth-signer/advanced/keystore.js';
  * const ctx = new EIP2335Keystore('password', 'pbkdf2', randomBytes);
  * const store = ctx.create(randomBytes(32));
  * decryptEIP2335Keystore(store, 'password');
@@ -467,13 +477,11 @@ export function decryptEIP2335Keystore<T extends KDFType>(
   // verify pubkey
   // NOTE: it is optional, and encrypted value is not neccesarily private key according to EIP2335
   if (store.pubkey !== undefined) {
-    const publicKey = bytesToHex(getPublicKey(secret).toBytes());
+    const publicKey = bytesToHex(bls12_381.longSignatures.getPublicKey(secret).toBytes());
     if (publicKey !== store.pubkey)
       throw new Error(`Pubkey ${publicKey} does not match ${store.pubkey}`);
   }
-  key.fill(0);
-  iv.fill(0);
-  ciphertext.fill(0);
+  clean(key, iv, ciphertext);
   return secret;
 }
 
@@ -485,7 +493,9 @@ export function decryptEIP2335Keystore<T extends KDFType>(
 export type RandFn = (bytes: number) => Uint8Array;
 
 /**
- * Class for generation multiple keystores with same password
+ * Reusable EIP-2335 keystore generator for one password and KDF.
+ * The context caches the derived encryption key, so call {@link EIP2335Keystore.clean}
+ * after generating the required keystores.
  * @param password - Password used by the keystore KDF.
  * @param kdf - Key-derivation function name.
  * @param _random - Optional secure random-byte generator.
@@ -493,7 +503,7 @@ export type RandFn = (bytes: number) => Uint8Array;
  * Reuse one keystore context when exporting multiple derived validators with the same password.
  * ```ts
  * import { randomBytes } from '@noble/hashes/utils.js';
- * import { EIP2335Keystore } from 'micro-eth-signer/advanced/bls.js';
+ * import { EIP2335Keystore } from 'micro-eth-signer/advanced/keystore.js';
  * const ctx = new EIP2335Keystore('password', 'pbkdf2', randomBytes);
  * const seed = randomBytes(32);
  * const stores = [0, 1].map((i) => ctx.createDerivedEIP2334(seed, 'signing', i));
@@ -509,10 +519,11 @@ export class EIP2335Keystore<T extends KDFType> {
   // produced by this context; each output still gets a fresh IV and UUID.
   private readonly salt: Uint8Array;
   /**
-   * Creates context for EIP2335 Keystore generation
-   * @param password - password
-   * @param kdf - scrypt | pbkdf2
+   * Creates a context for EIP-2335 keystore generation.
+   * @param password - Password used to encrypt each keystore secret.
+   * @param kdf - Key-derivation function: `scrypt` or `pbkdf2`.
    * @param _random - Optional secure random-byte generator.
+   * @throws If `kdf` is unsupported. {@link Error}
    */
   constructor(password: string, kdf: T, _random: RandFn = randomBytes) {
     this.kdf = kdf;
@@ -522,11 +533,22 @@ export class EIP2335Keystore<T extends KDFType> {
     this.key = deriveEIP2335Key(password, this.salt, kdf);
   }
   /**
-   * Creates keystore in EIP2335 format.
-   * @param secret - some secret value to encrypt (usually private keys)
+   * Creates a keystore in EIP-2335 format.
+   * @param secret - Secret value to encrypt, usually a BLS private key.
    * @param path - EIP-2334 path string, or `""` when the secret is not derived.
-   * @param description - optional description of secret
-   * @param pubkey - optional public key. Required if secret is private key.
+   * @param description - Optional human-readable description of the secret.
+   * @param pubkey - Optional BLS public key used by decryptors to validate the secret.
+   * @returns EIP-2335 keystore JSON object.
+   * @throws If this context was cleaned or input metadata has the wrong type. {@link Error}
+   * @example
+   * Encrypt a raw BLS private key into an EIP-2335 JSON object.
+   * ```ts
+   * import { randomBytes } from '@noble/hashes/utils.js';
+   * import { EIP2335Keystore } from 'micro-eth-signer/advanced/keystore.js';
+   * const ctx = new EIP2335Keystore('password', 'pbkdf2', randomBytes);
+   * const store = ctx.create(randomBytes(32), '', 'imported key');
+   * ctx.clean();
+   * ```
    */
   create(
     secret: Uint8Array,
@@ -564,11 +586,22 @@ export class EIP2335Keystore<T extends KDFType> {
     return res;
   }
   /**
-   * Creates keystore for derived private key (based on EIP2334 seed and index)
+   * Creates a keystore for a private key derived by EIP-2334 from a seed and validator index.
    * @param seed - EIP2334 seed to derive from; ERC-2333 requires at least 32 bytes.
-   * @param keyType - EIP2334 key type (withdrawal/signing)
-   * @param index - account index
-   * @param description - optional keystore description
+   * @param keyType - EIP-2334 key type: `withdrawal` or `signing`.
+   * @param index - Validator account index.
+   * @param description - Optional keystore description.
+   * @returns EIP-2335 keystore JSON object with `path` and `pubkey` set.
+   * @throws On short seeds, unsupported key types, or invalid indexes. {@link Error}
+   * @example
+   * Derive validator key 0 and encrypt it into an EIP-2335 keystore.
+   * ```ts
+   * import { randomBytes } from '@noble/hashes/utils.js';
+   * import { EIP2335Keystore } from 'micro-eth-signer/advanced/keystore.js';
+   * const ctx = new EIP2335Keystore('password', 'scrypt', randomBytes);
+   * const store = ctx.createDerivedEIP2334(randomBytes(32), 'signing', 0);
+   * ctx.clean();
+   * ```
    */
   createDerivedEIP2334(
     seed: Uint8Array,
@@ -582,29 +615,29 @@ export class EIP2335Keystore<T extends KDFType> {
   }
 
   /**
-   * Clean cached key material and permanently disable this context.
+   * Clears cached encryption key material and permanently disables this context.
+   * Call this after producing the required keystores.
    */
   clean(): void {
     this.destroyed = true;
-    this.key.fill(0);
-    this.salt.fill(0);
+    clean(this.key, this.salt);
   }
 }
 
 /**
- * Exports multiple keystore from derived seed
- * @param password - password for file encryption
- * @param kdf - scrypt | pbkdf2
- * @param seed - result of mnemonicToSeed()
- * @param keyType - signing | withdrawal
- * @param indexes - array of account indeces
+ * Exports multiple EIP-2335 keystores from one EIP-2334 seed.
+ * @param password - Password used for keystore encryption.
+ * @param kdf - Key-derivation function: `scrypt` or `pbkdf2`.
+ * @param seed - Seed bytes, usually the result of `mnemonicToSeed()`.
+ * @param keyType - EIP-2334 key type: `signing` or `withdrawal`.
+ * @param indexes - Validator account indexes to export.
  * @returns Derived keystore list for the requested indexes.
  * @throws If any requested key index is outside the supported range. {@link Error}
  * @example
  * Export several validator keystores from one mnemonic-derived seed.
  * ```ts
  * import { mnemonicToSeedSync } from '@scure/bip39';
- * import { createDerivedEIP2334Keystores } from 'micro-eth-signer/advanced/bls.js';
+ * import { createDerivedEIP2334Keystores } from 'micro-eth-signer/advanced/keystore.js';
  * const mnemonic = 'letter advice cage absurd amount doctor acoustic avoid letter advice cage above';
  * const seed = mnemonicToSeedSync(mnemonic, '');
  * createDerivedEIP2334Keystores('password', 'pbkdf2', seed, 'signing', [0, 1, 2, 3]);
@@ -634,3 +667,340 @@ export const _TEST: {
   normalizePassword: typeof normalizePassword;
   deriveEIP2335Key: typeof deriveEIP2335Key;
 } = /* @__PURE__ */ deepFreeze({ normalizePassword, deriveEIP2335Key });
+
+// ## Execution layer keystores
+// ============================
+
+type EncryptedJsonOpts = Partial<{
+  kdf: string;
+  cipher: string;
+  salt: string | Uint8Array;
+  iv: string | Uint8Array;
+  uuid: string | Uint8Array;
+  dklen: number;
+  c: number;
+  n: number;
+  r: number;
+  p: number;
+}>;
+
+type EncryptedJsonV3Params = Required<Omit<EncryptedJsonOpts, 'salt' | 'iv' | 'uuid'>> & {
+  salt: Uint8Array;
+  iv: Uint8Array;
+  uuid: Uint8Array;
+};
+
+type EncryptedJsonScryptParams = {
+  dklen: number;
+  n: number;
+  p: number;
+  r: number;
+  salt: string;
+};
+
+type EncryptedJsonPBKDFParams = {
+  c: number;
+  dklen: number;
+  prf: string;
+  salt: string;
+};
+
+type EncryptedJsonKDFParams = EncryptedJsonScryptParams | EncryptedJsonPBKDFParams;
+
+/** Ethereum Web3 secret-storage v3 keystore JSON object. */
+type LegacyKeystore = {
+  /** Secret-storage version. Always `3` for legacy Ethereum keystores. */
+  version: 3;
+  /** UUID for the keystore object. */
+  id: string;
+  /** Optional lowercase hex address derived from the encrypted secp256k1 private key. */
+  address?: string;
+  /** Ciphertext, cipher, KDF, and MAC fields from the v3 keystore JSON. */
+  crypto: {
+    /** Hex-encoded encrypted private key. */
+    ciphertext: string;
+    /** Cipher initialization vector. */
+    cipherparams: { iv: string };
+    /** Symmetric cipher name. Supported values are `aes-128-ctr` and `aes-128-cbc`. */
+    cipher: string;
+    /** Key-derivation function name. Supported values are `scrypt` and `pbkdf2`. */
+    kdf: string;
+    /** Serialized KDF parameters. */
+    kdfparams: EncryptedJsonKDFParams;
+    /** Keccak MAC over the derived-key suffix and ciphertext. */
+    mac: string;
+  };
+};
+
+/** Ethereum legacy sale wallet JSON object. */
+export type LegacySaleKeystore = {
+  /** Hex-encoded AES-CBC encrypted seed payload. */
+  encseed: string;
+  /** Lowercase hex Ethereum address used to validate the decrypted seed. */
+  ethaddr: string;
+  /** Optional Bitcoin address included by some sale wallet exports. */
+  btcaddr?: string;
+  /** Optional email included by some sale wallet exports. */
+  email?: string;
+};
+
+const fromHex = (hex: string): TRet<Uint8Array> => hexToBytes(strip0x(hex));
+
+function addrFromPriv(privateKey: TArg<Uint8Array>): string {
+  return addr.fromPrivateKey(privateKey).slice(2).toLowerCase();
+}
+
+function assertPriv(privateKey: TArg<Uint8Array>): TRet<Uint8Array> {
+  if (!secp256k1.utils.isValidSecretKey(privateKey)) throw new Error('invalid private key');
+  return Uint8Array.from(privateKey);
+}
+
+function assertCipher(cipher: string): void {
+  if (cipher !== 'aes-128-ctr' && cipher !== 'aes-128-cbc') {
+    throw new Error(`Unsupported cipher: ${cipher}`);
+  }
+}
+
+function prepareBytes(
+  name: string,
+  value: TArg<string | Uint8Array | undefined>,
+  randomLength: number,
+  hexLength?: number
+): TRet<Uint8Array> {
+  if (value === undefined) return randomBytes(randomLength);
+  if (typeof value === 'string') {
+    const hex = strip0x(value);
+    const expectsLen = hexLength !== undefined;
+    if (hex.length === 0 && !expectsLen) return Uint8Array.of();
+    if (hex.length % 2 !== 0 || (expectsLen && hex.length !== hexLength))
+      throw new Error(
+        `invalid ${name}: expected string or Uint8Array of length ${hexLength ?? randomLength}`
+      );
+    return hexToBytes(hex);
+  }
+  if (isBytes(value)) {
+    abytes(value, hexLength === undefined ? undefined : randomLength);
+    return Uint8Array.from(value);
+  }
+  throw new Error(`invalid ${name}: expected string or Uint8Array`);
+}
+
+function prepEncParams(opts: TArg<EncryptedJsonOpts> = {}): TRet<EncryptedJsonV3Params> {
+  const cipher = opts.cipher ?? 'aes-128-ctr';
+  assertCipher(cipher);
+  return {
+    cipher,
+    kdf: opts.kdf ?? 'scrypt',
+    salt: prepareBytes('salt', opts.salt, 32),
+    iv: prepareBytes('iv', opts.iv, 16, 32),
+    uuid: prepareBytes('uuid', opts.uuid, 16, 32),
+    dklen: opts.dklen ?? 32,
+    c: opts.c ?? 262144,
+    n: opts.n ?? 262144,
+    r: opts.r ?? 8,
+    p: opts.p ?? 1,
+  } as TRet<EncryptedJsonV3Params>;
+}
+
+function initCipher(
+  cipher: string,
+  key: TArg<Uint8Array>,
+  iv: TArg<Uint8Array>,
+  pkcs7Padding = false
+) {
+  assertCipher(cipher);
+  return cipher === 'aes-128-ctr' ? ctr(key, iv) : cbc(key, iv, { disablePadding: !pkcs7Padding });
+}
+
+function assertDklen(dklen: number): void {
+  if (!Number.isSafeInteger(dklen) || dklen < 32) {
+    throw new Error('Invalid kdf dklen, must be at least 32');
+  }
+}
+
+async function deriveKey(
+  password: string,
+  kdf: string,
+  params: TArg<EncryptedJsonKDFParams>
+): Promise<TRet<Uint8Array>> {
+  const pass = utf8ToBytes(password);
+  if (kdf === 'scrypt') {
+    const { salt, n: N, r, p, dklen: dkLen } = params as EncryptedJsonScryptParams;
+    assertDklen(dkLen);
+    return scryptAsync(pass, fromHex(salt), { N, r, p, dkLen });
+  }
+  if (kdf === 'pbkdf2') {
+    const { salt, c, dklen: dkLen, prf } = params as EncryptedJsonPBKDFParams;
+    if (prf !== 'hmac-sha256') throw new Error('Unsupported parameters to PBKDF2');
+    assertDklen(dkLen);
+    return pbkdf2Async(sha256, pass, fromHex(salt), { c, dkLen });
+  }
+  throw new Error('Unsupported key derivation scheme');
+}
+
+function lowerCase<T>(value: T): T {
+  if (typeof value === 'string') return value.toLowerCase() as T;
+  if (Array.isArray(value)) return value.map(lowerCase) as T;
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, val]) => [key.toLowerCase(), lowerCase(val)])
+    ) as T;
+  }
+  return value;
+}
+
+function prepEncKdf(params: EncryptedJsonV3Params) {
+  if (params.kdf === 'pbkdf2') {
+    return { dklen: params.dklen, salt: bytesToHex(params.salt), c: params.c, prf: 'hmac-sha256' };
+  } else if (params.kdf === 'scrypt') {
+    return {
+      dklen: params.dklen,
+      salt: bytesToHex(params.salt),
+      n: params.n,
+      r: params.r,
+      p: params.p,
+    };
+  } else {
+    throw new Error('Unsupported kdf');
+  }
+}
+
+/**
+ * Decrypts an Ethereum Web3 secret-storage v3 keystore and returns the secp256k1 private key.
+ * @param keystore - Parsed v3 keystore JSON object.
+ * @param password - Password used to decrypt the keystore.
+ * @param nonStrict - Lowercase object keys before parsing, for older mixed-case wallet files.
+ * @returns Decrypted secp256k1 private key bytes.
+ * @throws If the keystore version, KDF, cipher, password, MAC, or private key is invalid. {@link Error}
+ * @example
+ * Recover a private key from a parsed v3 keystore.
+ * ```ts
+ * import { privFromLegacyKeystore } from 'micro-eth-signer/advanced/keystore.js';
+ * declare const keystoreJson: string;
+ * const store = JSON.parse(keystoreJson);
+ * const privateKey = await privFromLegacyKeystore(store, 'password');
+ * ```
+ */
+export async function privFromLegacyKeystore(
+  keystore: LegacyKeystore,
+  password: string,
+  nonStrict = false
+): Promise<TRet<Uint8Array>> {
+  if (typeof keystore !== 'object') throw new Error('expected parsed json');
+  const keyst = nonStrict ? lowerCase(keystore) : keystore;
+  if (keyst.version !== 3) throw new Error('Not a V3 keystore');
+  const cr = keyst.crypto;
+  const derivedKey = await deriveKey(password, cr.kdf, cr.kdfparams);
+  try {
+    const ciphertext = fromHex(cr.ciphertext);
+    const mac = keccak_256(concatBytes(derivedKey.subarray(16, 32), ciphertext));
+    if (!equalBytes(mac, fromHex(cr.mac))) {
+      throw new Error('Key derivation failed - possibly wrong passphrase');
+    }
+    const ckey = derivedKey.subarray(0, 16);
+    const iv = fromHex(cr.cipherparams.iv);
+    const plaintext = initCipher(cr.cipher, ckey, iv).decrypt(ciphertext);
+    return assertPriv(plaintext);
+  } finally {
+    clean(derivedKey);
+  }
+}
+
+/**
+ * Encrypts a secp256k1 private key as an Ethereum Web3 secret-storage v3 keystore.
+ * @param privKey - Private key as a hex string, with optional `0x` prefix, or 32-byte array.
+ * @param password - Password used to encrypt the keystore.
+ * @param opts - Optional deterministic parameters and KDF/cipher settings.
+ * @returns Parsed v3 keystore JSON object.
+ * @throws If the private key, KDF, cipher, or option lengths are invalid. {@link Error}
+ * @example
+ * Export and import a legacy v3 execution-layer keystore.
+ * ```ts
+ * import { addr } from 'micro-eth-signer';
+ * import { privFromLegacyKeystore, privToLegacyKeystore } from 'micro-eth-signer/advanced/keystore.js';
+ * const account = addr.random();
+ * const store = await privToLegacyKeystore(account.privateKey, 'password');
+ * const privateKey = await privFromLegacyKeystore(store, 'password');
+ * ```
+ */
+export async function privToLegacyKeystore(
+  privKey: TArg<string | Uint8Array>,
+  password: string,
+  opts?: TArg<EncryptedJsonOpts>
+): Promise<TRet<LegacyKeystore>> {
+  const key = assertPriv(typeof privKey === 'string' ? fromHex(privKey) : privKey);
+  const params = prepEncParams(opts);
+  const cryptoKdfParams = prepEncKdf(params);
+  const derivedKey = await deriveKey(password, params.kdf, cryptoKdfParams);
+  try {
+    const ciphertext = initCipher(params.cipher, derivedKey.subarray(0, 16), params.iv).encrypt(
+      key
+    );
+    const mac = keccak_256(concatBytes(derivedKey.subarray(16, 32), ciphertext));
+    return {
+      version: 3,
+      id: UUIDv4(params.uuid),
+      address: addrFromPriv(key),
+      crypto: {
+        ciphertext: bytesToHex(ciphertext),
+        cipherparams: { iv: bytesToHex(params.iv) },
+        cipher: params.cipher,
+        kdf: params.kdf,
+        kdfparams: cryptoKdfParams,
+        mac: bytesToHex(mac),
+      },
+    };
+  } finally {
+    clean(derivedKey);
+  }
+}
+
+/**
+ * Decrypts an Ethereum legacy sale wallet and returns the secp256k1 private key.
+ * @param keystore - Parsed legacy sale wallet JSON object.
+ * @param password - Sale wallet password.
+ * @returns Decrypted secp256k1 private key bytes.
+ * @throws If the encrypted seed, password, derived private key, or expected address is invalid. {@link Error}
+ * @example
+ * Recover a private key from a legacy sale wallet export.
+ * ```ts
+ * import {
+ *   type LegacySaleKeystore,
+ *   privFromLegacySaleKeystore,
+ * } from 'micro-eth-signer/advanced/keystore.js';
+ * declare const saleWalletJson: string;
+ * const wallet = JSON.parse(saleWalletJson) as LegacySaleKeystore;
+ * const privateKey = await privFromLegacySaleKeystore(wallet, 'password');
+ * ```
+ */
+export async function privFromLegacySaleKeystore(
+  keystore: LegacySaleKeystore,
+  password: string
+): Promise<TRet<Uint8Array>> {
+  const encseed = fromHex(keystore.encseed);
+  if (encseed.length < 32 || (encseed.length - 16) % 16 !== 0) {
+    throw new Error('Invalid Ethereum legacy sale keystore');
+  }
+  const pass = utf8ToBytes(password);
+  const derivedKey = await pbkdf2Async(sha256, pass, pass, { c: 2000, dkLen: 32 });
+  let seed: Uint8Array | undefined;
+  try {
+    try {
+      seed = initCipher(
+        'aes-128-cbc',
+        derivedKey.subarray(0, 16),
+        encseed.subarray(0, 16),
+        true
+      ).decrypt(encseed.subarray(16));
+    } catch (error) {
+      throw new Error('invalid key or passphrase');
+    }
+    const privateKey = assertPriv(keccak_256(seed));
+    if (addrFromPriv(privateKey) !== keystore.ethaddr.toLowerCase())
+      throw new Error('invalid ethaddr');
+    return privateKey;
+  } finally {
+    clean(derivedKey);
+    if (seed) clean(seed);
+  }
+}

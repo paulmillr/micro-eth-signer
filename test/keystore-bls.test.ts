@@ -5,7 +5,7 @@ import { bytesToHex, concatBytes, hexToBytes, utf8ToBytes } from '@noble/hashes/
 import { describe, should } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual, throws } from 'node:assert';
 // Public subpath is named by Ethereum validator-key purpose, not the underlying BLS curve.
-import * as bls from '../src/advanced/bls.ts';
+import * as bls from '../src/advanced/keystore.ts';
 
 const vectors = [
   [

@@ -1,6 +1,5 @@
 import { should } from '@paulmillr/jsbt/test.js';
 
-import './bls.test.ts';
 import './fee.test.ts';
 import './rlp.test.ts';
 import './tx.test.ts';
@@ -9,6 +8,8 @@ import './abi.test.ts';
 import './clearsig-archive.test.ts';
 import './clearsig.test.ts';
 import './ens.test.ts';
+import './keystore-bls.test.ts';
+import './keystore.test.ts';
 import './kzg.test.ts';
 import './net.test.ts';
 import './peerdas.test.ts';

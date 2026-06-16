@@ -48,9 +48,9 @@
     "./net.js": "./net.js",
     "./utils.js": "./utils.js",
     "./advanced/abi.js": "./advanced/abi.js",
-    "./advanced/bls.js": "./advanced/bls.js",
     "./advanced/clearsig-repo.js": "./advanced/clearsig-repo.js",
     "./advanced/clearsig-repo-full.js": "./advanced/clearsig-repo-full.js",
+    "./advanced/keystore.js": "./src/advanced/keystore.ts",
     "./advanced/kzg.js": "./advanced/kzg.js",
     "./advanced/ssz.js": "./advanced/ssz.js"
   },

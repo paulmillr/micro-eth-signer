@@ -7,10 +7,10 @@
     "./net.js": "./src/net.ts",
     "./utils.js": "./src/utils.ts",
     "./advanced/abi.js": "./src/advanced/abi.ts",
-    "./advanced/bls.js": "./src/advanced/bls.ts",
     "./advanced/clearsig.js": "./src/advanced/clearsig.ts",
     "./advanced/clearsig-repo-full.js": "./src/advanced/clearsig-repo-full.ts",
     "./advanced/clearsig-repo.js": "./src/advanced/clearsig-repo.ts",
+    "./advanced/keystore.js": "./src/advanced/keystore.ts",
     "./advanced/kzg.js": "./src/advanced/kzg.ts",
     "./advanced/ssz.js": "./src/advanced/ssz.ts"
   },
