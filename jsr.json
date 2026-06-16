@@ -1,6 +1,6 @@
 {
   "name": "@paulmillr/micro-eth-signer",
-  "version": "0.18.1",
+  "version": "0.19.0",
   "exports": {
     ".": "./src/index.ts",
     "./core/rlp.js": "./src/core/rlp.ts",
