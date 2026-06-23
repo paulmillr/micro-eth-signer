@@ -109,13 +109,10 @@ const SKIPPED_ERRORS = {
     'TransactionWithHighGasLimit63Plus1',
     'TransactionWithHighGasLimit63Minus1',
     'TransactionWithHighNonce64Minus2',
-    'TransactionWithLeadingZerosGasPrice',
     'TransactionWithHighNonce32',
-    'TransactionWithZerosBigInt',
     'RightVRSTestF0000000c',
     'RightVRSTestVPrefixedBy0',
     'RightVRSTestF0000000b',
-    'TransactionWithSvaluePrefixed00BigInt',
     'TransactionWithRvalueTooHigh',
     'TransactionWithSvalue0',
     'TransactionWithSvalueLargerThan_c_secp256k1n_x05',
@@ -157,9 +154,6 @@ const SKIPPED_ERRORS = {
     'V_wrongvalue_ff',
     'V_wrongvalue_124',
     'TransactionWithHighValue',
-    'TransactionWithLeadingZerosValue',
-    'TransactionWithLeadingZerosNonce',
-    'TransactionWithRvaluePrefixed00BigInt',
   ],
 };
 
