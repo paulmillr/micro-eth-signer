@@ -4,7 +4,7 @@ import { trustedSetup } from '@paulmillr/trusted-setups/small-kzg.js';
 import { loadKZG } from 'kzg-wasm';
 import { deepStrictEqual as eql } from 'node:assert';
 import * as kzg from '../../src/advanced/kzg.ts';
-import { jsonGZ } from '../util.ts';
+import { jsonGZ } from '../../test/util.ts';
 
 // Test cases
 const VIEM = Object.fromEntries(

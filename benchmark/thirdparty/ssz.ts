@@ -7,6 +7,7 @@ import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as snappy from 'snappyjs';
 import * as micro from '../../src/advanced/ssz.ts';
+import { getVectorsPath } from '../../test/util.ts';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const VECTORS_PATH = getVectorsPath('consensus-spec-tests/tests/mainnet/deneb/ssz_static');
