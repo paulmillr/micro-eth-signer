@@ -152,8 +152,25 @@ export const legacySig = /* @__PURE__ */ (() => ({
 
 type BytesBigintCoder = P.Coder<Bytes, bigint>;
 type BytesNumberCoder = P.Coder<Bytes, number>;
-const U64BE: BytesBigintCoder = P.coders.reverse(P.bigint(8, false, false, false));
-const U256BE: BytesBigintCoder = P.coders.reverse(P.bigint(32, false, false, false));
+// Ethereum scalars are RLP byte strings without leading zeros: a zero value is the empty
+// string, any other value's first byte is non-zero. ethereum-tests reject leading-zero
+// encodings (e.g. ttGasPrice/TransactionWithLeadingZerosGasPrice, ttEIP1559/maxFeePerGas00prefix),
+// so we reject them here too; otherwise distinct byte encodings decode to the same tx and the
+// tx hash silently changes on re-serialization.
+const noLeadingZeroScalar = (coder: BytesBigintCoder): BytesBigintCoder => ({
+  encode(from: Bytes) {
+    if (isBytes(from) && from.length > 0 && from[0] === 0)
+      throw new Error('non-canonical integer: leading zero bytes');
+    return coder.encode(from);
+  },
+  decode: (to) => coder.decode(to),
+});
+const U64BE: BytesBigintCoder = noLeadingZeroScalar(
+  P.coders.reverse(P.bigint(8, false, false, false))
+);
+const U256BE: BytesBigintCoder = noLeadingZeroScalar(
+  P.coders.reverse(P.bigint(32, false, false, false))
+);
 
 // Small coder utils
 // TODO: seems generic enought for packed? or RLP (seems useful for structured encoding/decoding of RLP stuff)
