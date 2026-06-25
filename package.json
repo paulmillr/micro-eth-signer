@@ -30,7 +30,7 @@
     "yaml": "2.9.0"
   },
   "scripts": {
-    "benchmark": "node benchmark/microeth.ts",
+    "benchmark": "node benchmark/micro-eth.ts",
     "benchmark:thirdparty": "cd benchmark/thirdparty; npm ci; node *.ts",
     "build": "tsc",
     "build:clean": "rm -f *.{js,d.ts,js.map,d.ts.map}; rm -rf {advanced,core,net}",

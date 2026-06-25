@@ -335,6 +335,10 @@ const int = (len: number, small = true): P.CoderType<number | bigint> =>
 
 const _0n: bigint = /* @__PURE__ */ BigInt(0);
 type SSZInt = SSZCoder<number | bigint>;
+
+const readU32LE = (bytes: TArg<Uint8Array>, pos: number): number =>
+  (bytes[pos] | (bytes[pos + 1] << 8) | (bytes[pos + 2] << 16) | (bytes[pos + 3] << 24)) >>> 0;
+
 /** SSZ coder for 8-bit unsigned integers. */
 export const uint8: TRet<SSZInt> = /* @__PURE__ */ basic('uint8', /* @__PURE__ */ int(1), 0);
 /** SSZ coder for 16-bit unsigned integers. */
@@ -379,18 +383,19 @@ const array = <T>(len: P.Length, inner: TArg<SSZCoder<T>>): P.CoderType<T[]> => 
           return res;
         }
         const first = P.U32LE.decodeStream(r);
-        const offsetCount = (first - r.pos) / P.U32LE.size!;
-        if (!Number.isSafeInteger(offsetCount)) throw r.err('SSZ/array: wrong fixed size length');
-        if (fixedLen !== undefined && offsetCount + 1 !== fixedLen)
+        const itemCount = first / P.U32LE.size!;
+        if (!Number.isSafeInteger(itemCount) || itemCount <= 0)
           throw r.err('SSZ/array: wrong fixed size length');
-        const rest = P.array(offsetCount, P.U32LE).decodeStream(r);
-        const offsets = [first, ...rest];
+        if (fixedLen !== undefined && itemCount !== fixedLen)
+          throw r.err('SSZ/array: wrong fixed size length');
+        const offsetTable = r.bytes(first - r.pos);
+        const getOffset = (i: number) => (i === 0 ? first : readU32LE(offsetTable, (i - 1) * 4));
         // SSZ decoding requires very specific encoding and should throw on data constructed differently.
         // There is also ZST problem here (as in ETH ABI), but it is impossible to exploit since
         // definitions are hardcoded. Also, pointers very strict here.
-        for (let i = 0; i < offsets.length; i++) {
-          const pos = offsets[i];
-          const next = i + 1 < offsets.length ? offsets[i + 1] : r.totalBytes;
+        for (let i = 0; i < itemCount; i++) {
+          const pos = getOffset(i);
+          const next = i + 1 < itemCount ? getOffset(i + 1) : r.totalBytes;
           if (next < pos) throw r.err('SSZ/array: decreasing offset');
           const len = next - pos;
           if (r.pos !== pos) throw r.err('SSZ/array: wrong offset');
@@ -546,13 +551,12 @@ const fixOffsets = (
 ) => {
   // Patch the fixed-section decode result in place: offsets are consumed in field order, and equal offsets
   // are valid when an earlier dynamic field is empty.
-  const offsets = [];
-  for (const f of offsetFields) offsets.push(obj[f] + offset);
-  for (let i = 0; i < offsets.length; i++) {
+  for (let i = 0; i < offsetFields.length; i++) {
     // TODO: how to merge this with array?
     const name = offsetFields[i];
-    const pos = offsets[i];
-    const next = i + 1 < offsets.length ? offsets[i + 1] : r.totalBytes;
+    const pos = obj[name] + offset;
+    const nextName = offsetFields[i + 1];
+    const next = nextName !== undefined ? obj[nextName] + offset : r.totalBytes;
     if (next < pos) throw r.err('SSZ/container: decreasing offset');
     const len = next - pos;
     if (r.pos !== pos) throw r.err('SSZ/container: wrong offset');
@@ -642,6 +646,22 @@ const bitsCoder = (len: number): TRet<P.Coder<Bytes, boolean[]>> =>
       return res as TRet<Uint8Array>;
     },
   }) as TRet<P.Coder<Bytes, boolean[]>>;
+
+const decodeBitlist = (bytes: TArg<Uint8Array>, label: string): boolean[] => {
+  if (!bytes.length || bytes[bytes.length - 1] === 0)
+    throw new Error(`SSZ/${label}: empty trailing byte`);
+  const last = bytes[bytes.length - 1];
+  const terminatorBit = 31 - Math.clz32(last);
+  const bitLen = (bytes.length - 1) * 8 + terminatorBit;
+  const res = new Array<boolean>(bitLen);
+  let pos = 0;
+  for (let bytePos = 0; bytePos < bytes.length; bytePos++) {
+    const byte = bytes[bytePos];
+    const bits = bytePos === bytes.length - 1 ? terminatorBit : 8;
+    for (let bit = 0; bit < bits; bit++) res[pos++] = !!(byte & (1 << bit));
+  }
+  return res;
+};
 type BitVectorType = SSZCoder<boolean[]> & { info: { type: 'bitVector'; N: number } };
 /**
  * Creates an SSZ bitvector coder.
@@ -706,13 +726,7 @@ export const bitlist = (maxLen: number): TRet<BitListType> => {
       w.bytes(bitsCoder(value.length + 1).decode([...value, true])); // last true bit is terminator
     },
     decodeStream: (r) => {
-      const bytes = r.bytes(r.leftBytes); // use everything
-      if (!bytes.length || bytes[bytes.length - 1] === 0)
-        throw new Error('SSZ/bitlist: empty trailing byte');
-      const bits = bitsCoder(bytes.length * 8).encode(bytes);
-      const terminator = bits.lastIndexOf(true);
-      if (terminator === -1) throw new Error('SSZ/bitList: no terminator');
-      return bits.slice(0, terminator);
+      return decodeBitlist(r.bytes(r.leftBytes), 'bitlist');
     },
   });
   coder = P.validate(coder, (value) => {
@@ -761,13 +775,7 @@ export const progressiveBitlist = (): TRet<ProgressiveBitListType> => {
       w.bytes(bitsCoder(value.length + 1).decode([...value, true]));
     },
     decodeStream: (r) => {
-      const bytes = r.bytes(r.leftBytes);
-      if (!bytes.length || bytes[bytes.length - 1] === 0)
-        throw new Error('SSZ/progressiveBitlist: empty trailing byte');
-      const bits = bitsCoder(bytes.length * 8).encode(bytes);
-      const terminator = bits.lastIndexOf(true);
-      if (terminator === -1) throw new Error('SSZ/progressiveBitList: no terminator');
-      return bits.slice(0, terminator);
+      return decodeBitlist(r.bytes(r.leftBytes), 'progressiveBitlist');
     },
   });
   coder = P.validate(coder, (value) => {
