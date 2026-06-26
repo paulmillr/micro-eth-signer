@@ -339,6 +339,15 @@ type SSZInt = SSZCoder<number | bigint>;
 const readU32LE = (bytes: TArg<Uint8Array>, pos: number): number =>
   (bytes[pos] | (bytes[pos + 1] << 8) | (bytes[pos + 2] << 16) | (bytes[pos + 3] << 24)) >>> 0;
 
+const byteListCoders = /* @__PURE__ */ new WeakSet<object>();
+const decodeDynamicBytes = (coder: P.CoderType<any>, bytes: Uint8Array): any => {
+  if (byteListCoders.has(coder as object)) {
+    if (bytes.length > (coder as any).info.N) throw new Error(`SSZ/bytelist: wrong value=${bytes}`);
+    return bytes;
+  }
+  return coder.decode(bytes);
+};
+
 /** SSZ coder for 8-bit unsigned integers. */
 export const uint8: TRet<SSZInt> = /* @__PURE__ */ basic('uint8', /* @__PURE__ */ int(1), 0);
 /** SSZ coder for 16-bit unsigned integers. */
@@ -372,15 +381,31 @@ const array = <T>(len: P.Length, inner: TArg<SSZCoder<T>>): P.CoderType<T[]> => 
   let arr = P.array(len, item);
   // variable size arrays
   if (inner.size === undefined) {
+    const fixedLen = typeof len === 'number' ? len : undefined;
+    const isByteList = byteListCoders.has(item as object);
     arr = P.wrap({
-      encodeStream: P.array(len, P.pointer(P.U32LE, item)).encodeStream,
+      encodeStream: isByteList
+        ? (w, value) => {
+            if (!Array.isArray(value)) throw new Error(`SSZ/array: wrong value=${value}`);
+            if (fixedLen !== undefined && value.length !== fixedLen)
+              throw new Error(`SSZ/array: wrong fixed size length`);
+            let offset = value.length * P.U32LE.size!;
+            const maxLen = (item as any).info.N;
+            for (let i = 0; i < value.length; i++) {
+              const bytes = value[i] as any;
+              if (!isBytes(bytes) || bytes.length > maxLen)
+                throw new Error(`SSZ/bytelist: wrong value=${bytes}`);
+              P.U32LE.encodeStream(w, offset);
+              offset += bytes.length;
+            }
+            for (let i = 0; i < value.length; i++) w.bytes(value[i] as any);
+          }
+        : P.array(len, P.pointer(P.U32LE, item)).encodeStream,
       decodeStream: (r) => {
-        const res: T[] = [];
         // Empty input is only valid for genuinely empty dynamic lists; fixed-length callers still need a full offset table.
-        const fixedLen = typeof len === 'number' ? len : undefined;
         if (!r.leftBytes) {
           if (fixedLen !== undefined) throw r.err('SSZ/array: wrong fixed size length');
-          return res;
+          return [];
         }
         const first = P.U32LE.decodeStream(r);
         const itemCount = first / P.U32LE.size!;
@@ -388,6 +413,7 @@ const array = <T>(len: P.Length, inner: TArg<SSZCoder<T>>): P.CoderType<T[]> => 
           throw r.err('SSZ/array: wrong fixed size length');
         if (fixedLen !== undefined && itemCount !== fixedLen)
           throw r.err('SSZ/array: wrong fixed size length');
+        const res = new Array<T>(itemCount);
         const offsetTable = r.bytes(first - r.pos);
         const getOffset = (i: number) => (i === 0 ? first : readU32LE(offsetTable, (i - 1) * 4));
         // SSZ decoding requires very specific encoding and should throw on data constructed differently.
@@ -399,7 +425,7 @@ const array = <T>(len: P.Length, inner: TArg<SSZCoder<T>>): P.CoderType<T[]> => 
           if (next < pos) throw r.err('SSZ/array: decreasing offset');
           const len = next - pos;
           if (r.pos !== pos) throw r.err('SSZ/array: wrong offset');
-          res.push(item.decode(r.bytes(len)));
+          res[i] = decodeDynamicBytes(item, r.bytes(len));
         }
         return res;
       },
@@ -560,7 +586,7 @@ const fixOffsets = (
     if (next < pos) throw r.err('SSZ/container: decreasing offset');
     const len = next - pos;
     if (r.pos !== pos) throw r.err('SSZ/container: wrong offset');
-    obj[name] = fields[name].decode(r.bytes(len));
+    obj[name] = decodeDynamicBytes(fields[name], r.bytes(len));
   }
   return obj;
 };
@@ -595,9 +621,31 @@ export const container = <T extends Record<string, SSZCoder<any>>>(
   const fixedCoder = P.struct(
     Object.fromEntries(Object.entries(fs).map(([k, v]) => [k, wrapRawPointer(v)]))
   );
+  const fieldNames = Object.keys(fs);
   const offsetFields = Object.keys(fs).filter((i) => fs[i].size === undefined);
+  const encodeStream = offsetFields.length
+    ? (w: P.Writer, value: { [K in keyof T]: P.UnwrapCoder<T[K]> }) => {
+        if (!isObject(value))
+          throw new TypeError(`"value" expected object, got type=${typeof value}`);
+        const dynamic = new Array<Bytes>(offsetFields.length);
+        for (let i = 0; i < offsetFields.length; i++) {
+          const name = offsetFields[i];
+          dynamic[i] = fs[name].encode((value as any)[name]);
+        }
+        let dynamicIndex = 0;
+        let dynamicOffset = fixedCoder.size!;
+        for (const name of fieldNames) {
+          const field = fs[name];
+          if (field.size === undefined) {
+            P.U32LE.encodeStream(w, dynamicOffset);
+            dynamicOffset += dynamic[dynamicIndex++].length;
+          } else field.encodeStream(w, (value as any)[name]);
+        }
+        for (let i = 0; i < dynamic.length; i++) w.bytes(dynamic[i]);
+      }
+    : ptrCoder.encodeStream;
   const coder = P.wrap({
-    encodeStream: ptrCoder.encodeStream,
+    encodeStream,
     decodeStream: (r) => fixOffsets(r, fs, offsetFields, fixedCoder.decodeStream(r), 0) as any,
   }) as ContainerCoder<T>;
   return freezeSSZ({
@@ -631,21 +679,40 @@ export const container = <T extends Record<string, SSZCoder<any>>>(
 const bitsCoder = (len: number): TRet<P.Coder<Bytes, boolean[]>> =>
   ({
     encode: (data: TArg<Uint8Array>): boolean[] => {
-      const res: boolean[] = [];
-      for (const byte of data as Uint8Array)
-        for (let i = 0; i < 8; i++) res.push(!!(byte & (1 << i)));
-      for (let i = len; i < res.length; i++) {
-        if (res[i]) throw new Error('SSZ/bitsCoder/encode: non-zero padding');
+      const bytes = data as Uint8Array;
+      const res = new Array<boolean>(len);
+      let pos = 0;
+      for (let bytePos = 0; bytePos < bytes.length; bytePos++) {
+        const byte = bytes[bytePos];
+        const bits = Math.min(8, len - pos);
+        for (let bit = 0; bit < bits; bit++) res[pos++] = !!(byte & (1 << bit));
+        if (bits < 8 && byte >> bits)
+          throw new Error('SSZ/bitsCoder/encode: non-zero padding');
       }
-      return res.slice(0, len);
+      return res;
     },
     decode: (data: boolean[]): TRet<Uint8Array> => {
       // Caller must already clip to exactly `len` bits; otherwise extra booleans spill into the serialized padding bits.
       const res = new Uint8Array(Math.ceil(len / 8));
-      for (let i = 0; i < data.length; i++) if (data[i]) res[Math.floor(i / 8)] |= 1 << (i % 8);
+      for (let i = 0; i < data.length; i++) if (data[i]) res[i >> 3] |= 1 << (i & 7);
       return res as TRet<Uint8Array>;
     },
   }) as TRet<P.Coder<Bytes, boolean[]>>;
+
+const encodeBits = (value: TArg<boolean[]>, len: number): TRet<Uint8Array> => {
+  if (!Array.isArray(value)) throw new Error(`SSZ/bits: wrong value=${value}`);
+  const bits = value as boolean[];
+  const res = new Uint8Array(Math.ceil(len / 8));
+  for (let i = 0; i < len; i++) if (bits[i]) res[i >> 3] |= 1 << (i & 7);
+  return res as TRet<Uint8Array>;
+};
+
+const encodeBitlist = (value: TArg<boolean[]>): TRet<Uint8Array> => {
+  const len = (value as boolean[]).length;
+  const res = encodeBits(value, len + 1);
+  res[len >> 3] |= 1 << (len & 7);
+  return res;
+};
 
 const decodeBitlist = (bytes: TArg<Uint8Array>, label: string): boolean[] => {
   if (!bytes.length || bytes[bytes.length - 1] === 0)
@@ -678,11 +745,18 @@ export const bitvector = (len: number): TRet<BitVectorType> => {
   if (!Number.isSafeInteger(len) || len <= 0)
     throw new Error(`SSZ/bitVector: wrong length=${len} (should be positive integer)`);
   const bytesLen = Math.ceil(len / 8);
+  const bitCodec = bitsCoder(len);
   // Fixed bitvectors must reject caller arrays that are not exactly N bits; otherwise extra bits spill into serialized padding.
-  const coder = P.validate(P.apply(P.bytes(bytesLen), bitsCoder(len)), (value) => {
-    if (!Array.isArray(value) || value.length !== len)
-      throw new Error(`SSZ/bitVector: wrong value=${value} (len=${value?.length} expected=${len})`);
-    return value;
+  const coder = P.wrap<boolean[]>({
+    size: bytesLen,
+    encodeStream: (w, value) => {
+      if (!Array.isArray(value) || value.length !== len)
+        throw new Error(
+          `SSZ/bitVector: wrong value=${value} (len=${value?.length} expected=${len})`
+        );
+      w.bytes(encodeBits(value, len));
+    },
+    decodeStream: (r) => bitCodec.encode(r.bytes(bytesLen)),
   });
   return freezeSSZ({
     ...coder,
@@ -723,7 +797,7 @@ export const bitlist = (maxLen: number): TRet<BitListType> => {
   const emptyRoot = zeroHashes[Math.ceil(Math.log2(chunkCount))];
   let coder: P.CoderType<boolean[]> = P.wrap({
     encodeStream: (w, value) => {
-      w.bytes(bitsCoder(value.length + 1).decode([...value, true])); // last true bit is terminator
+      w.bytes(encodeBitlist(value)); // last true bit is terminator
     },
     decodeStream: (r) => {
       return decodeBitlist(r.bytes(r.leftBytes), 'bitlist');
@@ -748,7 +822,7 @@ export const bitlist = (maxLen: number): TRet<BitListType> => {
     chunkCount,
     composite: true,
     chunks(value: TArg<boolean[]>) {
-      const data = value.length ? bitvector(value.length).encode(value) : EMPTY_CHUNK.slice();
+      const data = value.length ? encodeBits(value, value.length) : EMPTY_CHUNK.slice();
       return chunks(data);
     },
     merkleRoot(value: boolean[]) {
@@ -772,7 +846,7 @@ type ProgressiveBitListType = SSZCoder<boolean[]> & { info: { type: 'progressive
 export const progressiveBitlist = (): TRet<ProgressiveBitListType> => {
   let coder: P.CoderType<boolean[]> = P.wrap({
     encodeStream: (w, value) => {
-      w.bytes(bitsCoder(value.length + 1).decode([...value, true]));
+      w.bytes(encodeBitlist(value));
     },
     decodeStream: (r) => {
       return decodeBitlist(r.bytes(r.leftBytes), 'progressiveBitlist');
@@ -958,7 +1032,7 @@ export const bytelist = (maxLen: number): TRet<ByteListType> => {
       throw new Error(`SSZ/bytelist: wrong value=${value}`);
     return value;
   });
-  return freezeSSZ({
+  const res = freezeSSZ({
     ...coder,
     info: { type: 'list', N: maxLen, inner: byte },
     _isProgressiveCompat(other: TArg<SSZCoder<any>>) {
@@ -976,6 +1050,8 @@ export const bytelist = (maxLen: number): TRet<ByteListType> => {
       return mixInLength(merkleize(this.chunks(value), this.chunkCount), value.length);
     },
   } as any) as TRet<ByteListType>;
+  byteListCoders.add(res as object);
+  return res;
 };
 type ByteVectorType = SSZCoder<Bytes> & {
   info: { type: 'vector'; N: number; inner: typeof byte };
