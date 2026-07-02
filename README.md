@@ -37,7 +37,7 @@ If you don't like NPM, a standalone [eth-signer.js](https://github.com/paulmillr
 - Archive node connector
   - [Init network](#init-network)
   - [Fetch balances and history](#fetch-balances-and-history-from-an-archive-node)
-  - [Fetch Chainlink oracle prices](#fetch-chainlink-oracle-prices)
+  - [Asset price quoting (uniswap, chainlink)](#asset-price-quoting-uniswap-chainlink)
   - [Resolve ENS address](#resolve-ens-address)
   - [Swap tokens with Uniswap](#swap-tokens-with-uniswap)
 - [Security](#security)
@@ -210,7 +210,7 @@ which implements kill-switch, logging, batching / concurrency and other features
 Most APIs (chainlink, uniswap) expect instance of Web3Provider.
 The call stack would look like this:
 
-- `Chainlink` => `Web3Provider` => `jsonrpc` => `fetch`
+- `ChainlinkQuoter` => `Web3Provider` => `jsonrpc` => `fetch`
 
 To initialize Web3Provider, do the following:
 
@@ -263,20 +263,39 @@ async function main() {
 // tokenBalances(address: string, tokens: string[]): Promise<Record<string, bigint>>;
 ```
 
-### Fetch Chainlink oracle prices
+### Asset price quoting (uniswap, chainlink)
 
 ```ts
 import { jsonrpc } from 'micro-ftch';
-import { Chainlink, Web3Provider } from 'micro-eth-signer/net.js';
+import { tokenFromSymbol } from 'micro-eth-signer/advanced/abi.js';
+import {
+  ChainlinkQuoter,
+  UniswapV2Quoter,
+  UniswapV3Quoter,
+  Web3Provider,
+} from 'micro-eth-signer/net.js';
 
 const prov = new Web3Provider(jsonrpc(fetch, 'http://localhost:8545'));
-const link = new Chainlink(prov);
 async function main() {
-  const btc = await link.coinPrice('BTC');
-  const bat = await link.tokenPrice('BAT');
-  console.log({ btc, bat }); // BTC 19188.68870991, BAT 0.39728989 in USD
+  const chainlink = new ChainlinkQuoter(prov);
+  const btc = await chainlink.coinPrice('BTC');
+  const bat = await chainlink.tokenPrice('BAT');
+
+  const WETH = tokenFromSymbol('WETH')!.contract;
+  const USDC = tokenFromSymbol('USDC')!.contract;
+  const v2 = await UniswapV2Quoter.fromTokens(prov, WETH, USDC);
+  const v3 = await UniswapV3Quoter.fromTokens(prov, WETH, USDC, 3000);
+  const ethV2 = await v2.coinPrice('ETH');
+  const ethV3 = await v3.coinPrice('ETH');
+
+  console.log({ btc, bat, ethV2, ethV3 }); // prices in USD
 }
 ```
+
+Uniswap quote helpers use spot prices from a selected pair or pool. `coinPrice` and `tokenPrice`
+require the other side to be a known USD quote token (`USDC`, `USDT`, or `DAI` by default);
+use `rate(amount, direction)` for raw pair/pool conversions. `Chainlink` remains available as a
+backwards-compatible alias for `ChainlinkQuoter`.
 
 ### Resolve ENS address
 

@@ -51,6 +51,15 @@ Recommended software:
 
 // Utils
 const ethNum = (n: number | bigint | undefined) => ethHexNum.encode(n === undefined ? 0 : n);
+const ethTag = (tag: Web3CallArgs['tag'] | undefined) => {
+  if (tag === undefined) return 'latest';
+  if (typeof tag === 'number') {
+    if (!Number.isSafeInteger(tag) || tag < 0) throw new Error('ethCall: wrong tag');
+    return ethNum(tag);
+  }
+  if (tag === 'latest' || tag === 'earliest' || tag === 'pending') return tag;
+  throw new Error('ethCall: wrong tag');
+};
 // EIP-1474 transaction hashes are Data values for 32-byte hashes; validate before
 // RPC transport errors.
 const txHashRe = /^0x[0-9a-fA-F]{64}$/;
@@ -528,11 +537,13 @@ export class Web3Provider implements IWeb3Provider {
   call(method: string, ...args: any[]): Promise<any> {
     return this.rpc.call(method, ...args);
   }
-  ethCall(args: Web3CallArgs, tag = 'latest'): Promise<any> {
-    return this.rpc.call('eth_call', args, tag);
+  ethCall(args: Web3CallArgs, tag = args.tag): Promise<any> {
+    const { tag: _tag, ...callArgs } = args;
+    return this.rpc.call('eth_call', callArgs, ethTag(tag));
   }
-  async estimateGas(args: Web3CallArgs, tag = 'latest'): Promise<bigint> {
-    return ethHexNum.decode(await this.rpc.call('eth_estimateGas', args, tag));
+  async estimateGas(args: Web3CallArgs, tag = args.tag): Promise<bigint> {
+    const { tag: _tag, ...callArgs } = args;
+    return ethHexNum.decode(await this.rpc.call('eth_estimateGas', callArgs, ethTag(tag)));
   }
 
   // Timestamp is available only inside blocks
