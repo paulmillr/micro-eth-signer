@@ -2,28 +2,52 @@ import {
   Web3Provider as _Web3Provider,
   calcTransfersDiff as _calcTransfersDiff,
 } from './net/archive.ts';
-import _Chainlink from './net/chainlink.ts';
 import _ENS from './net/ens.ts';
+import {
+  ChainlinkQuoter as _ChainlinkQuoter,
+  ERC4626Quoter as _ERC4626Quoter,
+  UniswapV2Quoter as _UniswapV2Quoter,
+  UniswapV3Quoter as _UniswapV3Quoter,
+} from './net/quoter.ts';
 import _UniswapV2 from './net/uniswap-v2.ts';
 import _UniswapV3 from './net/uniswap-v3.ts';
+export type { QuoterOpt, RateDirection, RateQuoter, UniswapPriceOpt } from './net/quoter.ts';
+export { QUOTER_TOKENS } from './net/quoter_tokens.ts';
 
 // There are many low level APIs inside which are not exported yet.
 /**
- * Chainlink price-feed client helpers.
+ * Chainlink price-feed quoter helpers.
  * @param net - Web3 provider used for on-chain reads.
  * @example
  * Reuse the same RPC wrapper shown in the README network examples.
  * ```ts
  * import { jsonrpc } from 'micro-ftch';
- * import { Chainlink, Web3Provider } from 'micro-eth-signer/net.js';
+ * import { ChainlinkQuoter, Web3Provider } from 'micro-eth-signer/net.js';
  * const prov = new Web3Provider(jsonrpc(fetch, 'http://localhost:8545'));
- * const link = new Chainlink(prov);
+ * const link = new ChainlinkQuoter(prov);
  * async function main() {
  *   await link.coinPrice('BTC');
  * }
  * ```
  */
-export const Chainlink = _Chainlink;
+export const ChainlinkQuoter = _ChainlinkQuoter;
+/** @deprecated Use {@link ChainlinkQuoter}. */
+export const Chainlink = _ChainlinkQuoter;
+/**
+ * Uniswap V2 spot-rate quoter backed by pair reserves.
+ * Forward direction means `token0 -> token1`; reverse means `token1 -> token0`.
+ */
+export const UniswapV2Quoter = _UniswapV2Quoter;
+/**
+ * Uniswap V3 spot-rate quoter backed by pool `slot0.sqrtPriceX96`.
+ * Forward direction means `token0 -> token1`; reverse means `token1 -> token0`.
+ */
+export const UniswapV3Quoter = _UniswapV3Quoter;
+/**
+ * ERC-4626 vault quoter backed by `convertToAssets` and `convertToShares`.
+ * Forward direction means vault shares -> underlying asset.
+ */
+export const ERC4626Quoter = _ERC4626Quoter;
 /**
  * ENS lookup helpers backed by a Web3 provider.
  * @param net - Web3 provider used for ENS registry and resolver reads.
