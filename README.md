@@ -1,6 +1,6 @@
 # micro-eth-signer
 
-Minimal library for Ethereum transactions, addresses and smart contracts.
+Minimal privacy-focused Ethereum library.
 
 - 🔓 Secure: audited [noble](https://paulmillr.com/noble/) cryptography, no network code, [hedged signatures](#transactions-create-sign)
 - 🔻 Tree-shakeable: unused code is excluded from your builds
