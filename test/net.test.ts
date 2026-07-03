@@ -1,10 +1,11 @@
 import { describe, should } from '@paulmillr/jsbt/test.js';
 import * as mftch from 'micro-ftch';
+import { readFile } from 'node:fs/promises';
 import { deepStrictEqual, rejects, throws } from 'node:assert';
 import { ERC1155, ERC20, events, tokenFromSymbol } from '../src/advanced/abi.ts';
 import { Transaction } from '../src/index.ts';
-import { calcTransfersDiff, Chainlink, ENS, UniswapV3, Web3Provider } from '../src/net.ts';
-import { TOKENS as CHAINLINK_TOKENS } from '../src/net/chainlink.ts';
+import { calcTransfersDiff, ENS, Quoter, UniswapV3, Web3Provider } from '../src/net.ts';
+import { QUOTER_TOKENS } from '../src/net.ts';
 import { awaitDeep, UniswapAbstract } from '../src/net/uniswap-common.ts';
 import { ethHexNum, numberTo0xHex, weieth } from '../src/utils.ts';
 
@@ -12,12 +13,38 @@ import { ethHexNum, numberTo0xHex, weieth } from '../src/utils.ts';
 const NODE_URL = 'https://NODE_URL/';
 const getKey = (url, opt) => JSON.stringify({ url: NODE_URL, opt });
 const rpcVector = async (name) => (await import(`./vectors/rpc/${name}.js`)).default;
+const rpcJsonVector = async (name) =>
+  JSON.parse(await readFile(new URL(`./fixtures/rpc/${name}.json`, import.meta.url), 'utf8'));
+const word = (n) => BigInt(n).toString(16).padStart(64, '0');
+const encodeWords = (...words) => `0x${words.map(word).join('')}`;
+const encodeAddress = (address) => `0x${'0'.repeat(24)}${address.toLowerCase().slice(2)}`;
 
 function initProv(replayJson) {
   const replay = mftch.replayable(fetch, replayJson, { getKey, offline: true });
   const provider = mftch.jsonrpc(replay, NODE_URL);
   const archive = new Web3Provider(provider);
   return archive;
+}
+
+function mockEthCallProvider(responses) {
+  const calls = [];
+  return {
+    calls,
+    provider: {
+      ethCall: async (args) => {
+        calls.push(args);
+        const response = responses.shift();
+        if (!response) throw new Error(`unexpected ethCall ${args.data}`);
+        return response;
+      },
+      estimateGas: async () => {
+        throw new Error('unexpected estimateGas');
+      },
+      call: async () => {
+        throw new Error('unexpected rpc call');
+      },
+    },
+  };
 }
 
 // For tests only, in real code map is better because it doesn't convert bigints into string!
@@ -49,24 +76,141 @@ describe('Network', () => {
     deepStrictEqual(vitalikAddr, '0xd8da6bf26964af9d7eed9e03e53415d37aa96045');
     deepStrictEqual(vitalikName, 'vitalik.eth');
   });
-  should('Chainlink', async () => {
-    const chainlink = new Chainlink(initProv(await rpcVector('chainlink')));
-    const btcPrice = await chainlink.coinPrice('BTC');
+  should('Quoter uses Chainlink by default', async () => {
+    const quoter = new Quoter(initProv(await rpcVector('chainlink')));
+    const btcPrice = await quoter.coinPrice('BTC');
     deepStrictEqual(btcPrice, 69369.10271);
   });
-  should('Chainlink token metadata uses canonical token addresses', () => {
+  should('Quoter reads Chainlink prices without caching', async () => {
+    const latestRoundData = encodeWords(1n, 123456000000n, 0n, 1n, 1n);
+    const { calls, provider } = mockEthCallProvider([latestRoundData, latestRoundData]);
+    const quoter = new Quoter(provider);
+    deepStrictEqual(await quoter.coinPrice('BTC'), 1234.56);
+    deepStrictEqual(await quoter.coinPrice('BTC'), 1234.56);
+    deepStrictEqual(calls.length, 2);
+  });
+  should('Quoter passes block tags to Chainlink reads', async () => {
+    const latestRoundData = encodeWords(1n, 123456000000n, 0n, 1n, 1n);
+    const { calls, provider } = mockEthCallProvider([latestRoundData]);
+    const quoter = new Quoter(provider);
+    deepStrictEqual(await quoter.coinPrice('BTC', 'chainlink', { tag: 123 }), 1234.56);
+    deepStrictEqual(calls.map((c) => c.tag), [123]);
+  });
+  should('Quoter rejects invalid Chainlink round data', async () => {
+    const { calls, provider } = mockEthCallProvider([
+      encodeWords(1n, 0n, 0n, 1n, 1n),
+      encodeWords(1n, 123456000000n, 0n, 0n, 1n),
+      encodeWords(2n, 123456000000n, 0n, 1n, 1n),
+    ]);
+    const quoter = new Quoter(provider);
+    await rejects(() => quoter.coinPrice('BTC'), /invalid price data/);
+    await rejects(() => quoter.coinPrice('BTC'), /invalid price data/);
+    await rejects(() => quoter.coinPrice('BTC'), /invalid price data/);
+    deepStrictEqual(calls.length, 3);
+  });
+  should('Quoter rejects old provider object arguments', async () => {
+    const { calls, provider } = mockEthCallProvider([]);
+    const quoter = new Quoter(provider);
+    await rejects(
+      () => (quoter as any).coinPrice('BTC', { provider: 'chainlink', params: {} }),
+      /unsupported provider/
+    );
+    await rejects(
+      () => (quoter as any).rate(1n, { provider: 'uniswap-v2', params: {} }),
+      /unsupported provider/
+    );
+    deepStrictEqual(calls.length, 0);
+  });
+  should('asset price quoting uses captured RPC output', async () => {
+    const replay = await rpcJsonVector('quoter-readme');
+    deepStrictEqual(Object.keys(replay).length, 10);
+    const prov = initProv(replay);
+    const quoter = new Quoter(prov);
+    const btc = await quoter.coinPrice('BTC');
+    const bat = await quoter.tokenPrice('BAT');
+    const ethV2 = await quoter.coinPrice('ETH', 'uniswap-v2', {
+      pairAddress: '0xb4e16d0168e52d35cacd2c6185b44281ec28c9dc',
+    });
+    const ethV3 = await quoter.coinPrice('ETH', 'uniswap-v3', {
+      poolAddress: '0x8ad599c3a0ff1de082011efddc58f1908eb6e6d8',
+    });
+
+    deepStrictEqual(
+      { btc, bat, ethV2, ethV3 },
+      {
+        btc: 61479.17292489,
+        bat: 0.0800199,
+        ethV2: 1698.939664,
+        ethV3: 1700.328303,
+      }
+    );
+  });
+  should('Quoter Uniswap V3 priceIn API uses captured RPC output', async () => {
+    const replay = await rpcJsonVector('quoter-auto');
+    deepStrictEqual(Object.keys(replay).length, 9);
+    const prov = initProv(replay);
+    const USDC = tokenFromSymbol('USDC')!.contract;
+    const quoter = new Quoter(prov);
+    const eth = await quoter.coinPrice('ETH', 'uniswap-v3', { priceIn: USDC, fees: [500, 3000] });
+
+    deepStrictEqual(eth, 1698.97594);
+  });
+  should('Quoter caches Uniswap routes without caching prices', async () => {
+    const USDC = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48';
+    const WETH = '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2';
+    const pair = '0xb4e16d0168e52d35cacd2c6185b44281ec28c9dc';
+    const reserves = encodeWords(2_000_000_000n, 1_000_000_000_000_000_000n, 0n);
+    const { calls, provider } = mockEthCallProvider([
+      encodeAddress(pair),
+      encodeAddress(USDC),
+      encodeAddress(WETH),
+      reserves,
+      reserves,
+      reserves,
+    ]);
+    const quoter = new Quoter(provider);
+    deepStrictEqual(await quoter.coinPrice('ETH', 'uniswap-v2', { priceIn: USDC, tag: 7 }), 2000);
+    deepStrictEqual(await quoter.coinPrice('ETH', 'uniswap-v2', { priceIn: USDC, tag: 7 }), 2000);
+    deepStrictEqual(calls.length, 6);
+    deepStrictEqual(
+      calls.map((c) => c.tag),
+      [7, 7, 7, 7, 7, 7]
+    );
+  });
+  should('Quoter clears cached Uniswap routes', async () => {
+    const USDC = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48';
+    const WETH = '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2';
+    const pair1 = '0x1111111111111111111111111111111111111111';
+    const pair2 = '0x2222222222222222222222222222222222222222';
+    const reserves = encodeWords(2_000_000_000n, 1_000_000_000_000_000_000n, 0n);
+    const { calls, provider } = mockEthCallProvider([
+      encodeAddress(pair1),
+      encodeAddress(USDC),
+      encodeAddress(WETH),
+      reserves,
+      reserves,
+      encodeAddress(pair2),
+      encodeAddress(USDC),
+      encodeAddress(WETH),
+      reserves,
+      reserves,
+    ]);
+    const quoter = new Quoter(provider);
+    deepStrictEqual(await quoter.coinPrice('ETH', 'uniswap-v2', { priceIn: USDC }), 2000);
+    quoter.clearRoutes();
+    deepStrictEqual(await quoter.coinPrice('ETH', 'uniswap-v2', { priceIn: USDC }), 2000);
+    deepStrictEqual(calls.length, 10);
+  });
+  should('quoter token metadata uses canonical token addresses', () => {
     const canonical = {};
-    for (const symbol in CHAINLINK_TOKENS) {
+    for (const symbol in QUOTER_TOKENS) {
       try {
         canonical[symbol] = tokenFromSymbol(symbol)!.contract;
       } catch {}
     }
     deepStrictEqual(
       Object.fromEntries(
-        Object.entries(canonical).map(([symbol]) => [
-          symbol,
-          CHAINLINK_TOKENS[symbol].tokenContract,
-        ])
+        Object.entries(canonical).map(([symbol]) => [symbol, QUOTER_TOKENS[symbol].tokenContract])
       ),
       canonical
     );
@@ -91,6 +235,418 @@ describe('Network', () => {
     );
     for (const hex of ['', '0x', '1', '0x00', '0x01', '0x0400'])
       throws(() => ethHexNum.decode(hex), /invalid RPC quantity/);
+  });
+  should('passes eth_call tags as block parameters', async () => {
+    let seen;
+    const archive = new Web3Provider({
+      call: async (method, ...args) => {
+        seen = { method, args };
+        return '0x';
+      },
+    });
+    const to = '0x0000000000000000000000000000000000000001';
+    await archive.ethCall({ to, data: '0x1234', tag: 123 });
+    deepStrictEqual(seen, {
+      method: 'eth_call',
+      args: [{ to, data: '0x1234' }, '0x7b'],
+    });
+  });
+  should('quotes Uniswap V2 spot rates', async () => {
+    const USDC = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48';
+    const WETH = '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2';
+    const pair = '0xb4e16d0168e52d35cacd2c6185b44281ec28c9dc';
+    const reserves = encodeWords(2_000_000_000n, 1_000_000_000_000_000_000n, 0n);
+    const { calls, provider } = mockEthCallProvider([reserves, reserves, reserves]);
+    const quoter = new Quoter(provider);
+    const pairParams = { pairAddress: pair, token0: USDC, token1: WETH, tag: 24692474 };
+    deepStrictEqual(
+      await quoter.rate(1_000_000n, 'uniswap-v2', {
+        ...pairParams,
+        direction: 'forward',
+      }),
+      500000000000000n
+    );
+    deepStrictEqual(
+      await quoter.rate(1_000_000_000_000_000_000n, 'uniswap-v2', {
+        ...pairParams,
+        direction: 'Reverse',
+      }),
+      2_000_000_000n
+    );
+    deepStrictEqual(await quoter.coinPrice('ETH', 'uniswap-v2', pairParams), 2000);
+    deepStrictEqual(
+      calls.map((c) => c.tag),
+      [24692474, 24692474, 24692474]
+    );
+  });
+  should('auto-selects Uniswap V2 pairs lazily', async () => {
+    const USDC = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48';
+    const WETH = '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2';
+    const pair = '0xb4e16d0168e52d35cacd2c6185b44281ec28c9dc';
+    const reserves = encodeWords(1_000_000_000_000_000_000n, 2_000_000_000n, 0n);
+    const { calls, provider } = mockEthCallProvider([
+      encodeAddress(pair),
+      encodeAddress(WETH),
+      encodeAddress(USDC),
+      reserves,
+      reserves,
+    ]);
+    const quoter = new Quoter(provider);
+    deepStrictEqual(
+      await quoter.rate(1_000_000n, 'uniswap-v2', {
+        tokenIn: USDC,
+        tokenOut: WETH,
+        tag: 2,
+      }),
+      500000000000000n
+    );
+    deepStrictEqual(
+      calls.map((c) => c.tag),
+      [2, 2, 2, 2, 2]
+    );
+  });
+  should('quotes Uniswap V2 prices with priceIn option', async () => {
+    const USDC = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48';
+    const WETH = '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2';
+    const pair = '0xb4e16d0168e52d35cacd2c6185b44281ec28c9dc';
+    const reserves = encodeWords(2_000_000_000n, 1_000_000_000_000_000_000n, 0n);
+    const { calls, provider } = mockEthCallProvider([
+      encodeAddress(pair),
+      encodeAddress(USDC),
+      encodeAddress(WETH),
+      reserves,
+      reserves,
+    ]);
+    const quoter = new Quoter(provider);
+    deepStrictEqual(await quoter.coinPrice('ETH', 'uniswap-v2', { priceIn: USDC, tag: 2 }), 2000);
+    deepStrictEqual(
+      calls.map((c) => c.tag),
+      [2, 2, 2, 2, 2]
+    );
+  });
+  should('quotes Uniswap V2 explicit pairs with priceIn option', async () => {
+    const EURC = '0x1abaea1f7c830bd89acc67ec4af516284b1bc33c';
+    const WETH = tokenFromSymbol('WETH').contract;
+    const pair = '0x1111111111111111111111111111111111111111';
+    const reserves = encodeWords(1_000_000_000_000_000_000n, 2_000_000_000n, 0n);
+    const { calls, provider } = mockEthCallProvider([reserves]);
+    const quoter = new Quoter(provider);
+    deepStrictEqual(
+      await quoter.coinPrice('ETH', 'uniswap-v2', {
+        pairAddress: pair,
+        token0: WETH,
+        token1: EURC,
+        priceIn: 'EUR',
+      }),
+      2000
+    );
+    deepStrictEqual(calls.length, 1);
+  });
+  should('rejects invalid priceIn option', async () => {
+    const { calls, provider } = mockEthCallProvider([]);
+    const quoter = new Quoter(provider);
+    await rejects(
+      () => quoter.coinPrice('ETH', 'uniswap-v2', { priceIn: 123 } as any),
+      /invalid priceIn/
+    );
+    deepStrictEqual(calls.length, 0);
+  });
+  should('quotes Uniswap V2 prices with symbol priceIn option', async () => {
+    const USDC = tokenFromSymbol('USDC').contract;
+    const WETH = tokenFromSymbol('WETH').contract;
+    const pair = '0x1111111111111111111111111111111111111111';
+    const reserves = encodeWords(2_000_000_000n, 1_000_000_000_000_000_000n, 0n);
+    const { calls, provider } = mockEthCallProvider([
+      encodeAddress(pair),
+      encodeAddress(USDC),
+      encodeAddress(WETH),
+      reserves,
+      reserves,
+    ]);
+    const quoter = new Quoter(provider);
+    deepStrictEqual(await quoter.coinPrice('ETH', 'uniswap-v2', { priceIn: 'USDC' }), 2000);
+    deepStrictEqual(calls.length, 5);
+  });
+  should('quotes Uniswap V2 prices with EUR priceIn aliases', async () => {
+    const EURC = '0x1abaea1f7c830bd89acc67ec4af516284b1bc33c';
+    const WETH = tokenFromSymbol('WETH').contract;
+    const pair = '0x1111111111111111111111111111111111111111';
+    const reserves = encodeWords(2_000_000_000n, 1_000_000_000_000_000_000n, 0n);
+    const { calls, provider } = mockEthCallProvider([
+      encodeAddress(pair),
+      encodeAddress(EURC),
+      encodeAddress(WETH),
+      reserves,
+      reserves,
+      reserves,
+      reserves,
+    ]);
+    const quoter = new Quoter(provider);
+    deepStrictEqual(await quoter.coinPrice('ETH', 'uniswap-v2', { priceIn: 'EUR' }), 2000);
+    deepStrictEqual(await quoter.coinPrice('ETH', 'uniswap-v2', { priceIn: 'EURC' }), 2000);
+    deepStrictEqual(await quoter.coinPrice('ETH', 'uniswap-v2', { priceIn: EURC }), 2000);
+    deepStrictEqual(calls.length, 7);
+  });
+  should('quotes Uniswap V2 prices with default USDT priceIn', async () => {
+    const USDT = tokenFromSymbol('USDT').contract;
+    const WETH = tokenFromSymbol('WETH').contract;
+    const pair = '0x1111111111111111111111111111111111111111';
+    const reserves = encodeWords(1_000_000_000_000_000_000n, 2_000_000_000n, 0n);
+    const { calls, provider } = mockEthCallProvider([
+      encodeAddress(pair),
+      encodeAddress(WETH),
+      encodeAddress(USDT),
+      reserves,
+      reserves,
+    ]);
+    const quoter = new Quoter(provider);
+    deepStrictEqual(await quoter.coinPrice('ETH', 'uniswap-v2'), 2000);
+    deepStrictEqual(calls.length, 5);
+  });
+  should('quotes Uniswap V3 spot rates', async () => {
+    const XAUT = '0x68749665ff8d2d112fa859aa293f07a622782f38';
+    const USDT = '0xdac17f958d2ee523a2206206994597c13d831ec7';
+    const pool = '0x6546055f46e866a4b9a4a13e81273e3152bae5da';
+    const sqrtPriceX96 = 2n ** 97n; // price token0 in token1 is 4.
+    const slot0 = encodeWords(sqrtPriceX96, 0n, 0n, 0n, 0n, 0n, 1n);
+    const { provider } = mockEthCallProvider([slot0, slot0]);
+    const quoter = new Quoter(provider);
+    const poolParams = { poolAddress: pool, token0: XAUT, token1: USDT };
+    deepStrictEqual(
+      await quoter.rate(1n, 'uniswap-v3', { ...poolParams, direction: 'forward' }),
+      4n
+    );
+    deepStrictEqual(
+      await quoter.rate(4n, 'uniswap-v3', { ...poolParams, direction: 'reverse' }),
+      1n
+    );
+  });
+  should('auto-selects Uniswap V3 pools lazily', async () => {
+    const USDC = tokenFromSymbol('USDC').contract;
+    const WETH = tokenFromSymbol('WETH').contract;
+    const lowPool = '0x1111111111111111111111111111111111111111';
+    const highPool = '0x2222222222222222222222222222222222222222';
+    const slot0 = encodeWords(2n ** 96n * 1_000_000n, 0n, 0n, 0n, 0n, 0n, 1n);
+    const { calls, provider } = mockEthCallProvider([
+      encodeAddress(lowPool),
+      encodeAddress(USDC),
+      encodeAddress(WETH),
+      encodeWords(10n),
+      encodeAddress(highPool),
+      encodeAddress(USDC),
+      encodeAddress(WETH),
+      encodeWords(20n),
+      slot0,
+    ]);
+    const quoter = new Quoter(provider);
+    deepStrictEqual(
+      await quoter.rate(1_000_000n, 'uniswap-v3', {
+        tokenIn: USDC,
+        tokenOut: WETH,
+        fees: [500, 3000],
+        tag: 2,
+      }),
+      1_000_000_000_000_000_000n
+    );
+    deepStrictEqual(
+      calls.map((c) => c.tag),
+      [2, 2, 2, 2, 2, 2, 2, 2, 2]
+    );
+  });
+  should('quotes Uniswap V3 prices with default USDT priceIn', async () => {
+    const USDT = tokenFromSymbol('USDT').contract;
+    const WETH = tokenFromSymbol('WETH').contract;
+    const lowPool = '0x1111111111111111111111111111111111111111';
+    const highPool = '0x2222222222222222222222222222222222222222';
+    const slot0 = encodeWords((2n ** 96n + 999_999n) / 1_000_000n, 0n, 0n, 0n, 0n, 0n, 1n);
+    const { calls, provider } = mockEthCallProvider([
+      encodeAddress(lowPool),
+      encodeAddress(WETH),
+      encodeAddress(USDT),
+      encodeWords(10n),
+      encodeAddress(highPool),
+      encodeAddress(WETH),
+      encodeAddress(USDT),
+      encodeWords(20n),
+      slot0,
+    ]);
+    const quoter = new Quoter(provider);
+    deepStrictEqual(await quoter.coinPrice('ETH', 'uniswap-v3', { fees: [500, 3000] }), 1);
+    deepStrictEqual(calls.length, 9);
+  });
+  should('quotes Uniswap V3 prices with priceIn option', async () => {
+    const USDC = tokenFromSymbol('USDC').contract;
+    const WETH = tokenFromSymbol('WETH').contract;
+    const lowPool = '0x1111111111111111111111111111111111111111';
+    const highPool = '0x2222222222222222222222222222222222222222';
+    const slot0 = encodeWords(2n ** 96n * 1_000_000n, 0n, 0n, 0n, 0n, 0n, 1n);
+    const { calls, provider } = mockEthCallProvider([
+      encodeAddress(lowPool),
+      encodeAddress(USDC),
+      encodeAddress(WETH),
+      encodeWords(10n),
+      encodeAddress(highPool),
+      encodeAddress(USDC),
+      encodeAddress(WETH),
+      encodeWords(20n),
+      slot0,
+    ]);
+    const quoter = new Quoter(provider);
+    deepStrictEqual(
+      await quoter.coinPrice('ETH', 'uniswap-v3', {
+        priceIn: USDC,
+        fees: [500, 3000],
+        tag: 2,
+      }),
+      1
+    );
+    deepStrictEqual(
+      calls.map((c) => c.tag),
+      [2, 2, 2, 2, 2, 2, 2, 2, 2]
+    );
+  });
+  should('routes Uniswap V3 EUR prices through USDC', async () => {
+    const WBTC = tokenFromSymbol('WBTC').contract;
+    const USDC = tokenFromSymbol('USDC').contract;
+    const EURC = '0x1abaea1f7c830bd89acc67ec4af516284b1bc33c';
+    const wbtcUsdcPool = '0x1111111111111111111111111111111111111111';
+    const usdcEurcPool = '0x2222222222222222222222222222222222222222';
+    const slot0 = encodeWords(2n ** 96n, 0n, 0n, 0n, 0n, 0n, 1n);
+    const { calls, provider } = mockEthCallProvider([
+      encodeAddress(wbtcUsdcPool),
+      encodeAddress(WBTC),
+      encodeAddress(USDC),
+      encodeWords(10n),
+      slot0,
+      encodeAddress(usdcEurcPool),
+      encodeAddress(USDC),
+      encodeAddress(EURC),
+      encodeWords(20n),
+      slot0,
+    ]);
+    const quoter = new Quoter(provider);
+    deepStrictEqual(
+      await quoter.coinPrice('BTC', 'uniswap-v3', { priceIn: 'EUR', fees: [3000] }),
+      100
+    );
+    deepStrictEqual(calls[0].data.endsWith(word(3000n)), true);
+    deepStrictEqual(calls[5].data.endsWith(word(500n)), true);
+    deepStrictEqual(calls.length, 10);
+  });
+  should('quotes Uniswap V3 explicit pools with priceIn option', async () => {
+    const USDC = tokenFromSymbol('USDC').contract;
+    const WETH = tokenFromSymbol('WETH').contract;
+    const pool = '0x1111111111111111111111111111111111111111';
+    const slot0 = encodeWords(2n ** 96n * 1_000_000n, 0n, 0n, 0n, 0n, 0n, 1n);
+    const { calls, provider } = mockEthCallProvider([slot0]);
+    const quoter = new Quoter(provider);
+    deepStrictEqual(
+      await quoter.coinPrice('ETH', 'uniswap-v3', {
+        poolAddress: pool,
+        token0: USDC,
+        token1: WETH,
+        priceIn: 'USDC',
+      }),
+      1
+    );
+    deepStrictEqual(calls.length, 1);
+  });
+  should('quotes Uniswap V3 prices with singular fee option', async () => {
+    const WBTC = tokenFromSymbol('WBTC').contract;
+    const WETH = tokenFromSymbol('WETH').contract;
+    const pool = '0x1111111111111111111111111111111111111111';
+    const slot0 = encodeWords(2n ** 96n * 100_000_000n, 0n, 0n, 0n, 0n, 0n, 1n);
+    const { calls, provider } = mockEthCallProvider([
+      encodeAddress(pool),
+      encodeAddress(WBTC),
+      encodeAddress(WETH),
+      encodeWords(10n),
+      slot0,
+    ]);
+    const quoter = new Quoter(provider);
+    deepStrictEqual(
+      await quoter.coinPrice('ETH', 'uniswap-v3', { priceIn: 'WBTC', fee: 3000 } as any),
+      0.000001
+    );
+    deepStrictEqual(calls.length, 5);
+  });
+  should('quotes Uniswap V3 prices with WBTC priceIn symbol', async () => {
+    const WBTC = tokenFromSymbol('WBTC').contract;
+    const WETH = tokenFromSymbol('WETH').contract;
+    const pool = '0x1111111111111111111111111111111111111111';
+    const slot0 = encodeWords(2n ** 96n * 100_000_000n, 0n, 0n, 0n, 0n, 0n, 1n);
+    const { calls, provider } = mockEthCallProvider([
+      encodeAddress(pool),
+      encodeAddress(WBTC),
+      encodeAddress(WETH),
+      encodeWords(10n),
+      slot0,
+    ]);
+    const quoter = new Quoter(provider);
+    deepStrictEqual(
+      await quoter.coinPrice('ETH', 'uniswap-v3', { priceIn: 'WBTC', fees: [3000] }),
+      0.000001
+    );
+    deepStrictEqual(calls.length, 5);
+  });
+  should('quotes Uniswap V3 stablecoin symbol prices', async () => {
+    const USDC = tokenFromSymbol('USDC').contract;
+    const DAI = tokenFromSymbol('DAI').contract;
+    const pool = '0x95dbb3c7546f22bce375900abfdd64a4e5bd73d6';
+    const sqrtPriceX96 = 2n ** 96n * 1_000_000n; // 1 USDC raw unit scale -> 1 DAI.
+    const slot0 = encodeWords(sqrtPriceX96, 0n, 0n, 0n, 0n, 0n, 1n);
+    const { provider } = mockEthCallProvider([slot0]);
+    const quoter = new Quoter(provider);
+    deepStrictEqual(
+      await quoter.tokenPrice('USDC', 'uniswap-v3', {
+        poolAddress: pool,
+        token0: USDC,
+        token1: DAI,
+      }),
+      1
+    );
+  });
+  should('quotes ERC-4626 vault conversions', async () => {
+    const vault = '0x0c6aec603d48ebf1cecc7b247a2c3da08b398dc1';
+    const asset = '0x1abaea1f7c830bd89acc67ec4af516284b1bc33c';
+    const { provider } = mockEthCallProvider([encodeWords(102n), encodeWords(98n)]);
+    const quoter = new Quoter(provider);
+    const params = { vaultAddress: vault, assetAddress: asset };
+    deepStrictEqual(await quoter.rate(100n, 'erc4626', { ...params, direction: 'forward' }), 102n);
+    deepStrictEqual(await quoter.rate(100n, 'erc4626', { ...params, direction: 'reverse' }), 98n);
+  });
+  should('Quoter dispatches provider rate calls', async () => {
+    const USDC = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48';
+    const WETH = '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2';
+    const pair = '0xb4e16d0168e52d35cacd2c6185b44281ec28c9dc';
+    const reserves = encodeWords(2_000_000_000n, 1_000_000_000_000_000_000n, 0n);
+    const { provider } = mockEthCallProvider([reserves, reserves, encodeWords(102n)]);
+    const quoter = new Quoter(provider);
+    deepStrictEqual(
+      await quoter.rate(1_000_000n, 'uniswap-v2', {
+        pairAddress: pair,
+        token0: USDC,
+        token1: WETH,
+        tokenIn: USDC,
+      }),
+      500000000000000n
+    );
+    deepStrictEqual(
+      await quoter.rate(1_000_000_000_000_000_000n, 'uniswap-v2', {
+        pairAddress: pair,
+        token0: USDC,
+        token1: WETH,
+        tokenIn: WETH,
+      }),
+      2_000_000_000n
+    );
+    deepStrictEqual(
+      await quoter.rate(100n, 'erc4626', {
+        vaultAddress: '0x0c6aec603d48ebf1cecc7b247a2c3da08b398dc1',
+        assetAddress: '0x1abaea1f7c830bd89acc67ec4af516284b1bc33c',
+      }),
+      102n
+    );
   });
   should('awaitDeep preserves null leaves', async () => {
     deepStrictEqual(await awaitDeep({ a: null, b: [Promise.resolve(1), null] }, false), {

@@ -2,28 +2,35 @@ import {
   Web3Provider as _Web3Provider,
   calcTransfersDiff as _calcTransfersDiff,
 } from './net/archive.ts';
-import _Chainlink from './net/chainlink.ts';
 import _ENS from './net/ens.ts';
+import { Quoter as _Quoter } from './net/quoter.ts';
 import _UniswapV2 from './net/uniswap-v2.ts';
 import _UniswapV3 from './net/uniswap-v3.ts';
+export type {
+  ChainlinkPriceOpt,
+  QuoterOpt,
+  QuoterERC4626RateParams,
+  QuoterPriceProvider,
+  QuoterRateParams,
+  QuoterRateProvider,
+  QuoterUniswapV2RateParams,
+  QuoterUniswapV3RateParams,
+  RateDirection,
+  UniswapPriceInOpt,
+  UniswapPriceOpt,
+  UniswapV2AutoOpt,
+  UniswapV2PriceOpt,
+  UniswapV3AutoOpt,
+  UniswapV3PriceOpt,
+} from './net/quoter.ts';
+export { QUOTER_TOKENS } from './net/quoter_tokens.ts';
 
 // There are many low level APIs inside which are not exported yet.
 /**
- * Chainlink price-feed client helpers.
- * @param net - Web3 provider used for on-chain reads.
- * @example
- * Reuse the same RPC wrapper shown in the README network examples.
- * ```ts
- * import { jsonrpc } from 'micro-ftch';
- * import { Chainlink, Web3Provider } from 'micro-eth-signer/net.js';
- * const prov = new Web3Provider(jsonrpc(fetch, 'http://localhost:8545'));
- * const link = new Chainlink(prov);
- * async function main() {
- *   await link.coinPrice('BTC');
- * }
- * ```
+ * Unified asset price and rate quoter facade.
+ * Uses Chainlink by default for prices and accepts provider-specific params.
  */
-export const Chainlink = _Chainlink;
+export const Quoter = _Quoter;
 /**
  * ENS lookup helpers backed by a Web3 provider.
  * @param net - Web3 provider used for ENS registry and resolver reads.
