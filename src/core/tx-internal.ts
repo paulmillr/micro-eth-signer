@@ -540,6 +540,8 @@ function minmax(
 }
 export const calcIntrinsicGas = (type: TxType, data: Record<string, any>): bigint => {
   let gas = amounts.minGasLimit;
+  // Yellow paper G_txcreate: contract-creation transactions add 32000 gas.
+  if (data.to === '0x') gas += BigInt(32000);
   if (typeof data.data === 'string') {
     let bytes: Uint8Array | undefined;
     try {
