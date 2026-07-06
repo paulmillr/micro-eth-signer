@@ -309,7 +309,7 @@ function normalizePassword(s: string): string {
 function UUIDv4(buf: TArg<Uint8Array>): string {
   // Clone before setting version/variant bits so callers keep the original 16
   // random bytes unchanged.
-  buf = Uint8Array.from(buf);
+  buf = Uint8Array.from(abytes(buf, 16, 'uuid'));
   // UUID version
   buf[6] = (buf[6] & 0x0f) | 0x40;
   // RFC 4122
@@ -394,7 +394,7 @@ function validateKeystore<T extends KDFType>(store: Keystore<T>, strict = true) 
   }
   if (strict) {
     if (!KDFS[crypto.kdf.function])
-      throw new Error('keystore: only script and pbkdf2 kdf supported in version 4');
+      throw new Error('keystore: only scrypt and pbkdf2 kdf supported in version 4');
     if (crypto.checksum.function !== 'sha256')
       throw new Error('keystore: only sha256 checksum supported in version 4');
     if (crypto.cipher.function !== 'aes-128-ctr')
@@ -463,26 +463,32 @@ export function decryptEIP2335Keystore<T extends KDFType>(
 ): TRet<Uint8Array> {
   validateKeystore(store);
   const c = store.crypto;
-  const checksumProvided = c.checksum.message;
+  // Serialized hex may be 0x-prefixed or uppercase; normalize before comparing.
+  const checksumProvided = strip0x(c.checksum.message).toLowerCase();
   const ciphertext = hexToBytes(c.cipher.message);
   const salt = hexToBytes(c.kdf.params.salt);
   const iv = hexToBytes(c.cipher.params.iv);
   const key = deriveEIP2335Key(password, salt, c.kdf.function, c.kdf.params);
-  // verify checksum
-  const checksum = bytesToHex(sha256(concatBytes(key.subarray(16, 32), ciphertext)));
-  if (checksum !== checksumProvided)
-    throw new Error(`Checksum ${checksum} does not match ${checksumProvided}`);
-  // decrypt
-  const secret = ctr(key.subarray(0, 16), iv).decrypt(ciphertext);
-  // verify pubkey
-  // NOTE: it is optional, and encrypted value is not neccesarily private key according to EIP2335
-  if (store.pubkey !== undefined) {
-    const publicKey = bytesToHex(bls12_381.longSignatures.getPublicKey(secret).toBytes());
-    if (publicKey !== store.pubkey)
-      throw new Error(`Pubkey ${publicKey} does not match ${store.pubkey}`);
+  try {
+    // verify checksum
+    const checksum = bytesToHex(sha256(concatBytes(key.subarray(16, 32), ciphertext)));
+    if (checksum !== checksumProvided)
+      throw new Error(`Checksum ${checksum} does not match ${checksumProvided}`);
+    // decrypt
+    const secret = ctr(key.subarray(0, 16), iv).decrypt(ciphertext);
+    // verify pubkey
+    // NOTE: it is optional, and encrypted value is not neccesarily private key according to EIP2335
+    if (store.pubkey !== undefined) {
+      const publicKey = bytesToHex(bls12_381.longSignatures.getPublicKey(secret).toBytes());
+      if (publicKey !== strip0x(store.pubkey).toLowerCase()) {
+        clean(secret);
+        throw new Error(`Pubkey ${publicKey} does not match ${store.pubkey}`);
+      }
+    }
+    return secret;
+  } finally {
+    clean(key, iv, ciphertext);
   }
-  clean(key, iv, ciphertext);
-  return secret;
 }
 
 /**
@@ -566,7 +572,7 @@ export class EIP2335Keystore<T extends KDFType> {
     if (typeof description !== 'string') throw new Error('description should be string');
     const { key, kdf, salt } = this;
     const ciphertext = ctr(key.subarray(0, 16), iv).encrypt(secret);
-    const checksum = bytesToHex(sha256(concatBytes(key.subarray(16), ciphertext)));
+    const checksum = bytesToHex(sha256(concatBytes(key.subarray(16, 32), ciphertext)));
     const res: Keystore<T> = {
       version: 4,
       description,
@@ -657,9 +663,11 @@ export function createDerivedEIP2334Keystores<T extends KDFType>(
     if (!Number.isSafeInteger(i) || i < 0 || i > 2 ** 20 - 1) throw new Error('Invalid key index');
   }
   const ctx = new EIP2335Keystore(password, kdf);
-  const res = indexes.map((i) => ctx.createDerivedEIP2334(seed, keyType, i));
-  ctx.clean();
-  return res;
+  try {
+    return indexes.map((i) => ctx.createDerivedEIP2334(seed, keyType, i));
+  } finally {
+    ctx.clean();
+  }
 }
 
 // Internal methods for test purposes only
@@ -771,15 +779,17 @@ function prepareBytes(
   if (typeof value === 'string') {
     const hex = strip0x(value);
     const expectsLen = hexLength !== undefined;
-    if (hex.length === 0 && !expectsLen) return Uint8Array.of();
-    if (hex.length % 2 !== 0 || (expectsLen && hex.length !== hexLength))
+    // Empty salt makes the KDF password-only; require explicit non-empty values.
+    if (hex.length === 0 || hex.length % 2 !== 0 || (expectsLen && hex.length !== hexLength))
       throw new Error(
-        `invalid ${name}: expected string or Uint8Array of length ${hexLength ?? randomLength}`
+        `invalid ${name}: expected non-empty string or Uint8Array of length ${hexLength ?? randomLength}`
       );
     return hexToBytes(hex);
   }
   if (isBytes(value)) {
-    abytes(value, hexLength === undefined ? undefined : randomLength);
+    if (hexLength === undefined) {
+      if (value.length === 0) throw new Error(`invalid ${name}: expected non-empty Uint8Array`);
+    } else abytes(value, randomLength);
     return Uint8Array.from(value);
   }
   throw new Error(`invalid ${name}: expected string or Uint8Array`);
@@ -929,10 +939,11 @@ export async function privToLegacyKeystore(
   opts?: TArg<EncryptedJsonOpts>
 ): Promise<TRet<LegacyKeystore>> {
   const key = assertPriv(typeof privKey === 'string' ? fromHex(privKey) : privKey);
-  const params = prepEncParams(opts);
-  const cryptoKdfParams = prepEncKdf(params);
-  const derivedKey = await deriveKey(password, params.kdf, cryptoKdfParams);
+  let derivedKey: Uint8Array | undefined;
   try {
+    const params = prepEncParams(opts);
+    const cryptoKdfParams = prepEncKdf(params);
+    derivedKey = await deriveKey(password, params.kdf, cryptoKdfParams);
     const ciphertext = initCipher(params.cipher, derivedKey.subarray(0, 16), params.iv).encrypt(
       key
     );
@@ -951,7 +962,8 @@ export async function privToLegacyKeystore(
       },
     };
   } finally {
-    clean(derivedKey);
+    clean(key);
+    if (derivedKey) clean(derivedKey);
   }
 }
 

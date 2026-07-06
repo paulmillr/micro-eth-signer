@@ -1,16 +1,18 @@
 /*! micro-eth-signer - MIT License (c) 2021 Paul Miller (paulmillr.com) */
 import { keccak_256 } from '@noble/hashes/sha3.js';
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils.js';
-import { type UnwrapCoder } from 'micro-packed';
 import { addr } from './address.ts';
 import {
   RawTx,
   TxVersions,
   calcIntrinsicGas,
   decodeLegacyV,
+  encodeRawTx,
+  isTxType,
   removeSig,
   sortRawData,
   validateFields,
+  type AccessList,
   type TxCoder,
   type TxType,
 } from './tx-internal.ts';
@@ -33,48 +35,37 @@ import {
 
 // Transaction-related utils.
 
+type DefaultType = 'eip1559';
 // Defaultable fields are pre-filled when the selected tx type exposes them.
-const TX_DEFAULTS = {
+const TX_DEFAULTS: {
+  accessList: AccessList;
+  chainId: bigint;
+  data: string;
+  gasLimit: bigint;
+  maxPriorityFeePerGas: bigint;
+  type: DefaultType;
+} = {
   accessList: [], // needs to be .slice()-d to create new reference
   // EIP-7702 authorizationList must be caller-provided and non-empty, so it has no default.
-  chainId: BigInt(1) satisfies bigint as bigint, // mainnet
+  chainId: BigInt(1), // mainnet
   data: '',
   // TODO: investigate if limit is smaller in eip4844 txs.
-  gasLimit: BigInt(21000) satisfies bigint as bigint,
+  gasLimit: BigInt(21000),
   // Reduce fingerprinting by using standard, popular value.
-  maxPriorityFeePerGas: (BigInt(1) * amounts.GWEI) satisfies bigint as bigint,
+  maxPriorityFeePerGas: BigInt(1) * amounts.GWEI,
   type: 'eip1559',
-} as const;
+};
 const GAS_PER_BLOB = /* @__PURE__ */ BigInt(131072);
 type DefaultField = keyof typeof TX_DEFAULTS;
-type DefaultType = (typeof TX_DEFAULTS)['type'];
 type DefaultsOptional<T> = {
   [P in keyof T as P extends DefaultField ? P : never]?: T[P];
 } & {
   [P in keyof T as P extends DefaultField ? never : P]: T[P];
 };
 type HumanInputInner<T extends TxType> = DefaultsOptional<{ type: T } & TxCoder<T>>;
-type HumanInputInnerDefault = DefaultsOptional<TxCoder<DefaultType>>;
-type Required<T> = T extends undefined ? never : T;
-type HumanInput<T extends TxType | undefined> = T extends undefined
-  ? HumanInputInnerDefault
-  : HumanInputInner<Required<T>>;
-type TxVersions = typeof TxVersions;
-type SpecifyVersion<T extends TxType[]> = UnwrapCoder<
-  {
-    [K in keyof TxVersions]: K extends T[number] ? TxVersions[K] : never;
-  }[keyof TxVersions]
->;
-type SpecifyVersionNeg<T extends TxType[]> = UnwrapCoder<
-  Exclude<
-    {
-      [K in keyof TxVersions]: TxVersions[K];
-    }[keyof TxVersions],
-    {
-      [K in keyof TxVersions]: K extends T[number] ? TxVersions[K] : never;
-    }[keyof TxVersions]
-  >
->;
+type HumanInputInnerDefault = DefaultsOptional<TxCoder<DefaultType>> & { type?: undefined };
+// Discriminated (type, raw) view of a Transaction: checking `tx.type` narrows `tx.raw`.
+type TxUnion = { [K in TxType]: { type: K; raw: TxCoder<K> } }[TxType];
 
 // Changes:
 // - legacy: instead of hardfork now accepts additional param chainId
@@ -100,20 +91,20 @@ export class Transaction<T extends TxType> {
     this.isSigned = typeof this.raw.r === 'bigint' && typeof this.raw.s === 'bigint';
   }
   // Defaults
-  static prepare<T extends { type: undefined }>(
-    data: T & HumanInputInnerDefault,
+  static prepare(data: HumanInputInnerDefault, strict?: boolean): Transaction<DefaultType>;
+  static prepare<T extends TxType>(
+    data: { type: T } & HumanInputInner<T>,
     strict?: boolean
-  ): Transaction<(typeof TX_DEFAULTS)['type']>;
-  static prepare<TT extends TxType, T extends { type: TT } & HumanInput<TT>>(
-    data: HumanInput<TT>,
-    strict?: boolean
-  ): Transaction<T['type']>;
-  static prepare<T extends TxType>(data: HumanInput<T>, strict = true): Transaction<T> {
+  ): Transaction<T>;
+  static prepare<T extends TxType>(
+    data: HumanInputInner<T> | HumanInputInnerDefault,
+    strict = true
+  ): Transaction<T> {
     if (!isObject(data)) throw new TypeError('"data" expected object, got type=' + typeof data);
     const type = (data.type !== undefined ? data.type : TX_DEFAULTS.type) as T;
-    if (!TxVersions.hasOwnProperty(type)) throw new Error(`wrong transaction type=${type}`);
+    if (!isTxType(type)) throw new Error(`wrong transaction type=${type}`);
     const coder = TxVersions[type];
-    const fields = new Set(coder.fields as string[]);
+    const fields = new Set<string>(coder.fields);
     const hasGasLimit = Object.hasOwn(data, 'gasLimit');
     // Copy default fields, but only if the field is present on the tx type.
     const raw: Record<string, any> = { type };
@@ -128,7 +119,7 @@ export class Transaction<T extends TxType> {
     // Preserve normalized default type when callers pass the supported `{ type: undefined }` shape.
     raw.type = type;
     if (!hasGasLimit && fields.has('gasLimit')) raw.gasLimit = calcIntrinsicGas(type, raw);
-    return new Transaction(type, sortRawData(raw), strict, false);
+    return new Transaction(type, sortRawData(raw as TxCoder<T>), strict, false);
   }
   /**
    * Creates transaction which sends whole account balance. Does two things:
@@ -162,25 +153,25 @@ export class Transaction<T extends TxType> {
     if (amountToSend <= _0n) throw new Error('account balance must be bigger than fee of ' + fee);
     const raw = { ...this.raw, value: amountToSend };
     if (!['legacy', 'eip2930'].includes(this.type) && burnRemaining) {
-      const r = raw as SpecifyVersionNeg<['legacy', 'eip2930']>;
+      const r = raw as TxCoder<'eip1559' | 'eip4844' | 'eip7702'>;
       r.maxPriorityFeePerGas = r.maxFeePerGas;
     }
     return new Transaction(this.type, raw, this.strict);
   }
-  static fromRawBytes(
-    bytes: Uint8Array,
-    strict = false
-  ): Transaction<'legacy' | 'eip2930' | 'eip1559' | 'eip4844' | 'eip7702'> {
+  static fromRawBytes(bytes: Uint8Array, strict = false): Transaction<TxType> {
     const raw = RawTx.decode(bytes);
     return new Transaction(raw.type, raw.data, strict);
   }
-  static fromHex(
-    hex: string,
-    strict = false
-  ): Transaction<'eip1559' | 'legacy' | 'eip2930' | 'eip4844' | 'eip7702'> {
+  static fromHex(hex: string, strict = false): Transaction<TxType> {
     return Transaction.fromRawBytes(ethHexNoLeadingZero.decode(hex), strict);
   }
-  private assertIsSigned() {
+  // Discriminated view of `this`, so methods can narrow `raw` by checking `type`.
+  private asUnion(): TxUnion {
+    return this as unknown as TxUnion;
+  }
+  private assertIsSigned(): asserts this is Transaction<T> & {
+    raw: TxCoder<T> & { r: bigint; s: bigint; yParity: number };
+  } {
     if (!this.isSigned) throw new Error('expected signed transaction');
   }
   /**
@@ -189,13 +180,13 @@ export class Transaction<T extends TxType> {
    */
   toBytes(includeSignature: boolean = this.isSigned): Uint8Array {
     // cloneDeep is not necessary here
-    let data = Object.assign({}, this.raw);
+    const data = Object.assign({}, this.raw);
     if (includeSignature) {
       this.assertIsSigned();
     } else {
       removeSig(data);
     }
-    return RawTx.encode({ type: this.type, data } as any); // TODO: remove any
+    return encodeRawTx(this.type, data);
   }
   /**
    * Converts transaction to hex.
@@ -224,25 +215,21 @@ export class Transaction<T extends TxType> {
   }
   /** Calculates MAXIMUM fee in wei that could be spent. */
   get fee(): bigint {
-    const { type, raw } = this;
+    const tx = this.asUnion();
     // Fee calculation is not exact, real fee can be smaller
     let gasFee;
-    if (type === 'legacy' || type === 'eip2930') {
-      // Because TypeScript is not smart enough to narrow down types here :(
-      const r = raw as SpecifyVersion<['legacy', 'eip2930']>;
-      gasFee = r.gasPrice;
+    if (tx.type === 'legacy' || tx.type === 'eip2930') {
+      gasFee = tx.raw.gasPrice;
     } else {
-      const r = raw as SpecifyVersionNeg<['legacy', 'eip2930']>;
       // maxFeePerGas is absolute limit, you never pay more than that
       // maxFeePerGas = baseFeePerGas[*2] + maxPriorityFeePerGas
-      gasFee = r.maxFeePerGas;
+      gasFee = tx.raw.maxFeePerGas;
     }
-    let res = raw.gasLimit * gasFee;
-    if (type === 'eip4844') {
-      const r = raw as SpecifyVersion<['eip4844']>;
+    let res = tx.raw.gasLimit * gasFee;
+    if (tx.type === 'eip4844') {
       // EIP-4844 §Execution layer validation: max_total_fee includes
       // GAS_PER_BLOB * blob_count * max_fee_per_blob_gas, with GAS_PER_BLOB = 2**17.
-      res += GAS_PER_BLOB * BigInt(r.blobVersionedHashes.length) * r.maxFeePerBlobGas;
+      res += GAS_PER_BLOB * BigInt(tx.raw.blobVersionedHashes.length) * tx.raw.maxFeePerBlobGas;
     }
     return res;
   }
@@ -252,7 +239,7 @@ export class Transaction<T extends TxType> {
   verifySignature(): boolean {
     this.assertIsSigned();
     const { r, s, yParity } = this.raw;
-    const sig = initSig({ r: r!, s: s! }, yParity!);
+    const sig = initSig({ r, s }, yParity);
     // EIP-2 high-s tx signatures are structurally decodable but invalid, so
     // this boolean verifier returns false while malformed signature fields still throw above.
     if (sig.hasHighS()) return false;
@@ -288,7 +275,7 @@ export class Transaction<T extends TxType> {
   recoverSender(): { publicKey: string; address: string } {
     this.assertIsSigned();
     const { r, s, yParity } = this.raw;
-    const sig = initSig({ r: r!, s: s! }, yParity!);
+    const sig = initSig({ r, s }, yParity);
     // Will crash on 'chainstart' hardfork
     if (sig.hasHighS()) throw new Error('invalid s');
     const publicKey = secp256k1.recoverPublicKey(sig.toBytes('recovered'), this.calcHash(false), {

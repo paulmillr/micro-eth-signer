@@ -17,13 +17,12 @@ import {
   type TRet,
 } from '../utils.ts';
 import { addr } from './address.ts';
-import { RLP } from './rlp.ts';
+import { RLP, type RLPInput } from './rlp.ts';
 
 // Transaction parsers
 
 const _0n = /* @__PURE__ */ BigInt(0);
 
-export type AnyCoder = Record<string, P.Coder<any, any>>;
 export type AnyCoderStream = Record<string, P.CoderType<any>>;
 
 // EIP-2718 (very ambigious)
@@ -37,14 +36,18 @@ type VersionType<V extends AnyCoderStream> = {
 export type TxCoder<T extends TxType> = P.UnwrapCoder<(typeof TxVersions)[T]>;
 
 const createTxMap = <T extends AnyCoderStream>(versions: T): P.CoderType<VersionType<T>> => {
+  type Entry = { type: string; ver: number; coder: P.CoderType<any> };
   const ent = Object.entries(versions);
   // Typed transaction bytes come from TxVersions insertion order, so that object must stay aligned
   // with the EIP-assigned 0x01/0x02/0x03/0x04 values for eip2930/eip1559/eip4844/eip7702.
   // 'legacy' => {type, ver, coder}
-  const typeMap = Object.fromEntries(ent.map(([type, coder], ver) => [type, { type, ver, coder }]));
+  const typeMap: Record<string, Entry> = Object.fromEntries(
+    ent.map(([type, coder], ver): [string, Entry] => [type, { type, ver, coder }])
+  );
   // '0' => {type, ver, coder}
-  const verMap = Object.fromEntries(ent.map(([type, coder], ver) => [ver, { type, ver, coder }]));
-  // @ts-ignore
+  const verMap: Record<string, Entry> = Object.fromEntries(
+    ent.map(([type, coder], ver): [string, Entry] => [ver.toString(), { type, ver, coder }])
+  );
   return P.wrap({
     encodeStream(w: P.Writer, value: VersionType<T>) {
       const t = value.type as string;
@@ -53,7 +56,7 @@ const createTxMap = <T extends AnyCoderStream>(versions: T): P.CoderType<Version
       if (t !== 'legacy') w.byte(curr.ver);
       curr.coder.encodeStream(w, value.data);
     },
-    decodeStream(r: P.Reader) {
+    decodeStream(r: P.Reader): VersionType<T> {
       const v = r.byte(true);
       if (v === 0xff) throw new Error('reserved version 0xff');
       // TODO: version=0 is legacy, but it is never wrapped in test vectors
@@ -63,9 +66,9 @@ const createTxMap = <T extends AnyCoderStream>(versions: T): P.CoderType<Version
         const curr = verMap[v];
         r.byte(false); // skip first byte
         const d = curr.coder.decodeStream(r);
-        return { type: curr.type, data: d };
+        return { type: curr.type, data: d } as VersionType<T>;
       }
-      return { type: 'legacy', data: typeMap.legacy.coder.decodeStream(r) };
+      return { type: 'legacy', data: typeMap.legacy.coder.decodeStream(r) } as VersionType<T>;
     },
   });
 };
@@ -78,7 +81,7 @@ const createTxMap = <T extends AnyCoderStream>(versions: T): P.CoderType<Version
 const isOptBig = (a: unknown) => a === undefined || typeof a === 'bigint';
 const isNullOr0 = (a: unknown) => a === undefined || a === BigInt(0);
 
-function assertYParityValid(elm: number) {
+function assertYParityValid(elm: number | undefined) {
   // All current callers use secp256k1 recovery parity, so only recovery ids 0 and 1 are valid here.
   // TODO: is this correct? elm = 0 default?
   if (elm === undefined) elm = 0;
@@ -224,29 +227,19 @@ const mkAccessListItem = /* @__PURE__ */ (): TRet<AccessListItemCoder> =>
   struct({ address: addrCoder, storageKeys: array(Bytes32) }) as TRet<AccessListItemCoder>;
 export type AccessList = CoderOutput<ReturnType<typeof mkAccessListItem>>[];
 
-export const authorizationRequest: TRet<
-  P.Coder<
-    Bytes[],
-    {
-      chainId: bigint;
-      address: string;
-      nonce: bigint;
-    }
-  >
-> = /* @__PURE__ */ struct({
+type AuthorizationRequestCoder = P.Coder<
+  Bytes[],
+  {
+    chainId: bigint;
+    address: string;
+    nonce: bigint;
+  }
+>;
+export const authorizationRequest: TRet<AuthorizationRequestCoder> = /* @__PURE__ */ struct({
   chainId: U256BE,
   address: addrCoder,
   nonce: U64BE,
-}) as TRet<
-  P.Coder<
-    Bytes[],
-    {
-      chainId: bigint;
-      address: string;
-      nonce: bigint;
-    }
-  >
->;
+}) as TRet<AuthorizationRequestCoder>;
 // [chain_id, address, nonce, y_parity, r, s]
 type AuthorizationItemCoder = P.Coder<
   [Bytes, Bytes, Bytes, Bytes, Bytes, Bytes],
@@ -314,25 +307,26 @@ const coders: TxCoders = /* @__PURE__ */ (() => ({
 }))();
 type Coders = TxCoders;
 type CoderName = keyof Coders;
-const signatureFields = new Set(['v', 'yParity', 'r', 's'] as const);
+// Element type is string (not a union) because consumers test arbitrary user-provided keys.
+const signatureFields: ReadonlySet<string> = /* @__PURE__ */ new Set(['v', 'yParity', 'r', 's']);
 
 type FieldType<T> = T extends P.Coder<any, infer U> ? U : T;
 // Could be 'T | (T & O)', to make sure all partial fields either present or absent together
 // But it would make accesing them impossible, because of typescript stuff:
 type OptFields<T, O> = T & Partial<O>;
 type FieldCoder<C> = P.CoderType<C> & {
-  fields: CoderName[];
-  optionalFields: CoderName[];
-  setOfAllFields: Set<CoderName | 'type'>;
+  fields: readonly CoderName[];
+  optionalFields: readonly CoderName[];
+  setOfAllFields: ReadonlySet<string>;
 };
 type TxFieldCoder<T extends readonly CoderName[], ST extends readonly CoderName[]> = FieldCoder<
   OptFields<{ [K in T[number]]: FieldType<Coders[K]> }, { [K in ST[number]]: FieldType<Coders[K]> }>
 >;
 
 // Mutates raw. Make sure to copy it in advance
-export function removeSig(raw: TxCoder<any>): TxCoder<any> {
+export function removeSig<T extends object>(raw: T): T {
   signatureFields.forEach((k) => {
-    delete raw[k];
+    delete (raw as Record<string, unknown>)[k];
   });
   return raw;
 }
@@ -362,7 +356,7 @@ const txStruct = <T extends readonly CoderName[], ST extends readonly CoderName[
   const isEmpty = (item: any & { length: number }) => item.length === 0;
   // TX is a bunch of fields in specific order. Field like nonce must always be at the same index.
   // We walk through all indexes in proper order.
-  const fcoder: any = P.wrap({
+  const fcoder = P.wrap({
     encodeStream(w, raw: Record<string, any>) {
       // If at least one optional key is present, we add whole optional block
       const hasOptional = optf.some((f) => Object.hasOwn(raw, f));
@@ -378,33 +372,39 @@ const txStruct = <T extends readonly CoderName[], ST extends readonly CoderName[
       const sCoder = length === optl ? allS : reqS;
       if (length === optl && optf.every((_, i) => isEmpty(decoded[optFieldAt(i)])))
         throw new Error('all optional fields empty');
-      // @ts-ignore TODO: fix type (there can be null in RLP)
-      return sCoder.encode(decoded);
+      // RLP decode yields bytes/nested arrays/null; per-field coders validate each position.
+      return sCoder.encode(decoded as never);
     },
-  });
+  }) as unknown as TxFieldCoder<T, ST>;
 
   fcoder.fields = reqf;
   fcoder.optionalFields = optf;
-  fcoder.setOfAllFields = new Set(allFields.concat(['type'] as any));
+  fcoder.setOfAllFields = new Set<string>([...allFields, 'type']);
   return fcoder as TRet<TxFieldCoder<T, ST>>;
 };
 
+// Field lists are single-source-of-truth consts: both the runtime coders and their
+// type annotations derive from them, so the two cannot drift apart.
+const sigFieldNames = ['yParity', 'r', 's'] as const;
+const legacyFields = ['nonce', 'gasPrice', 'gasLimit', 'to', 'value', 'data'] as const;
+const legacySigFieldNames = ['v', 'r', 's'] as const;
 // prettier-ignore
-const legacyInternal: FieldCoder<OptFields<{
-  nonce: bigint;
-  gasPrice: bigint;
-  gasLimit: bigint;
-  to: string;
-  value: bigint;
-  data: string;
-}, {
-  r: bigint;
-  s: bigint;
-  v: bigint;
-}>> = /* @__PURE__ */ txStruct(
-  ['nonce', 'gasPrice', 'gasLimit', 'to', 'value', 'data'] as const,
-  ['v', 'r', 's'] as const
-);
+const eip2930Fields = [
+  'chainId', 'nonce', 'gasPrice', 'gasLimit', 'to', 'value', 'data', 'accessList'] as const;
+// prettier-ignore
+const eip1559Fields = [
+  'chainId', 'nonce', 'maxPriorityFeePerGas', 'maxFeePerGas', 'gasLimit', 'to', 'value', 'data', 'accessList'] as const;
+// prettier-ignore
+const eip4844Fields = [
+  'chainId', 'nonce', 'maxPriorityFeePerGas', 'maxFeePerGas', 'gasLimit', 'to', 'value', 'data', 'accessList',
+  'maxFeePerBlobGas', 'blobVersionedHashes'] as const;
+// prettier-ignore
+const eip7702Fields = [
+  'chainId', 'nonce', 'maxPriorityFeePerGas', 'maxFeePerGas', 'gasLimit', 'to', 'value', 'data', 'accessList',
+  'authorizationList'] as const;
+
+const legacyInternal: TxFieldCoder<typeof legacyFields, typeof legacySigFieldNames> =
+  /* @__PURE__ */ txStruct(legacyFields, legacySigFieldNames);
 
 type LegacyInternal = P.UnwrapCoder<typeof legacyInternal>;
 type Legacy = Omit<LegacyInternal, 'v'> & { chainId?: bigint; yParity?: number };
@@ -412,56 +412,40 @@ type Legacy = Omit<LegacyInternal, 'v'> & { chainId?: bigint; yParity?: number }
 const legacy: FieldCoder<Legacy> = /* @__PURE__ */ (() => {
   const res = P.apply(legacyInternal, {
     decode: (data: Legacy) => Object.assign({}, data, legacySig.decode(data)),
-    encode: (data: LegacyInternal) => {
-      const res = Object.assign({}, data);
-      (res as any).chainId = undefined;
+    encode: (data: LegacyInternal): Legacy => {
+      const res: Legacy & VRS = Object.assign({}, data, { chainId: undefined });
       if (data.v) {
         const newV = legacySig.encode(data);
         removeSig(res);
         Object.assign(res, newV);
       }
-      return res as Legacy;
+      return res;
     },
   }) as FieldCoder<Legacy>;
-  res.fields = legacyInternal.fields.concat(['chainId'] as const);
+  res.fields = [...legacyInternal.fields, 'chainId'];
   // v, r, s -> yParity, r, s
   // TODO: what about chainId?
-  res.optionalFields = ['yParity', 'r', 's'];
-  res.setOfAllFields = new Set(res.fields.concat(res.optionalFields, ['type'] as any));
+  res.optionalFields = sigFieldNames;
+  res.setOfAllFields = new Set<string>([...res.fields, ...res.optionalFields, 'type']);
   return res;
 })();
 
-// prettier-ignore
-const eip2930: TxFieldCoder<
-  readonly ['chainId', 'nonce', 'gasPrice', 'gasLimit', 'to', 'value', 'data', 'accessList'],
-  readonly ['yParity', 'r', 's']
-> = /* @__PURE__ */ txStruct([
-  'chainId', 'nonce', 'gasPrice', 'gasLimit', 'to', 'value', 'data', 'accessList'] as const,
-  ['yParity', 'r', 's'] as const);
-
-// prettier-ignore
-const eip1559: TxFieldCoder<
-  readonly ['chainId', 'nonce', 'maxPriorityFeePerGas', 'maxFeePerGas', 'gasLimit', 'to', 'value', 'data', 'accessList'],
-  readonly ['yParity', 'r', 's']
-> = /* @__PURE__ */ txStruct([
-  'chainId', 'nonce', 'maxPriorityFeePerGas', 'maxFeePerGas', 'gasLimit', 'to', 'value', 'data', 'accessList'] as const,
-  ['yParity', 'r', 's'] as const);
-// prettier-ignore
-const eip4844: TxFieldCoder<
-  readonly ['chainId', 'nonce', 'maxPriorityFeePerGas', 'maxFeePerGas', 'gasLimit', 'to', 'value', 'data', 'accessList', 'maxFeePerBlobGas', 'blobVersionedHashes'],
-  readonly ['yParity', 'r', 's']
-> = /* @__PURE__ */ txStruct([
-  'chainId', 'nonce', 'maxPriorityFeePerGas', 'maxFeePerGas', 'gasLimit', 'to', 'value', 'data', 'accessList',
-  'maxFeePerBlobGas', 'blobVersionedHashes'] as const,
-  ['yParity', 'r', 's'] as const);
-// prettier-ignore
-const eip7702: TxFieldCoder<
-  readonly ['chainId', 'nonce', 'maxPriorityFeePerGas', 'maxFeePerGas', 'gasLimit', 'to', 'value', 'data', 'accessList', 'authorizationList'],
-  readonly ['yParity', 'r', 's']
-> = /* @__PURE__ */ txStruct([
-  'chainId', 'nonce', 'maxPriorityFeePerGas', 'maxFeePerGas', 'gasLimit', 'to', 'value', 'data', 'accessList',
-  'authorizationList'] as const,
-  ['yParity', 'r', 's'] as const);
+const eip2930: TxFieldCoder<typeof eip2930Fields, typeof sigFieldNames> = /* @__PURE__ */ txStruct(
+  eip2930Fields,
+  sigFieldNames
+);
+const eip1559: TxFieldCoder<typeof eip1559Fields, typeof sigFieldNames> = /* @__PURE__ */ txStruct(
+  eip1559Fields,
+  sigFieldNames
+);
+const eip4844: TxFieldCoder<typeof eip4844Fields, typeof sigFieldNames> = /* @__PURE__ */ txStruct(
+  eip4844Fields,
+  sigFieldNames
+);
+const eip7702: TxFieldCoder<typeof eip7702Fields, typeof sigFieldNames> = /* @__PURE__ */ txStruct(
+  eip7702Fields,
+  sigFieldNames
+);
 
 export const TxVersions = {
   legacy, // 0x00 (kinda)
@@ -493,25 +477,31 @@ export const RawTx = /* @__PURE__ */ (() =>
     decode: (data) => data,
   }))();
 
+type RlpTxCoder = P.CoderType<{
+  type: TxType;
+  data: RLPInput;
+}>;
 /**
  * Unchecked TX for debugging. Returns raw Uint8Array-s.
  * Handles versions - plain RLP will crash on it.
  */
-export const RlpTx: TRet<
-  P.CoderType<{
-    type: string;
-    data: import('./rlp.ts').RLPInput;
-  }>
-> = /* @__PURE__ */ (() =>
-  createTxMap(Object.fromEntries(Object.keys(TxVersions).map((k) => [k, RLP]))))() as TRet<
-  P.CoderType<{
-    type: string;
-    data: import('./rlp.ts').RLPInput;
-  }>
->;
+export const RlpTx: TRet<RlpTxCoder> = /* @__PURE__ */ (() =>
+  createTxMap(
+    Object.fromEntries(Object.keys(TxVersions).map((k) => [k, RLP]))
+  ))() as TRet<RlpTxCoder>;
 
 // Field-related utils
 export type TxType = keyof typeof TxVersions;
+
+/** Runtime guard for supported transaction type names. */
+export function isTxType(type: unknown): type is TxType {
+  return typeof type === 'string' && TxVersions.hasOwnProperty(type);
+}
+
+/** Encodes (type, raw) into EIP-2718 bytes; correlates the type with its raw data shape. */
+export function encodeRawTx<T extends TxType>(type: T, data: TxCoder<T>): Uint8Array {
+  return RawTx.encode({ type, data } as VersionType<typeof TxVersions>);
+}
 
 // prettier-ignore
 // Basically all numbers. Can be useful if we decide to do converter from hex here
@@ -519,7 +509,7 @@ export type TxType = keyof typeof TxVersions;
 //   'nonce', 'maxPriorityFeePerGas', 'maxFeePerGas', 'gasLimit', 'value', 'yParity', 'r', 's'
 // ] as const;
 
-function abig(val: bigint) {
+function abig(val: unknown): asserts val is bigint {
   if (typeof val !== 'bigint') throw new Error('value must be bigint');
 }
 function aobj(val: Record<string, any>) {
@@ -583,7 +573,11 @@ type ValidationOpts = { strict: boolean; type: TxType; data: Record<string, any>
 // NOTE: non-strict validators can be removed (RawTx will handle that), but errors will be less user-friendly.
 // On other hand, we twice per sig because tx is immutable
 // data passed for composite checks (gasLimit * maxFeePerGas overflow and stuff) [not implemented yet]
-const validators: Record<string, (num: any, { strict, type, data }: ValidationOpts) => void> = {
+// Mapped over CoderName so a typo'd key is a compile error and each validator
+// gets the real (already-decoded) type of its field.
+const validators: {
+  [K in CoderName]?: (val: FieldType<Coders[K]>, opts: ValidationOpts) => void;
+} = {
   nonce(num: bigint, { strict }: ValidationOpts) {
     abig(num);
     if (strict) minmax(num, _0n, amounts.maxNonce);
@@ -640,7 +634,7 @@ const validators: Record<string, (num: any, { strict, type, data }: ValidationOp
     if (data.to === '0x' && initcodeHexLen > 2 * amounts.maxInitDataSize)
       throw new Error(`initcode is too big: ${initcodeHexLen}`);
   },
-  chainId(num: bigint, { strict, type, data }: ValidationOpts) {
+  chainId(num: bigint | undefined, { strict, type, data }: ValidationOpts) {
     // chainId is optional for legacy transactions
     if (type === 'legacy' && num === undefined) return;
     abig(num);
@@ -682,7 +676,7 @@ const validators: Record<string, (num: any, { strict, type, data }: ValidationOp
       // EIP-7702 uses auth chain_id = 0 as the any-chain sentinel; non-zero ids are uint256-bound.
       abig(chainId);
       if (opts.strict) minmax(chainId, _0n, amounts.maxUint256, '>= 0 and < 2**256');
-      this.nonce(nonce, opts);
+      validators.nonce!(nonce, opts);
     }
   },
 };
@@ -706,7 +700,7 @@ export function validateFields(
   allowSignatureFields = true
 ): void {
   aobj(data);
-  if (!TxVersions.hasOwnProperty(type)) throw new Error(`unknown tx type=${type}`);
+  if (!isTxType(type)) throw new Error(`unknown tx type=${type}`);
   const txType = TxVersions[type];
   const dataFields = new Set(Object.keys(data));
   const dataHas = (field: string) => dataFields.has(field);
@@ -718,7 +712,10 @@ export function validateFields(
     }
     const val = data[field];
     try {
-      if (validators.hasOwnProperty(field)) validators[field](val, { data, strict, type });
+      const validator = validators[field];
+      // Widening cast: `val` comes from untrusted input, each validator checks its own type.
+      if (validator)
+        (validator as (val: unknown, opts: ValidationOpts) => void)(val, { data, strict, type });
       // Pre-EIP-155 legacy txs can carry explicit `chainId: undefined`; real ids still need U256 bounds.
       if (type === 'legacy' && field === 'chainId' && val === undefined) return;
       coders[field].decode(val as never); // decoding may throw an error
@@ -735,9 +732,9 @@ export function validateFields(
 
   // Check if user data has unexpected fields
   const unexpErrs = Object.keys(data).map((field) => {
-    if (!txType.setOfAllFields.has(field as any))
+    if (!txType.setOfAllFields.has(field))
       return { field, error: `unknown field "${field}" for tx type=${type}` };
-    if (!allowSignatureFields && signatureFields.has(field as any)) {
+    if (!allowSignatureFields && signatureFields.has(field)) {
       return {
         field,
         error: `field "${field}" is sig-related and must not be user-specified`,
@@ -759,21 +756,21 @@ const sortedFieldOrder = [
   'r', 's', 'yParity', 'v'
 ] as const;
 
-// TODO: remove any
-export function sortRawData(raw: TxCoder<any>): any {
-  const sortedRaw: Record<string, any> = {};
+export function sortRawData<T extends TxType>(raw: TxCoder<T>): TxCoder<T> {
+  const r = raw as Record<string, unknown>;
+  const sortedRaw: Record<string, unknown> = {};
   const sorted = new Set<string>();
   for (const field of sortedFieldOrder) {
-    if (!Object.hasOwn(raw, field)) continue;
-    sortedRaw[field] = raw[field];
+    if (!Object.hasOwn(r, field)) continue;
+    sortedRaw[field] = r[field];
     sorted.add(field);
   }
   // Preserve unknown own fields so validateFields can reject them instead of prepare dropping them.
-  for (const field of Object.keys(raw)) {
+  for (const field of Object.keys(r)) {
     if (sorted.has(field)) continue;
-    sortedRaw[field] = raw[field];
+    sortedRaw[field] = r[field];
   }
-  return sortedRaw;
+  return sortedRaw as TxCoder<T>;
 }
 
 export function decodeLegacyV(raw: TxCoder<any>): bigint | undefined {
