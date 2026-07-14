@@ -1,0 +1,358 @@
+{
+  "version": 1,
+  "spec": "HISTORY_SPEC.md",
+  "description": "history() full-depth 'logs' strategy with the windowed, bounded-prefetch logs pass. Chain height 4,999,999 with logsWindow 2,000,000 yields exactly three windows, scanned newest-first. The newest window holds one incoming USDT transfer, the middle window is empty, the oldest holds one outgoing USDT transfer. concurrency 2 means the third window may only be requested after the first completes.",
+  "notes": [
+    "bigint values are decimal strings; convert before comparing.",
+    "tokenTransfers[].tokens is a JSON object {tokenId: value}; the real value is Map<bigint, bigint> ('1' is the fixed ERC-20 id).",
+    "eth_getLogs calls are matched by (topics, fromBlock, toBlock); any call not listed in rpc.eth_getLogs.responses must be answered with [].",
+    "blockTimestamp on txs/logs is the erigon extension; receipts intentionally omit timestamp so HistoryTx.timestamp exercises the info.blockTimestamp fallback."
+  ],
+  "input": {
+    "address": "0x0000000000000000000000000000000000000002",
+    "opts": {
+      "source": "logs",
+      "depth": "full",
+      "logsWindow": 2000000,
+      "concurrency": 2,
+      "onProgress": "<capture into an array>"
+    }
+  },
+  "constants": {
+    "topic0": {
+      "erc20Transfer": "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+      "wethDeposit": "0xe1fffcc4923d04b559f4d29a8bfc6cda04eb5b0d3c460751c2402c5c5cc9109c",
+      "wethWithdrawal": "0x7fcf532c15f0a6db0bd6d0e038bea71d30d808c7d98cb3bf7268a95bf5081b65",
+      "erc1155TransferSingle": "0xc3d58168c5ae7397731d063d5bbf3d657854427343f4c083240f7aacaa2d0f62",
+      "erc1155TransferBatch": "0x4a39dc06d4c0dbc64b70af90fd698a233a518aa5d07e595d983b8c0526c8f7fb"
+    },
+    "addressTopic": "0x0000000000000000000000000000000000000000000000000000000000000002",
+    "otherAddress": "0x0000000000000000000000000000000000000003",
+    "usdt": "0xdac17f958d2ee523a2206206994597c13d831ec7"
+  },
+  "rpc": {
+    "eth_blockNumber": {
+      "result": "0x4c4b3f",
+      "expectedCalls": 1
+    },
+    "eth_getLogs": {
+      "families": [
+        {
+          "name": "erc20-from",
+          "topics": [
+            "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+            "0x0000000000000000000000000000000000000000000000000000000000000002",
+            null
+          ]
+        },
+        {
+          "name": "erc20-to",
+          "topics": [
+            "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+            null,
+            "0x0000000000000000000000000000000000000000000000000000000000000002"
+          ]
+        },
+        {
+          "name": "weth-deposit-withdrawal",
+          "topics": [
+            [
+              "0xe1fffcc4923d04b559f4d29a8bfc6cda04eb5b0d3c460751c2402c5c5cc9109c",
+              "0x7fcf532c15f0a6db0bd6d0e038bea71d30d808c7d98cb3bf7268a95bf5081b65"
+            ],
+            "0x0000000000000000000000000000000000000000000000000000000000000002"
+          ]
+        },
+        {
+          "name": "erc1155-single-from",
+          "topics": [
+            "0xc3d58168c5ae7397731d063d5bbf3d657854427343f4c083240f7aacaa2d0f62",
+            null,
+            "0x0000000000000000000000000000000000000000000000000000000000000002",
+            null
+          ]
+        },
+        {
+          "name": "erc1155-single-to",
+          "topics": [
+            "0xc3d58168c5ae7397731d063d5bbf3d657854427343f4c083240f7aacaa2d0f62",
+            null,
+            null,
+            "0x0000000000000000000000000000000000000000000000000000000000000002"
+          ]
+        },
+        {
+          "name": "erc1155-batch-from",
+          "topics": [
+            "0x4a39dc06d4c0dbc64b70af90fd698a233a518aa5d07e595d983b8c0526c8f7fb",
+            null,
+            "0x0000000000000000000000000000000000000000000000000000000000000002",
+            null
+          ]
+        },
+        {
+          "name": "erc1155-batch-to",
+          "topics": [
+            "0x4a39dc06d4c0dbc64b70af90fd698a233a518aa5d07e595d983b8c0526c8f7fb",
+            null,
+            null,
+            "0x0000000000000000000000000000000000000000000000000000000000000002"
+          ]
+        }
+      ],
+      "responses": [
+        {
+          "family": "erc20-to",
+          "fromBlock": 3000000,
+          "toBlock": 4999999,
+          "result": [
+            {
+              "address": "0xdac17f958d2ee523a2206206994597c13d831ec7",
+              "topics": [
+                "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+                "0x0000000000000000000000000000000000000000000000000000000000000003",
+                "0x0000000000000000000000000000000000000000000000000000000000000002"
+              ],
+              "data": "0x00000000000000000000000000000000000000000000000000000000004c4b40",
+              "blockNumber": "0x3d0900",
+              "blockHash": "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+              "transactionHash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "transactionIndex": "0x0",
+              "logIndex": "0x0",
+              "removed": false,
+              "blockTimestamp": "0x6590fa00"
+            }
+          ]
+        },
+        {
+          "family": "erc20-from",
+          "fromBlock": 0,
+          "toBlock": 999999,
+          "result": [
+            {
+              "address": "0xdac17f958d2ee523a2206206994597c13d831ec7",
+              "topics": [
+                "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+                "0x0000000000000000000000000000000000000000000000000000000000000002",
+                "0x0000000000000000000000000000000000000000000000000000000000000003"
+              ],
+              "data": "0x00000000000000000000000000000000000000000000000000000000000f4240",
+              "blockNumber": "0x7a120",
+              "blockHash": "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+              "transactionHash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "transactionIndex": "0x0",
+              "logIndex": "0x0",
+              "removed": false,
+              "blockTimestamp": "0x655b9220"
+            }
+          ]
+        }
+      ],
+      "default": []
+    },
+    "eth_getTransactionByHash": {
+      "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": {
+        "hash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "blockHash": "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "blockNumber": "0x3d0900",
+        "transactionIndex": "0x0",
+        "type": "0x2",
+        "nonce": "0x1",
+        "input": "0x",
+        "gas": "0x5208",
+        "gasPrice": "0x3b9aca00",
+        "value": "0x0",
+        "from": "0x0000000000000000000000000000000000000003",
+        "to": "0xdac17f958d2ee523a2206206994597c13d831ec7",
+        "blockTimestamp": "0x6590fa00"
+      },
+      "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": {
+        "hash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "blockHash": "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "blockNumber": "0x7a120",
+        "transactionIndex": "0x0",
+        "type": "0x2",
+        "nonce": "0x1",
+        "input": "0x",
+        "gas": "0x5208",
+        "gasPrice": "0x3b9aca00",
+        "value": "0x0",
+        "from": "0x0000000000000000000000000000000000000002",
+        "to": "0xdac17f958d2ee523a2206206994597c13d831ec7",
+        "blockTimestamp": "0x655b9220"
+      }
+    },
+    "eth_getTransactionReceipt": {
+      "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": {
+        "transactionHash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "blockHash": "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "blockNumber": "0x3d0900",
+        "transactionIndex": "0x0",
+        "type": "0x2",
+        "status": "0x1",
+        "gasUsed": "0x5208",
+        "cumulativeGasUsed": "0x5208",
+        "effectiveGasPrice": "0x3b9aca00",
+        "contractAddress": null,
+        "logs": [
+          {
+            "address": "0xdac17f958d2ee523a2206206994597c13d831ec7",
+            "topics": [
+              "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+              "0x0000000000000000000000000000000000000000000000000000000000000003",
+              "0x0000000000000000000000000000000000000000000000000000000000000002"
+            ],
+            "data": "0x00000000000000000000000000000000000000000000000000000000004c4b40",
+            "blockNumber": "0x3d0900",
+            "blockHash": "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "transactionHash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "transactionIndex": "0x0",
+            "logIndex": "0x0",
+            "removed": false,
+            "blockTimestamp": "0x6590fa00"
+          }
+        ]
+      },
+      "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": {
+        "transactionHash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "blockHash": "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "blockNumber": "0x7a120",
+        "transactionIndex": "0x0",
+        "type": "0x2",
+        "status": "0x1",
+        "gasUsed": "0x5208",
+        "cumulativeGasUsed": "0x5208",
+        "effectiveGasPrice": "0x3b9aca00",
+        "contractAddress": null,
+        "logs": [
+          {
+            "address": "0xdac17f958d2ee523a2206206994597c13d831ec7",
+            "topics": [
+              "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+              "0x0000000000000000000000000000000000000000000000000000000000000002",
+              "0x0000000000000000000000000000000000000000000000000000000000000003"
+            ],
+            "data": "0x00000000000000000000000000000000000000000000000000000000000f4240",
+            "blockNumber": "0x7a120",
+            "blockHash": "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "transactionHash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "transactionIndex": "0x0",
+            "logIndex": "0x0",
+            "removed": false,
+            "blockTimestamp": "0x655b9220"
+          }
+        ]
+      }
+    }
+  },
+  "expected": {
+    "windows": [
+      {
+        "fromBlock": 3000000,
+        "toBlock": 4999999
+      },
+      {
+        "fromBlock": 1000000,
+        "toBlock": 2999999
+      },
+      {
+        "fromBlock": 0,
+        "toBlock": 999999
+      }
+    ],
+    "calls": {
+      "eth_blockNumber": 1,
+      "eth_getLogs": {
+        "total": 21,
+        "perWindow": 7,
+        "issueOrder": "the first 14 eth_getLogs calls all target windows[0] or windows[1] (the primed pool); all 7 windows[2] calls are issued only after windows[0] has been consumed"
+      },
+      "eth_getTransactionByHash": {
+        "total": 2,
+        "hashes": [
+          "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      },
+      "eth_getTransactionReceipt": {
+        "total": 2,
+        "hashes": [
+          "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        ]
+      }
+    },
+    "rows": [
+      {
+        "hash": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "block": 4000000,
+        "timestamp": 1704000000,
+        "reverted": false,
+        "diff": "0",
+        "partial": "tokens-only",
+        "tokenTransfers": [
+          {
+            "contract": "0xdac17f958d2ee523a2206206994597c13d831ec7",
+            "abi": "ERC20",
+            "symbol": "USDT",
+            "decimals": 6,
+            "from": "0x0000000000000000000000000000000000000003",
+            "to": "0x0000000000000000000000000000000000000002",
+            "tokens": {
+              "1": "5000000"
+            }
+          }
+        ]
+      },
+      {
+        "hash": "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "block": 500000,
+        "timestamp": 1700500000,
+        "reverted": false,
+        "diff": "-21000000000000",
+        "partial": "tokens-only",
+        "tokenTransfers": [
+          {
+            "contract": "0xdac17f958d2ee523a2206206994597c13d831ec7",
+            "abi": "ERC20",
+            "symbol": "USDT",
+            "decimals": 6,
+            "from": "0x0000000000000000000000000000000000000002",
+            "to": "0x0000000000000000000000000000000000000003",
+            "tokens": {
+              "1": "1000000"
+            }
+          }
+        ]
+      }
+    ],
+    "progress": [
+      {
+        "source": "logs",
+        "phase": "logs",
+        "percent": 33,
+        "scannedTxs": 1,
+        "currentBlock": 3000000
+      },
+      {
+        "source": "logs",
+        "phase": "logs",
+        "percent": 67,
+        "scannedTxs": 1,
+        "currentBlock": 1000000
+      },
+      {
+        "source": "logs",
+        "phase": "logs",
+        "percent": 100,
+        "scannedTxs": 2,
+        "currentBlock": 0
+      }
+    ],
+    "earlyExit": {
+      "description": "iterate history() with the same fixture but break after the first yielded row",
+      "maxGetLogsCalls": 14,
+      "note": "only the primed windows[0]/windows[1] fetches may have been issued; windows[2] must never be requested"
+    }
+  }
+}
