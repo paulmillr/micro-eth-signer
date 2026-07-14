@@ -1,5 +1,5 @@
 import { deepFreeze, type TArg } from '../utils.ts';
-import type { ClearSigDef, ClearSigTokens } from './clearsig.ts';
+import type { ClearSigDef, ClearSigTokens } from './index.ts';
 
 type Any = Record<string, any>;
 
@@ -983,7 +983,7 @@ export const OURS: Record<string, ClearSigDef> = /* @__PURE__ */ deepFreeze({
  * @example
  * Bind one extra ERC-20 token before building a repository.
  * ```ts
- * import { addTokens, CLEARSIG_REPO } from 'micro-eth-signer/advanced/abi.js';
+ * import { addTokens, CLEARSIG_REPO } from 'micro-eth-signer/abi.js';
  * const files = addTokens(CLEARSIG_REPO, {
  *   '0x0000000000000000000000000000000000000001': { abi: 'ERC20', symbol: 'TST' },
  * });

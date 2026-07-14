@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import * as snappy from 'snappyjs';
-import * as micro from '../../src/advanced/ssz.ts';
+import * as micro from '../../src/ssz.ts';
 import { getVectorsPath } from '../../test/util.ts';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 

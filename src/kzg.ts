@@ -1,5 +1,8 @@
-// prettier-ignore
-import { pippenger } from '@noble/curves/abstract/curve.js';
+import {
+  interleavedMSMUnsafe,
+  normalizeZ,
+  type AffinePoint,
+} from '@noble/curves/abstract/curve.js';
 import {
   bitReversalPermutation,
   FFT,
@@ -12,10 +15,10 @@ import {
 } from '@noble/curves/abstract/fft.js';
 import { Field } from '@noble/curves/abstract/modular.js';
 import { bls12_381 as bls } from '@noble/curves/bls12-381.js';
-import { asciiToBytes, numberToBytesBE } from '@noble/curves/utils.js';
+import { asciiToBytes, bitLen, bitMask, numberToBytesBE } from '@noble/curves/utils.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex, concatBytes, hexToBytes } from '@noble/hashes/utils.js';
-import { add0x, hexToNumber, strip0x, type TArg, type TRet } from '../utils.ts';
+import { add0x, hexToNumber, strip0x, type TArg, type TRet } from './utils.ts';
 /*
 KZG for [EIP-4844](https://eips.ethereum.org/EIPS/eip-4844).
 
@@ -35,8 +38,11 @@ TODO(high-level):
   - rlp([tx, blobs, commitments, proofs])
   - this means there are two eip4844 txs: with sidecars and without
 */
-const { Fr: blsFr, Fp12 } = bls.fields;
+const { Fr: blsFr, Fp, Fp12 } = bls.fields;
+const _2n = /* @__PURE__ */ BigInt(2);
+const _3n = /* @__PURE__ */ BigInt(3);
 const _7n = /* @__PURE__ */ BigInt(7);
+const _128n = /* @__PURE__ */ BigInt(128);
 
 // EIP-4844 field elements are 32-byte big-endian values strictly less than BLS_MODULUS, so use
 // a fresh Field wrapper here instead of bls.fields.Fr, whose fromBytes() reduces mod N.
@@ -46,11 +52,39 @@ const G1 = bls.G1.Point;
 const G2 = bls.G2.Point;
 type G1Point = typeof bls.G1.Point.BASE;
 type G2Point = typeof bls.G2.Point.BASE;
+type G1Affine = AffinePoint<bigint>;
+type FixedG1Msm = (scalars: bigint[]) => G1Point;
 type Scalar = string | bigint;
 type Blob = string | string[] | bigint[];
+type ScalarEndoParts = {
+  k1neg: boolean;
+  k1: bigint;
+  k2neg: boolean;
+  k2: bigint;
+};
 // After parseBlob validates the exact blob length, split the hex string into 32-byte / 64-hex
 // field elements for scalar parsing.
 const BLOB_REGEX = /.{1,64}/g;
+// BLS parameter z. Fr.ORDER = z^4 - z^2 + 1.
+const BLS_X = -0xd201000000010000n;
+const BLS_X_SQUARED = BLS_X * BLS_X;
+// Lambda = z^2 - 1 satisfies lambda^2 + lambda + 1 = 0 in Fr.
+const G1_ENDO_LAMBDA = 0xac45a4010001a40200000000ffffffffn;
+// Beta is the Fp cube root for which phi(x, y) = (beta*x, y) acts as lambda on G1.
+const G1_ENDO_BETA =
+  0x1a0111ea397fe699ec02408663d4de85aa0d857d89759ad4897d29650fb85f9b409427eb4f49fffd8bfd00000000aaacn;
+const G1_ENDO_BASIS: [[bigint, bigint], [bigint, bigint]] = [
+  [G1_ENDO_LAMBDA, -1n],
+  [1n, BLS_X_SQUARED],
+];
+const G1_ENDO_SPLIT_BITS = 128;
+const G1_ENDO_SPLIT_LAST_BITS = G1_ENDO_SPLIT_BITS - 1;
+const G1_ENDO_SPLIT_MAX = 1n << _128n;
+const G1_ENDO_MUL_WINDOW = 4;
+// The projective Point constructor is available at runtime but is not exposed by the public
+// G1 constructor type in all noble versions. Verify it once before using it for phi(P).
+const G1ctor = G1 as unknown as new (X: bigint, Y: bigint, Z: bigint) => G1Point;
+let g1CtorChecked = false;
 
 // EIP-4844 scalars are canonical 32-byte big-endian field elements, so string inputs must keep
 // the full 32-byte width before range validation.
@@ -67,6 +101,235 @@ function parseScalar(s: Scalar): bigint {
 // Emit canonical 0x-prefixed 32-byte big-endian scalar hex for public KZG helper outputs.
 function formatScalar(n: bigint) {
   return add0x(bytesToHex(Fr.toBytes(n)));
+}
+
+const divNearest = (num: bigint, den: bigint) => (num + (num >= 0n ? den : -den) / _2n) / den;
+
+function splitScalarG1(k: bigint): ScalarEndoParts {
+  if (!Fr.isValid(k)) throw new RangeError('splitScalarG1: invalid scalar');
+  const [[a1, b1], [a2, b2]] = G1_ENDO_BASIS;
+  const c1 = divNearest(b2 * k, Fr.ORDER);
+  const c2 = divNearest(-b1 * k, Fr.ORDER);
+  let k1 = k - c1 * a1 - c2 * a2;
+  let k2 = -c1 * b1 - c2 * b2;
+  const k1neg = k1 < 0n;
+  const k2neg = k2 < 0n;
+  if (k1neg) k1 = -k1;
+  if (k2neg) k2 = -k2;
+  if (k1 >= G1_ENDO_SPLIT_MAX || k2 >= G1_ENDO_SPLIT_MAX)
+    throw new Error('splitScalarG1: invariant failed');
+  return { k1neg, k1, k2neg, k2 };
+}
+
+function endoG1Affine(p: G1Affine): G1Affine {
+  return { x: Fp.mul(p.x, G1_ENDO_BETA), y: p.y };
+}
+
+function endoG1Projective(p: G1Point): G1Point {
+  return new G1ctor(Fp.mul(p.X, G1_ENDO_BETA), p.Y, p.Z);
+}
+
+function assertG1Ctor() {
+  if (g1CtorChecked) return;
+  const p = G1.BASE;
+  const q = new G1ctor(p.X, p.Y, p.Z);
+  if (!q.equals(p)) throw new Error('KZG: G1 projective constructor changed');
+  if (!endoG1Projective(p).equals(p.multiplyUnsafe(G1_ENDO_LAMBDA)))
+    throw new Error('KZG: G1 endomorphism constructor check failed');
+  g1CtorChecked = true;
+}
+
+function mulGLV(p: G1Point, k: bigint): G1Point {
+  if (!Fr.isValid(k)) throw new RangeError('mulGLV: invalid scalar');
+  if (k === 0n || p.is0()) return G1.ZERO;
+  if (k === 1n) return p;
+  assertG1Ctor();
+  const { k1neg, k1, k2neg, k2 } = splitScalarG1(k);
+  const points: G1Point[] = [];
+  const scalars: bigint[] = [];
+  if (k1 !== 0n) {
+    points.push(k1neg ? p.negate() : p);
+    scalars.push(k1);
+  }
+  if (k2 !== 0n) {
+    const phi = endoG1Projective(p);
+    points.push(k2neg ? phi.negate() : phi);
+    scalars.push(k2);
+  }
+  if (points.length === 0) return G1.ZERO;
+  if (points.length === 1) return points[0].multiplyUnsafe(scalars[0]);
+  // interleavedMSMUnsafe recodes each scalar to actual-length wNAF digits, so the shared
+  // doubling chain walks the split 128-bit halves instead of the full Fr width.
+  return interleavedMSMUnsafe(G1, points, G1_ENDO_MUL_WINDOW)(scalars);
+}
+
+function pippengerWindowSize(plength: number) {
+  const wbits = bitLen(BigInt(plength));
+  let windowSize = 1;
+  if (wbits > 12) windowSize = wbits - 3;
+  else if (wbits > 4) windowSize = wbits - 2;
+  else if (wbits > 0) windowSize = 2;
+  return windowSize;
+}
+
+function pippengerAffineBucketAccumG1(
+  buckets: (G1Affine | undefined)[],
+  bucketHeads: Int32Array,
+  bucketTails: Int32Array,
+  activeBuckets: Int32Array,
+  activeLen: number,
+  nextOps: Int32Array,
+  pendingPoints: G1Affine[]
+) {
+  const batchBuckets: number[] = [];
+  const batchX1: bigint[] = [];
+  const batchY1: bigint[] = [];
+  const batchX2: bigint[] = [];
+  const batchNums: bigint[] = [];
+  const batchDens: bigint[] = [];
+  while (activeLen > 0) {
+    let nextActiveLen = 0;
+    batchBuckets.length = 0;
+    batchX1.length = 0;
+    batchY1.length = 0;
+    batchX2.length = 0;
+    batchNums.length = 0;
+    batchDens.length = 0;
+    for (let i = 0; i < activeLen; i++) {
+      const bucketIndex = activeBuckets[i];
+      const opIndex = bucketHeads[bucketIndex];
+      const nextOp = nextOps[opIndex];
+      bucketHeads[bucketIndex] = nextOp;
+      if (nextOp === -1) bucketTails[bucketIndex] = -1;
+      else activeBuckets[nextActiveLen++] = bucketIndex;
+      const point = pendingPoints[opIndex];
+      const bucket = buckets[bucketIndex];
+      if (bucket === undefined) {
+        buckets[bucketIndex] = point;
+        continue;
+      }
+      const { x: x1, y: y1 } = bucket;
+      const { x: x2, y: y2 } = point;
+      let num: bigint;
+      let den: bigint;
+      if (!Fp.eql(x1, x2)) {
+        num = Fp.sub(y2, y1);
+        den = Fp.sub(x2, x1);
+      } else if (Fp.eql(y1, y2)) {
+        if (Fp.is0(y1)) {
+          buckets[bucketIndex] = undefined;
+          continue;
+        }
+        num = Fp.mul(Fp.sqr(x1), _3n);
+        den = Fp.mul(y1, _2n);
+      } else {
+        buckets[bucketIndex] = undefined;
+        continue;
+      }
+      batchBuckets.push(bucketIndex);
+      batchX1.push(x1);
+      batchY1.push(y1);
+      batchX2.push(x2);
+      batchNums.push(num);
+      batchDens.push(den);
+    }
+    activeLen = nextActiveLen;
+    if (batchDens.length === 0) continue;
+    const invertedDens = Fp.invertBatch(batchDens);
+    for (let i = 0; i < invertedDens.length; i++) {
+      const invertedDen = invertedDens[i];
+      if (Fp.is0(invertedDen)) throw new Error('pippenger: zero affine denominator');
+      const x1 = batchX1[i];
+      const y1 = batchY1[i];
+      const x2 = batchX2[i];
+      const lambda = Fp.mul(batchNums[i], invertedDen);
+      const x3 = Fp.sub(Fp.sub(Fp.sqr(lambda), x1), x2);
+      const y3 = Fp.sub(Fp.mul(lambda, Fp.sub(x1, x3)), y1);
+      buckets[batchBuckets[i]] = { x: x3, y: y3 };
+    }
+  }
+}
+
+function pippengerBatchAffineG1(points: G1Point[], scalars: bigint[]) {
+  if (points.length !== scalars.length)
+    throw new Error('arrays of points and scalars must have equal length');
+  const activePoints: G1Point[] = [];
+  const activeScalars: bigint[] = [];
+  for (let i = 0; i < points.length; i++) {
+    if (Fr.is0(scalars[i]) || points[i].is0()) continue;
+    activePoints.push(points[i]);
+    activeScalars.push(scalars[i]);
+  }
+  if (activePoints.length === 0) return G1.ZERO;
+  const affinePoints = normalizeZ(G1, activePoints).map((p) => p.toAffine());
+  const splitPoints: G1Affine[] = [];
+  const splitScalars: bigint[] = [];
+  for (let i = 0; i < affinePoints.length; i++) {
+    const p = affinePoints[i];
+    const { k1neg, k1, k2neg, k2 } = splitScalarG1(activeScalars[i]);
+    if (k1 !== 0n) {
+      splitPoints.push(k1neg ? { x: p.x, y: Fp.neg(p.y) } : p);
+      splitScalars.push(k1);
+    }
+    if (k2 !== 0n) {
+      const phi = endoG1Affine(p);
+      splitPoints.push(k2neg ? { x: phi.x, y: Fp.neg(phi.y) } : phi);
+      splitScalars.push(k2);
+    }
+  }
+  if (splitPoints.length === 0) return G1.ZERO;
+  const windowSize = pippengerWindowSize(activePoints.length);
+  const MASK = bitMask(windowSize);
+  const bucketCount = Number(MASK) + 1;
+  const buckets = new Array<G1Affine | undefined>(bucketCount);
+  const bucketHeads = new Int32Array(bucketCount);
+  const bucketTails = new Int32Array(bucketCount);
+  const activeBuckets = new Int32Array(bucketCount);
+  const nextOps = new Int32Array(splitPoints.length);
+  const pendingPoints = new Array<G1Affine>(splitPoints.length);
+  const lastBits = Math.floor(G1_ENDO_SPLIT_LAST_BITS / windowSize) * windowSize;
+  let sum = G1.ZERO;
+  for (let i = lastBits; i >= 0; i -= windowSize) {
+    buckets.fill(undefined);
+    bucketHeads.fill(-1);
+    bucketTails.fill(-1);
+    let activeLen = 0;
+    let pendingLen = 0;
+    for (let j = 0; j < splitPoints.length; j++) {
+      const wbits = Number((splitScalars[j] >> BigInt(i)) & MASK);
+      if (wbits === 0) continue;
+      const opIndex = pendingLen++;
+      pendingPoints[opIndex] = splitPoints[j];
+      nextOps[opIndex] = -1;
+      if (bucketHeads[wbits] === -1) {
+        bucketHeads[wbits] = opIndex;
+        activeBuckets[activeLen++] = wbits;
+      } else {
+        nextOps[bucketTails[wbits]] = opIndex;
+      }
+      bucketTails[wbits] = opIndex;
+    }
+    if (pendingLen !== 0) {
+      pippengerAffineBucketAccumG1(
+        buckets,
+        bucketHeads,
+        bucketTails,
+        activeBuckets,
+        activeLen,
+        nextOps,
+        pendingPoints
+      );
+    }
+    let resI = G1.ZERO;
+    for (let j = buckets.length - 1, sumI = G1.ZERO; j > 0; j--) {
+      const bucket = buckets[j];
+      if (bucket !== undefined) sumI = sumI.add(G1.fromAffine(bucket));
+      resI = resI.add(sumI);
+    }
+    sum = sum.add(resI);
+    if (i !== 0) for (let j = 0; j < windowSize; j++) sum = sum.double();
+  }
+  return sum;
 }
 
 function pairingVerify(a1: G1Point, a2: G2Point, b1: G1Point, b2: G2Point) {
@@ -133,6 +396,8 @@ const CELLS_PER_EXT_BLOB = FE_PER_EXT_BLOB / FE_PER_CELL; // 128
 const BYTES_PER_CELL = 2048;
 // FK20 precomputes use the doubled circulant domain, which matches the 128-cell extended blob width.
 const CIRCULANT_DOMAIN_SIZE = CELLS_PER_BLOB * 2; // 128
+// FK20 reuses 128 fixed 64-point rows; W=5 keeps tables bounded while improving proof time.
+const FK20_MSM_WINDOW = 5;
 // Each FK20/cell index step advances by 64 evaluation points in the 8192-point extended domain.
 const FK20_STRIDE = FE_PER_EXT_BLOB / CIRCULANT_DOMAIN_SIZE;
 // RBL = Reverse Bits Limited table
@@ -152,12 +417,14 @@ const Cell = {
     });
     return add0x(bytesToHex(concatBytes(...bytes)));
   },
-  decode(hex: string): bigint[] {
-    const bytes = hexToBytes(strip0x(hex));
+  decodeBytes(bytes: Uint8Array): bigint[] {
     if (bytes.length !== BYTES_PER_CELL)
       throw new Error(`Cell.decode: Expected ${BYTES_PER_CELL} bytes after decoding hex`);
     // Enforce the fixed 2048-byte cell width here; Fr.fromBytes then rejects any non-canonical 32-byte field chunk.
     return chunkBytes(bytes, Fr.BYTES).map((n) => Fr.fromBytes(n));
+  },
+  decode(hex: string): bigint[] {
+    return Cell.decodeBytes(hexToBytes(strip0x(hex)));
   },
 };
 
@@ -168,7 +435,7 @@ const Cell = {
  * Load a trusted setup and derive a blob commitment from it.
  * ```ts
  * import { trustedSetup } from '@paulmillr/trusted-setups/small-kzg.js';
- * import { KZG } from 'micro-eth-signer/advanced/kzg.js';
+ * import { KZG } from 'micro-eth-signer/kzg.js';
  * const kzg = new KZG(trustedSetup);
  * kzg.blobToKzgCommitment(new Array(4096).fill(0n));
  * ```
@@ -189,6 +456,7 @@ export class KZG {
   private readonly POLY_NUM_BYTES: Uint8Array;
   // PeerDAS
   private fk20Columns?: G1Point[][];
+  private fk20Msm?: FixedG1Msm[];
 
   constructor(setup: SetupData & { encoding?: 'fast_v1' }) {
     if (setup == null || typeof setup !== 'object') throw new Error('expected valid setup data');
@@ -202,7 +470,10 @@ export class KZG {
     }
     const G1L = setup.g1_lagrange.map(fastSetup ? this.parseG1Unchecked : this.parseG1);
     this.POLY_NUM = G1L.length;
+    if (this.POLY_NUM < 2 || (this.POLY_NUM & (this.POLY_NUM - 1)) !== 0)
+      throw new Error('KZG: g1_lagrange length must be a power of two, got ' + this.POLY_NUM);
     this.G2M = setup.g2_monomial.map(fastSetup ? this.parseG2Unchecked : this.parseG2);
+    if (this.G2M.length < 2) throw new Error('KZG: g2_monomial must have at least 2 points');
     this.G1LB = bitReversalPermutation(G1L);
     this.ROOTS_CACHE = rootsOfUnity(Fr, _7n);
     this.ROOTS_OF_UNITY_BRP = this.ROOTS_CACHE.brp(log2(this.POLY_NUM));
@@ -210,7 +481,7 @@ export class KZG {
     this.fftG1 = FFT<G1Point>(rootsOfUnity(Fr, _7n), {
       add: (a, b) => a.add(b),
       sub: (a, b) => a.subtract(b),
-      mul: (a, scalar) => a.multiplyUnsafe(scalar),
+      mul: mulGLV,
       inv: (a) => Fr.inv(a),
     });
     this.polyFr = poly(Fr, this.ROOTS_CACHE);
@@ -226,10 +497,11 @@ export class KZG {
     }
   }
   // Internal
-  private parseG1(p: string | G1Point) {
+  private parseG1(p: string | Uint8Array | G1Point) {
     // EIP-4844 commitments/proofs are canonical Bytes48 G1 encodings: accept canonical infinity,
     // otherwise rely on G1.fromHex() for subgroup validation.
     if (typeof p === 'string') p = G1.fromHex(strip0x(p));
+    else if (p instanceof Uint8Array) p = G1.fromBytes(p);
     return p;
   }
   private parseG1Unchecked(p: string) {
@@ -273,16 +545,17 @@ export class KZG {
   }
   private G1msm(points: G1Point[], scalars: bigint[]) {
     // Filters zero scalars, non-const time, but improves computeProof up to x93 for empty blobs
-    // Caller must keep points/scalars aligned; zero-scalar pruning happens before pippenger() re-checks equal lengths.
-    const _points = [];
-    const _scalars = [];
+    // Caller must keep points/scalars aligned; all KZG scalars here are public field elements.
+    const _points: G1Point[] = [];
+    const _scalars: bigint[] = [];
     for (let i = 0; i < scalars.length; i++) {
       const s = scalars[i];
       if (Fr.is0(s)) continue;
       _points.push(points[i]);
       _scalars.push(s);
     }
-    return pippenger(G1, _points, _scalars);
+    if (_points.length === 0) return G1.ZERO;
+    return pippengerBatchAffineG1(_points, _scalars);
   }
   private computeChallenge(blob: bigint[], commitment: G1Point): bigint {
     // Match the blob-proof Fiat-Shamir transcript: domain || 0 || POLY_NUM || blob field bytes || compressed commitment, then reduce the SHA-256 digest into Fr.
@@ -366,7 +639,7 @@ export class KZG {
     }
     return rPowers;
   }
-  // There are no test vectors for this
+  // Covered indirectly through verifyBlobProofBatch vectors with more than one blob.
   private verifyProofBatch(commitments: G1Point[], zs: bigint[], ys: bigint[], proofs: string[]) {
     // Caller must pre-align commitments/zs/ys/proofs;
     // this helper only derives the batch challenge and reduces the openings to one final pairing check.
@@ -464,8 +737,14 @@ export class KZG {
     this.fk20Columns = columns;
     return columns;
   }
+  private _Fk20Msm(): FixedG1Msm[] {
+    if (this.fk20Msm) return this.fk20Msm;
+    const precomputes = this._Fk20Precomputes();
+    this.fk20Msm = precomputes.map((row) => interleavedMSMUnsafe(G1, row, FK20_MSM_WINDOW));
+    return this.fk20Msm;
+  }
   private Fk20Proof(poly: Polynomial<bigint>): string[] {
-    const precomputes = this._Fk20Precomputes(); // 128x64
+    const fk20Msm = this._Fk20Msm(); // 128x64
     if (poly.length !== FE_PER_BLOB) throw new Error('Fk20Proof: wrong poly');
     const coeffs: bigint[][] = Array.from({ length: CIRCULANT_DOMAIN_SIZE }, () =>
       new Array(FE_PER_CELL).fill(Fr.ZERO)
@@ -473,15 +752,15 @@ export class KZG {
     for (let i = 0; i < FE_PER_CELL; i++) {
       const toeplitz = new Array<bigint>(CIRCULANT_DOMAIN_SIZE).fill(Fr.ZERO);
       toeplitz[0] = poly[FE_PER_BLOB - 1 - i];
-      for (let j = 0; j < CELLS_PER_EXT_BLOB - CELLS_PER_BLOB - 2; j++) {
-        toeplitz[CELLS_PER_BLOB + 2 + j] = poly[CELLS_PER_EXT_BLOB - i - 1 + j * FE_PER_CELL];
+      // Match c-kzg's toeplitz_coeffs_stride: start at 2 * stride - offset - 1.
+      for (let j = 0; j < CIRCULANT_DOMAIN_SIZE - CELLS_PER_BLOB - 2; j++) {
+        toeplitz[CELLS_PER_BLOB + 2 + j] = poly[2 * FE_PER_CELL - i - 1 + j * FE_PER_CELL];
       }
       const res = this.fftFr.direct(toeplitz);
       for (let j = 0; j < CIRCULANT_DOMAIN_SIZE; j++) coeffs[j][i] = res[j];
     }
     const hExtFFT = [];
-    for (let i = 0; i < CIRCULANT_DOMAIN_SIZE; i++)
-      hExtFFT.push(this.G1msm(precomputes[i], coeffs[i]));
+    for (let i = 0; i < CIRCULANT_DOMAIN_SIZE; i++) hExtFFT.push(fk20Msm[i](coeffs[i]));
     const h = this.fftG1.inverse(hExtFFT);
     // FK20 uses a doubled circulant workspace; truncate it back to the original half before
     // the final FFT re-expands that quotient into the 128 cell-proof outputs.
@@ -512,9 +791,6 @@ export class KZG {
   private recoverCell(indices: number[], recoveredCellsNulls: (bigint | null)[]) {
     const PEERDAS_RECOVERY_SHIFT = _7n;
     const PEERDAS_RECOVERY_SHIFT_INV = Fr.inv(_7n);
-    const cellsBRP: (bigint | null)[] = new Array(FE_PER_EXT_BLOB);
-    for (let i = 0; i < FE_PER_EXT_BLOB; i++)
-      cellsBRP[reverseBits(i, log2(FE_PER_EXT_BLOB))] = recoveredCellsNulls[i];
     const cellsBRPFull = bitReversalPermutation(recoveredCellsNulls);
     const missingIndicesBRP: number[] = [];
     const indicesSet = new Set(indices);
@@ -551,6 +827,7 @@ export class KZG {
     );
   }
   recoverCellsAndProofs(indices: number[], cells: string[]): [string[], string[]] {
+    if (!this.G1M) throw new Error('PeerDAS requires full kzg setup (with G1 monomial)');
     if (cells.length !== indices.length)
       throw new Error('Indices and cells array lengths mismatch');
     if (indices.length > CELLS_PER_EXT_BLOB)
@@ -562,7 +839,8 @@ export class KZG {
     }
     const uniqueIndices = new Set<number>();
     for (const idx of indices) {
-      if (idx >= CELLS_PER_EXT_BLOB || idx < 0) throw new Error(`Invalid cell index found: ${idx}`);
+      if (!Number.isSafeInteger(idx) || idx < 0 || idx >= CELLS_PER_EXT_BLOB)
+        throw new Error(`Invalid cell index found: ${idx}`);
       if (uniqueIndices.has(idx)) throw new Error(`Duplicate cell index found: ${idx}`);
       uniqueIndices.add(idx);
     }
@@ -598,6 +876,8 @@ export class KZG {
     proofs: string[]
   ): boolean {
     if (!this.G1M) throw new Error('PeerDAS requires full kzg setup (with G1 monomial)');
+    if (this.G2M.length <= FE_PER_CELL)
+      throw new Error('PeerDAS requires at least 65 g2_monomial points');
     if (
       commitments.length !== cells.length ||
       indices.length !== cells.length ||
@@ -607,12 +887,13 @@ export class KZG {
     }
     if (cells.length === 0) return true;
     for (const idx of indices) {
-      if (idx >= CELLS_PER_EXT_BLOB)
+      if (!Number.isSafeInteger(idx) || idx < 0 || idx >= CELLS_PER_EXT_BLOB)
         throw new Error('verifyCellKzgProofBatch: invalid cell index: ' + idx);
     }
     // Deduplicate commitments (0ms)
     const uniqueMap = new Map<string, number>();
     const uniqueCommitments: string[] = [];
+    const uniqueCommitmentBytes: Uint8Array[] = [];
     const commitmentIndicesMap = [];
     // The Fiat-Shamir transcript hashes each unique commitment once plus a per-cell remap index,
     // so duplicate commitments avoid duplicate parsing without changing the batch challenge.
@@ -623,27 +904,31 @@ export class KZG {
         const newIndex = uniqueCommitments.length;
         uniqueMap.set(commitHex, newIndex);
         uniqueCommitments.push(commitHex);
+        uniqueCommitmentBytes.push(hexToBytes(strip0x(commitHex)));
         commitmentIndicesMap.push(newIndex);
       }
     }
+    const cellsBytes = cells.map((c) => hexToBytes(strip0x(c)));
+    const proofsBytes = proofs.map((p) => hexToBytes(strip0x(p)));
     // Compute challenge r (5ms)
     const h = sha256.create();
     h.update(asciiToBytes('RCKZGCBATCH__V1_'));
     h.update(numberToBytesBE(FE_PER_CELL, 8)); // uint64
     h.update(numberToBytesBE(uniqueCommitments.length, 8)); // uint64
     h.update(numberToBytesBE(cells.length, 8)); // uint64
-    for (const c of uniqueCommitments) h.update(hexToBytes(strip0x(c)));
+    for (const c of uniqueCommitmentBytes) h.update(c);
     for (const idx of commitmentIndicesMap) h.update(numberToBytesBE(idx, 8)); // uint64
     for (const idx of indices) h.update(numberToBytesBE(idx, 8)); // uint64
-    for (const c of cells) h.update(hexToBytes(strip0x(c)));
-    for (const p of proofs) h.update(hexToBytes(strip0x(p)));
+    for (const c of cellsBytes) h.update(c);
+    for (const p of proofsBytes) h.update(p);
     const r = Fr.create(Fr.fromBytes(h.digest(), true));
+    h.destroy();
     // Proofs lincomb (175ms)
     const rPowers = this.getRPowers(r, cells.length); //
-    const proofsG1 = proofs.map(this.parseG1); // 120ms
+    const proofsG1 = proofsBytes.map(this.parseG1); // 120ms
     const proofLincomb = this.G1msm(proofsG1, rPowers); // 51ms
     // Weighted sum of commitments (4ms)
-    const uniqueCommitmentsG1 = uniqueCommitments.map(this.parseG1);
+    const uniqueCommitmentsG1 = uniqueCommitmentBytes.map(this.parseG1);
     const weights: bigint[] = new Array(uniqueCommitments.length).fill(Fr.ZERO);
     for (let i = 0; i < commitmentIndicesMap.length; i++) {
       const idx = commitmentIndicesMap[i];
@@ -659,7 +944,7 @@ export class KZG {
       const row = indices[k];
       usedRows.add(row);
       const weight = rPowers[k];
-      const cell = Cell.decode(cells[k]);
+      const cell = Cell.decodeBytes(cellsBytes[k]);
       for (let j = 0; j < FE_PER_CELL; j++)
         columns[row][j] = Fr.add(columns[row][j], Fr.mul(cell[j], weight));
     }
@@ -676,9 +961,7 @@ export class KZG {
     const weightedR = [];
     for (let k = 0; k < proofsG1.length; k++) {
       const idx = indices[k];
-      if (idx >= CELLS_PER_EXT_BLOB) throw new Error(`Invalid cell index ${idx}`);
       const hkPow = (CELL_INDICES_RBL[idx] * FE_PER_CELL) % FE_PER_EXT_BLOB;
-      if (hkPow >= ROOTS_EXT.length) throw new Error(`hkPow out of bounds`);
       weightedR.push(Fr.mul(rPowers[k], ROOTS_EXT[hkPow]));
     }
     const PiAgg = this.G1msm(proofsG1, weightedR);

@@ -9,10 +9,10 @@ import {
   createContract as _createContract,
   deployContract as _deployContract,
   events as _events,
-} from './abi-decoder.ts';
-import { default as _ERC1155 } from './abi-erc1155.ts';
-import { default as _ERC20 } from './abi-erc20.ts';
-import { default as _ERC721 } from './abi-erc721.ts';
+} from './decoder.ts';
+import { default as _ERC1155 } from './erc1155.ts';
+import { default as _ERC20 } from './erc20.ts';
+import { default as _ERC721 } from './erc721.ts';
 import {
   _source as clearSigSource,
   eip712 as clearSigEip712,
@@ -21,22 +21,24 @@ import {
   type ClearSigResult,
   type ClearSigSource,
   type ClearSigTypedInput,
-} from './clearsig.ts';
-import { ERCS, OURS, addTokens } from './clearsig-repo.ts';
-export { ERCS, OURS, addTokens } from './clearsig-repo.ts';
+} from '../clearsig/index.ts';
+import { ERCS, OURS, addTokens } from '../clearsig/repo.ts';
+export { ERCS, OURS, addTokens } from '../clearsig/repo.ts';
 import {
   default as KYBER_NETWORK_PROXY,
   KYBER_NETWORK_PROXY_CONTRACT as _KYBER_NETWORK_PROXY_CONTRACT,
-} from './abi-kyber.ts';
+} from './kyber.ts';
 import {
   default as UNISWAP_V2_ROUTER,
   UNISWAP_V2_ROUTER_CONTRACT as _UNISWAP_V2_ROUTER_CONTRACT,
-} from './abi-uniswap-v2.ts';
+} from './uniswap-v2.ts';
 import {
   default as UNISWAP_V3_ROUTER,
   UNISWAP_V3_ROUTER_CONTRACT as _UNISWAP_V3_ROUTER_CONTRACT,
-} from './abi-uniswap-v3.ts';
-import { default as _WETH, WETH_CONTRACT } from './abi-weth.ts';
+} from './uniswap-v3.ts';
+import { DEFAULT_TOKENS, TOKENS_BY_SYMBOL, tokensBySymbol, type TokenDef } from './tokens.ts';
+import { default as _WETH, WETH_CONTRACT } from './weth.ts';
+export { DEFAULT_TOKENS, TOKENS_BY_SYMBOL, tokensBySymbol, type TokenDef } from './tokens.ts';
 
 // We need to export raw contracts: CONTRACTS entries include addresses, so the
 // registry shape cannot be reused in createContract with nice types.
@@ -45,7 +47,7 @@ import { default as _WETH, WETH_CONTRACT } from './abi-weth.ts';
  * @example
  * Build a typed event topic encoder for ERC-1155 transfer logs.
  * ```ts
- * import { ERC1155, events } from 'micro-eth-signer/advanced/abi.js';
+ * import { ERC1155, events } from 'micro-eth-signer/abi.js';
  * const erc1155 = events(ERC1155);
  * erc1155.TransferSingle.topics({
  *   operator: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
@@ -62,7 +64,7 @@ export const ERC1155 = _ERC1155;
  * @example
  * Encode an ERC-20 transfer call from the shared ABI fragments.
  * ```ts
- * import { ERC20, createContract } from 'micro-eth-signer/advanced/abi.js';
+ * import { ERC20, createContract } from 'micro-eth-signer/abi.js';
  * const erc20 = createContract(ERC20);
  * erc20.transfer.encodeInput({ to: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045', value: 1n });
  * ```
@@ -73,7 +75,7 @@ export const ERC20 = _ERC20;
  * @example
  * Encode a standard ERC-721 balance lookup.
  * ```ts
- * import { ERC721, createContract } from 'micro-eth-signer/advanced/abi.js';
+ * import { ERC721, createContract } from 'micro-eth-signer/abi.js';
  * const erc721 = createContract(ERC721);
  * erc721.balanceOf.encodeInput('0xd8da6bf26964af9d7eed9e03e53415d37aa96045');
  * ```
@@ -90,7 +92,7 @@ export const UNISWAP_V3_ROUTER_CONTRACT = _UNISWAP_V3_ROUTER_CONTRACT;
  * @example
  * Encode the payable WETH deposit call with the shared ABI wrapper.
  * ```ts
- * import { WETH, createContract } from 'micro-eth-signer/advanced/abi.js';
+ * import { WETH, createContract } from 'micro-eth-signer/abi.js';
  * createContract(WETH).deposit.encodeInput();
  * ```
  */
@@ -107,7 +109,12 @@ export type ContractABI = _ContractABI;
 export type ContractInfo = _ContractInfo;
 /** Decoded ABI signature information returned by decoder helpers. */
 export type SignatureInfo = _SignatureInfo;
-export type { ClearSigDef, ClearSigField, ClearSigResult, ClearSigTypedInput } from './clearsig.ts';
+export type {
+  ClearSigDef,
+  ClearSigField,
+  ClearSigResult,
+  ClearSigTypedInput,
+} from '../clearsig/index.ts';
 /** Clear-signing options for public ABI helpers. */
 export type ClearSigOpt = Omit<ClearSigRenderOpt, 'clearSig'> & {
   /** Clear-signing descriptor files. Omitted means {@link CLEARSIG_REPO}. */
@@ -195,29 +202,15 @@ export const deployContract = _deployContract;
  */
 export const events = _events;
 
-type TokenInfo = { abi: 'ERC20'; symbol: string; decimals: number; price?: number };
+type TokenInfo = { abi: 'ERC20'; symbol: string; decimals: number };
 
 /** Built-in ERC-20 metadata used by decoder and swap helpers. */
 export const TOKENS: Record<string, TokenInfo> = /* @__PURE__ */ (() =>
   deepFreeze(
     Object.fromEntries(
-      (
-        [
-          ['UNI', '0x1f9840a85d5af5bf1d1762f925bdaddc4201f984'],
-          ['BAT', '0x0d8775f648430679a709e98d2b0cb6250d2887ef'],
-          // Required for Uniswap multi-hop routing
-          ['USDT', '0xdac17f958d2ee523a2206206994597c13d831ec7', 6, 1],
-          ['USDC', '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48', 6, 1],
-          ['WETH', '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2'],
-          ['WBTC', '0x2260fac5e5542a773aa44fbcfedf7c193bc2c599', 8],
-          ['DAI', '0x6b175474e89094c44da98b954eedeac495271d0f', 18, 1],
-          ['COMP', '0xc00e94cb662c3520282e6f5717214004a7f26888'],
-          ['MKR', '0x9f8f72aa9304c8b593d555f12ef6589cc3a579a2'],
-          ['AMPL', '0xd46ba6d942050d489dbd938a2c909a5d5039a161', 9],
-        ] as [string, string, number?, number?][]
-      ).map(([symbol, addr, decimals, price]) => [
-        addr as string,
-        { abi: 'ERC20' as const, symbol, decimals: decimals || 18, price },
+      Object.entries(DEFAULT_TOKENS).map(([contract, token]) => [
+        contract,
+        { abi: 'ERC20' as const, symbol: token.symbol, decimals: token.decimals },
       ])
     )
   ))();
@@ -270,25 +263,20 @@ export function eip712(
 /**
  * Looks up a built-in token entry by symbol.
  * @param symbol - Uppercase token symbol such as `USDC` or `WETH`.
+ * @param tokens - Optional address-keyed token table. Omitted means {@link DEFAULT_TOKENS}.
  * @returns Token metadata together with the contract address.
- * @throws If the symbol is unknown to the built-in token registry. {@link Error}
  * @example
  * Resolve a known token before building calldata or rendering balances.
  * ```ts
  * const token = tokenFromSymbol('WETH');
+ * if (!token) throw new Error('unknown token');
  * ```
  */
 export const tokenFromSymbol = (
-  symbol: string
-): {
-  contract: string;
-} & TokenInfo => {
-  // Built-in registry lookup must ignore enumerable properties injected on Object.prototype.
-  for (const c of Object.keys(TOKENS)) {
-    if (TOKENS[c].symbol === symbol) return Object.assign({ contract: c }, TOKENS[c]);
-  }
-  throw new Error('unknown token');
-};
+  symbol: string,
+  tokens: Record<string, TokenDef> = DEFAULT_TOKENS
+): (TokenDef & { contract: string }) | undefined =>
+  (tokens === DEFAULT_TOKENS ? TOKENS_BY_SYMBOL : tokensBySymbol(tokens))[symbol];
 
 const getABI = (info: TArg<ContractInfo>) => {
   const abi = (info as ContractInfo).abi;
@@ -357,8 +345,6 @@ const getDecoder = (opt_: TArg<TxDecodeOpt> = {}) => {
       throw new Error(`getDecoder: wrong decimals type=${c.decimals}`);
     if (c.name !== undefined && typeof c.name !== 'string')
       throw new Error(`getDecoder: wrong name type=${c.name}`);
-    if (c.price !== undefined && typeof c.price !== 'number')
-      throw new Error(`getDecoder: wrong price type=${c.price}`);
     // Caller-owned decoders are not backfilled with the default registry; they
     // may still use the metadata map for hooks and clear-signing field rendering.
     if (!opt.decoder || custom.has(k)) decoder.add(k, getABI(c)); // validates c.abi

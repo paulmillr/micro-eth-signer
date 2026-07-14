@@ -9,7 +9,7 @@ import {
   getDomainType,
   type EIP712Types,
   type TypedData,
-} from '../core/typed-data.ts';
+} from '../core/message.ts';
 import {
   add0x,
   cloneDeep,
@@ -23,8 +23,8 @@ import {
   type TArg,
   type TRet,
 } from '../utils.ts';
-import type { ContractInfo, FnArg } from './abi-decoder.ts';
-import { ARRAY_RE, mapArgs, mapComponent, type Component } from './abi-mapper.ts';
+import type { ContractInfo, FnArg } from '../abi/decoder.ts';
+import { ARRAY_RE, mapArgs, mapComponent, type Component } from '../abi/mapper.ts';
 
 type Any = Record<string, any>;
 /** ERC-7730 descriptor JSON. Loose: descriptors are schema-driven and wider than local typing. */
@@ -1347,7 +1347,7 @@ const render = async (
  * @example
  * Render clear-signing data for typed-data before signing.
  * ```ts
- * import { eip712, type ClearSigTypedInput } from 'micro-eth-signer/advanced/abi.js';
+ * import { eip712, type ClearSigTypedInput } from 'micro-eth-signer/abi.js';
  * const descriptor = {
  *   context: {
  *     eip712: {

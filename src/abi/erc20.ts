@@ -1,6 +1,6 @@
 import { createDecimal, deepFreeze, type TArg } from '../utils.ts';
-import { addHints } from './abi-common.ts';
-import { type HintOpt } from './abi-decoder.ts';
+import { addHints } from './common.ts';
+import { type HintOpt } from './decoder.ts';
 
 // Includes legacy nonstandard aliases (`balances`, `allowed`) so the shared decoder
 // can still recognize older ERC-20-like contracts.

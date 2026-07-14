@@ -1,4 +1,4 @@
-import type { ContractABI, HintFn, HookFn } from './abi-decoder.ts';
+import type { ContractABI, HintFn, HookFn } from './decoder.ts';
 import type { TArg } from '../utils.ts';
 
 export function addHint<T extends ContractABI>(abi: T, name: string, fn: TArg<HintFn>): T {

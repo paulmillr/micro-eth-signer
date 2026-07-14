@@ -1,7 +1,7 @@
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils.js';
 import { describe, should } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual, rejects } from 'node:assert';
-import { privFromLegacyKeystore, privFromLegacySaleKeystore, privToLegacyKeystore } from '../src/advanced/keystore.ts';
+import { privFromLegacyKeystore, privFromLegacySaleKeystore, privToLegacyKeystore } from '../src/keystore.ts';
 import { addr } from '../src/core/address.ts';
 import WALLET_VECTORS from './keystore_vectors.json' with { type: 'json' };
 
