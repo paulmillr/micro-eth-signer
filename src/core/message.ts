@@ -1,13 +1,13 @@
-import { secp256k1 } from '@noble/curves/secp256k1.js';
 import { keccak_256 } from '@noble/hashes/sha3.js';
 import { concatBytes, hexToBytes, utf8ToBytes } from '@noble/hashes/utils.js';
-import { mapComponent, type GetType as AbiGetType } from '../advanced/abi-mapper.ts';
+import { mapComponent, type GetType as AbiGetType } from '../abi/mapper.ts';
 import {
   add0x,
   astring,
   deepFreeze,
   ethHex,
   initSig,
+  recoverPublicKey,
   isObject,
   sign,
   strip0x,
@@ -22,7 +22,7 @@ export type Hex = string | Uint8Array;
 export interface TypedSigner<T> {
   _getHash: (message: TArg<T>) => string;
   sign(message: TArg<T>, privateKey: TArg<Hex>, extraEntropy?: TArg<boolean | Uint8Array>): string;
-  recoverPublicKey(signature: string, message: TArg<T>): string;
+  recoverAddress(signature: string, message: TArg<T>): string;
   verify(signature: string, message: TArg<T>, address: string): boolean;
 }
 // 0x19 <1 byte version> <version specific data> <data to sign>.
@@ -52,7 +52,7 @@ function getSigner<T>(
       const end = sig.recovery === 0 ? '1b' : '1c';
       return add0x(sig.toHex('compact') + end);
     },
-    recoverPublicKey(signature: string, message: TArg<T>) {
+    recoverAddress(signature: string, message: TArg<T>) {
       astring(signature);
       const hash = getHash(message);
       signature = strip0x(signature);
@@ -61,15 +61,12 @@ function getSigner<T>(
       const end = signature.slice(-2);
       if (!['1b', '1c'].includes(end)) throw new Error('invalid recovery bit');
       const sig = initSig(hexToBytes(sigh), end === '1b' ? 0 : 1);
-      const publicKey = secp256k1.recoverPublicKey(sig.toBytes('recovered'), hash, {
-        prehash: false,
-      });
-      // const pub = sig.recoverPublicKey(hash).toBytes(false);
+      const publicKey = recoverPublicKey(sig, hash);
       if (!verify(sig.toBytes('compact'), hash, publicKey)) throw new Error('invalid signature');
       return addr.fromPublicKey(publicKey);
     },
     verify(signature: string, message: TArg<T>, address: string): boolean {
-      const recAddr = this.recoverPublicKey(signature, message);
+      const recAddr = this.recoverAddress(signature, message);
       const low = recAddr.toLowerCase();
       const upp = recAddr.toUpperCase();
       if (address === low || address === upp) return true; // non-checksummed
@@ -320,11 +317,11 @@ export function encoder<T extends EIP712Types>(types: T, domain: TArg<GetType<T,
       message: TArg<GetType<T, K>>,
       address: string
     ): boolean => signer.verify(signature, { primaryType, message }, address),
-    recoverPublicKey: <K extends Key<T>>(
+    recoverAddress: <K extends Key<T>>(
       primaryType: K,
       signature: string,
       message: TArg<GetType<T, K>>
-    ): string => signer.recoverPublicKey(signature, { primaryType, message }),
+    ): string => signer.recoverAddress(signature, { primaryType, message }),
   };
 }
 
@@ -420,12 +417,12 @@ export function verifyTyped<T extends EIP712Types, K extends Key<T>>(
   );
 }
 
-export function recoverPublicKeyTyped<T extends EIP712Types, K extends Key<T>>(
+export function recoverAddressTyped<T extends EIP712Types, K extends Key<T>>(
   signature: string,
   typed: TArg<TypedData<T, K>>
 ): string {
   validateTyped(typed);
-  return encoder(getTypedTypes(typed) as T, typed.domain).recoverPublicKey(
+  return encoder(getTypedTypes(typed) as T, typed.domain).recoverAddress(
     typed.primaryType as K,
     signature,
     typed.message

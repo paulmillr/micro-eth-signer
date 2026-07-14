@@ -1,16 +1,9 @@
-import { secp256k1 } from '@noble/curves/secp256k1.js';
-import { keccak_256 } from '@noble/hashes/sha3.js';
-import { concatBytes } from '@noble/hashes/utils.js';
 import * as P from 'micro-packed';
 import {
   amounts,
-  astring,
-  deepFreeze,
   ethHex,
-  initSig,
   isBytes,
   isObject,
-  sign,
   strip0x,
   type Bytes,
   type TArg,
@@ -776,33 +769,3 @@ export function sortRawData<T extends TxType>(raw: TxCoder<T>): TxCoder<T> {
 export function decodeLegacyV(raw: TxCoder<any>): bigint | undefined {
   return legacySig.decode(raw).v;
 }
-
-/** EIP-7702 Authorizations. */
-type AuthorizationHelpers = {
-  _getHash: (req: AuthorizationRequest) => TRet<Uint8Array>;
-  sign: (req: AuthorizationRequest, privateKey: string) => AuthorizationItem;
-  getAuthority: (item: AuthorizationItem) => string;
-};
-export const authorization: TRet<AuthorizationHelpers> = /* @__PURE__ */ deepFreeze({
-  _getHash(req: AuthorizationRequest): TRet<Uint8Array> {
-    const msg = RLP.encode(authorizationRequest.decode(req));
-    return keccak_256(concatBytes(new Uint8Array([0x05]), msg));
-  },
-  sign(req: AuthorizationRequest, privateKey: string): AuthorizationItem {
-    astring(privateKey);
-    const sig = sign(this._getHash(req), ethHex.decode(privateKey));
-    return { ...req, r: sig.r, s: sig.s, yParity: sig.recovery! };
-  },
-  getAuthority(item: AuthorizationItem): string {
-    if (!isObject(item)) throw new TypeError('"item" expected object, got type=' + typeof item);
-    const { r, s, yParity, ...req } = item;
-    const hash = this._getHash(req);
-    const sig = initSig({ r, s }, yParity);
-    // const point = sig.recoverPublicKey(hash);
-    const bytes = secp256k1.recoverPublicKey(sig.toBytes('recovered'), hash, { prehash: false });
-    return addr.fromPublicKey(bytes);
-  },
-});
-
-// NOTE: for tests only, don't use
-export const __tests: any = { legacySig, TxVersions };

@@ -2,8 +2,8 @@ import { bytesToHex } from '@noble/hashes/utils.js';
 import { describe, should } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual, throws } from 'node:assert';
 import { inspect } from 'node:util';
-import { deployContract } from '../src/advanced/abi-decoder.ts';
-import { RawTx, RlpTx, __tests, validateFields } from '../src/core/tx-internal.ts';
+import { deployContract } from '../src/abi/decoder.ts';
+import { RawTx, RlpTx, TxVersions, legacySig, validateFields } from '../src/core/tx-internal.ts';
 import { Transaction, addr, authorization } from '../src/index.ts';
 import {
   add0x,
@@ -15,6 +15,8 @@ import {
   formatters,
   initSig,
   omit,
+  recoverPublicKey,
+  sign,
   weieth,
   weigwei,
   zip,
@@ -197,7 +199,7 @@ const convertTx = (raw) => {
   if (raw.maxPriorityFeePerGas) res.maxPriorityFeePerGas = toBig(raw.maxPriorityFeePerGas);
   if (raw.s) res.s = toBig(raw.s);
   if (raw.r) res.r = toBig(raw.r);
-  if (raw.v) Object.assign(res, __tests.legacySig.encode({ v: toBig(raw.v), r: res.r, s: res.s }));
+  if (raw.v) Object.assign(res, legacySig.encode({ v: toBig(raw.v), r: res.r, s: res.s }));
   if (raw.accessList) res.accessList = raw.accessList;
   // EIP-4844
   if (raw.blobVersionedHashes) res.blobVersionedHashes = raw.blobVersionedHashes;
@@ -274,6 +276,12 @@ describe('Transactions', () => {
       };
       const signed = authorization.sign(auth, privateKey);
       deepStrictEqual(authorization.getAuthority(signed), addr.fromPrivateKey(privateKey));
+      // EIP-7702: s > secp256k1n/2 makes the authorization invalid on-chain.
+      // The malleated twin (n - s, flipped parity) recovers the same key, so
+      // without the check it would silently "work".
+      const N = 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141n;
+      const malleated = { ...signed, s: N - signed.s, yParity: signed.yParity ^ 1 };
+      throws(() => authorization.getAuthority(malleated), /invalid s/);
     });
     should('reject invalid set-code tx shape', () => {
       const tx = {
@@ -384,8 +392,7 @@ describe('Transactions', () => {
   });
   describe('Utils', () => {
     should('legacySig', () => {
-      const { legacySig } = __tests;
-
+      
       // DECODE
       throws(() => legacySig.decode([] as any), 'legacySig array');
       throws(() => legacySig.decode(new Uint8Array([]) as any), 'legacySig u8a');
@@ -452,6 +459,18 @@ describe('Transactions', () => {
       deepStrictEqual([initSig(sig, 0).recovery, initSig(sig, 1).recovery], [0, 1]);
       throws(() => initSig(sig, 2), /recovery bit/);
       throws(() => initSig(sig, 3), /recovery bit/);
+    });
+    should('utils: recoverPublicKey round-trips sign/initSig', () => {
+      const { privateKey, address } = addr.random();
+      const hash = new Uint8Array(32).fill(7);
+      const sig = sign(hash, ethHex.decode(privateKey));
+      // straight from sign(), and after an initSig round-trip from {r, s} + bit
+      deepStrictEqual(addr.fromPublicKey(recoverPublicKey(sig, hash)), address);
+      const rebuilt = initSig({ r: sig.r, s: sig.s }, sig.recovery);
+      deepStrictEqual(addr.fromPublicKey(recoverPublicKey(rebuilt, hash)), address);
+      // recovery against a different digest yields a different (wrong) key
+      const other = new Uint8Array(32).fill(8);
+      deepStrictEqual(addr.fromPublicKey(recoverPublicKey(sig, other)) === address, false);
     });
     should('utils: cloneDeep preserves null and own keys', () => {
       const value = Object.assign(Object.create({ inherited: { value: 1 } }), {
@@ -807,7 +826,7 @@ describe('Transactions', () => {
             d.maxFeePerBlobGas = 0n;
           if (['eip4844'].includes(etx.type) && d.blobVersionedHashes === undefined)
             d.blobVersionedHashes = [];
-          const c = __tests.TxVersions[etx.type];
+          const c = TxVersions[etx.type];
           // remove fields from wrong version
           for (const k in d) {
             if (k !== 'type' && !c.fields.includes(k) && !c.optionalFields.includes(k)) delete d[k];

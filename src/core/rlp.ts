@@ -32,7 +32,8 @@ type Measured = {
 const leaf = (bytes: Bytes): Measured => {
   const len = bytes.length;
   let total;
-  if (len === 1 && bytes[0] < 0x80) total = 1; // single byte, encoded as-is without a prefix
+  if (len === 1 && bytes[0] < 0x80)
+    total = 1; // single byte, encoded as-is without a prefix
   else if (len < 56) total = 1 + len;
   else total = 1 + lenLen(len) + len;
   return { bytes, items: null, payload: 0, total };
