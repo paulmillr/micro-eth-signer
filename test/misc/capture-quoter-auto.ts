@@ -2,8 +2,8 @@ import { writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { jsonrpc } from 'micro-ftch';
-import { tokenFromSymbol } from '../../src/advanced/abi.ts';
-import { Quoter, Web3Provider } from '../../src/net.ts';
+import { tokenFromSymbol } from '../../src/abi/index.ts';
+import { Quoter, RpcClient } from '../../src/net.ts';
 
 const root = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const fixture = join(root, 'test', 'fixtures', 'rpc', 'quoter-auto.json');
@@ -44,7 +44,7 @@ const recordingFetch = async (url: string, opt: RequestInit): Promise<Response> 
   return await next;
 };
 
-const prov = new Web3Provider(jsonrpc(recordingFetch as typeof fetch, liveUrl));
+const prov = new RpcClient(jsonrpc(recordingFetch as typeof fetch, liveUrl));
 const USDC = tokenFromSymbol('USDC')!.contract;
 const quoter = new Quoter(prov);
 const eth = await quoter.coinPrice('ETH', 'uniswap-v3', { priceIn: USDC, fees: [500, 3000] });

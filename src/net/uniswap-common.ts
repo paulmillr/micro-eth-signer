@@ -1,5 +1,5 @@
-import { type ContractInfo } from '../advanced/abi-decoder.ts';
-import { tokenFromSymbol } from '../advanced/abi.ts';
+import { type ContractInfo } from '../abi/decoder.ts';
+import { TOKENS_BY_SYMBOL } from '../abi/index.ts';
 import { addr } from '../core/address.ts';
 import { type IWeb3Provider, createDecimal, ethHex, isBytes, type TRet, weieth } from '../utils.ts';
 
@@ -21,6 +21,22 @@ export type SwapElm = {
   name: string; // Human readable exchange name
   expectedAmount: string;
   tx: (fromAddress: string, toAddress: string) => Promise<ExchangeTx>;
+};
+
+/** Transaction payload produced by SwapQuote.tx. */
+export type SwapTxData = {
+  amount: string;
+  address: string;
+  expectedAmount: string;
+  data: string;
+  allowance?: { token: string; contract: string; amount: string };
+};
+
+/** Result of UniswapV2/V3 `swap()`: a quote plus a tx builder. */
+export type SwapQuote = {
+  name: string;
+  expectedAmount: string;
+  tx: (fromAddress: string, toAddress: string) => Promise<SwapTxData>;
 };
 
 export function addPercent(n: bigint, _perc: number): bigint {
@@ -82,21 +98,27 @@ export async function awaitDeep<T, E extends boolean | undefined>(
 
 export type CommonBase = {
   contract: string;
-} & ContractInfo;
+  abi: 'ERC20';
+  symbol: string;
+  decimals: number;
+} & Omit<ContractInfo, 'abi' | 'symbol' | 'decimals'>;
+const commonBase = (token: { contract: string; symbol: string; decimals: number }): CommonBase => ({
+  contract: token.contract,
+  abi: 'ERC20',
+  symbol: token.symbol,
+  decimals: token.decimals,
+});
 export const COMMON_BASES: TRet<CommonBase[]> = [
-  'WETH',
-  'DAI',
-  'USDC',
-  'USDT',
-  'COMP',
-  'MKR',
-  'WBTC',
-  'AMPL',
-]
-  .map((i) => tokenFromSymbol(i))
-  .filter((i) => !!i) as TRet<CommonBase[]>;
-export const WETH: string = tokenFromSymbol('WETH')!.contract;
-if (!WETH) throw new Error('WETH is undefined!');
+  TOKENS_BY_SYMBOL.WETH,
+  TOKENS_BY_SYMBOL.DAI,
+  TOKENS_BY_SYMBOL.USDC,
+  TOKENS_BY_SYMBOL.USDT,
+  TOKENS_BY_SYMBOL.COMP,
+  TOKENS_BY_SYMBOL.MKR,
+  TOKENS_BY_SYMBOL.WBTC,
+  TOKENS_BY_SYMBOL.AMPL,
+].map(commonBase);
+export const WETH: string = TOKENS_BY_SYMBOL.WETH.contract;
 
 export function wrapContract(contract: string): string {
   contract = contract.toLowerCase();
@@ -166,32 +188,17 @@ export abstract class UniswapAbstract {
   async swap(
     fromCoin: 'eth' | Token,
     toCoin: 'eth' | Token,
-    amount: string,
+    amount: string | bigint,
     opt: SwapOpt = DEFAULT_SWAP_OPT
-  ): Promise<
-    | {
-        name: string;
-        expectedAmount: string;
-        tx: (
-          _fromAddress: string,
-          toAddress: string
-        ) => Promise<{
-          amount: string;
-          address: any;
-          expectedAmount: string;
-          data: string;
-          allowance: any;
-        }>;
-      }
-    | undefined
-  > {
+  ): Promise<SwapQuote | undefined> {
     const fromInfo = getToken(fromCoin, 'fromCoin');
     const toInfo = getToken(toCoin, 'toCoin');
     const fromContract = fromInfo.contract.toLowerCase();
     const toContract = toInfo.contract.toLowerCase();
     const fromDecimal = createDecimal(fromInfo.decimals);
     const toDecimal = createDecimal(toInfo.decimals);
-    const inputAmount = fromDecimal.decode(amount);
+    // bigint amounts are raw token units; strings are human-readable decimals.
+    const inputAmount = typeof amount === 'bigint' ? amount : fromDecimal.decode(amount);
     try {
       const path = await this.bestPath(fromContract, toContract, inputAmount);
       const expectedAmount = toDecimal.encode(path.amountOut as bigint);
@@ -213,11 +220,13 @@ export abstract class UniswapAbstract {
             address: txUni.to,
             expectedAmount,
             data: ethHex.encode(txUni.data),
-            allowance: txUni.allowance && {
-              token: txUni.allowance.token,
-              contract: this.contract,
-              amount: fromDecimal.encode(txUni.allowance.amount),
-            },
+            allowance: txUni.allowance
+              ? {
+                  token: txUni.allowance.token,
+                  contract: this.contract,
+                  amount: fromDecimal.encode(txUni.allowance.amount),
+                }
+              : undefined,
           };
         },
       };
