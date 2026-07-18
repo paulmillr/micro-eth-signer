@@ -64,7 +64,7 @@ const txParams = {
 };
 const unsignedTx = Transaction.prepare(txParams);
 const signedTx = unsignedTx.signBy(PRIV, false);
-const signedTxHex = signedTx.toHex(true);
+const signedTxHex = signedTx.toHex({ includeSignature: true });
 
 const kzg = new KZG(kzgSetup);
 const kzgBlob = Array.from({ length: 4096 }, (_, i) => BigInt(i + 1));
@@ -107,7 +107,7 @@ const sszValue = {
 function sanityCheck() {
   const msgSig = eip191Signer.sign(MESSAGE, PRIV, false);
   if (!eip191Signer.verify(msgSig, MESSAGE, FROM)) throw new Error('eip191 sanity check failed');
-  if (Transaction.fromHex(signedTxHex).toHex(true) !== signedTxHex)
+  if (Transaction.fromHex(signedTxHex).toHex({ includeSignature: true }) !== signedTxHex)
     throw new Error('transaction sanity check failed');
   if (authorization.getAuthority(authItem) !== FROM)
     throw new Error('authorization sanity check failed');
@@ -134,7 +134,7 @@ export async function main() {
   await bench('eip712.signTyped', () => signTyped(typedData, PRIV, false));
   await bench('authorization.getAuthority', () => authorization.getAuthority(authItem));
   await bench('tx.fromHex', () => Transaction.fromHex(signedTxHex));
-  await bench('tx.prepare+sign+toHex', () => unsignedTx.signBy(PRIV, false).toHex(true));
+  await bench('tx.prepare+sign+toHex', () => unsignedTx.signBy(PRIV, false).toHex({ includeSignature: true }));
   await bench('tx.recoverSender', () => signedTx.recoverSender());
   await bench('abi.erc20.encode+decodeData', () => {
     const data = ethHex.encode(erc20.transfer.encodeInput(erc20Transfer));

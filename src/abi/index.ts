@@ -39,6 +39,25 @@ import {
 import { DEFAULT_TOKENS, TOKENS_BY_SYMBOL, tokensBySymbol, type TokenDef } from './tokens.ts';
 import { default as _WETH, WETH_CONTRACT } from './weth.ts';
 export { DEFAULT_TOKENS, TOKENS_BY_SYMBOL, tokensBySymbol, type TokenDef } from './tokens.ts';
+/**
+ * Decodes revert data of a failed call: solidity `Error(string)` / `Panic(uint256)`
+ * built-ins, plus custom errors matched against `type: 'error'` ABI entries.
+ */
+export { decodeError, type DecodedError } from './decoder.ts';
+export type {
+  ContractMethodNetUntyped,
+  ContractMethodUntyped,
+  EventMethodUntyped,
+  ParsedABI,
+} from './decoder.ts';
+/**
+ * Human-readable ABI parsing: `'function transfer(address to, uint256 amount) returns (bool)'`.
+ * Runtime-only: parsed ABIs get string-indexed untyped methods from createContract/events;
+ * use `as const` JSON ABIs when full type inference is needed.
+ */
+export { parseAbi, parseAbiItem } from './parse.ts';
+/** Multicall3 `aggregate3` ABI and its canonical deployment address. */
+export { MULTICALL3, MULTICALL3_ABI } from './multicall.ts';
 
 // We need to export raw contracts: CONTRACTS entries include addresses, so the
 // registry shape cannot be reused in createContract with nice types.

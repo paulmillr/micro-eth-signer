@@ -4,6 +4,7 @@ import {
   hexToBytes as _hexToBytes,
   isBytes as _isBytes,
   bytesToHex,
+  concatBytes,
   type TArg,
   type TRet,
 } from '@noble/hashes/utils.js';
@@ -457,6 +458,57 @@ export function initSig(
   }
   return s.addRecoveryBit(bit);
 }
+/**
+ * Signature as `(r, s)` scalars plus the y-parity recovery bit.
+ * The wire format used by wallets is 65 bytes: `r (32) || s (32) || v (1)`.
+ */
+export type SignatureRsv = {
+  /** Signature `r` scalar. */
+  r: bigint;
+  /** Signature `s` scalar. */
+  s: bigint;
+  /** Recovery bit: 0 or 1. */
+  yParity: number;
+};
+/**
+ * Parses a 65-byte wallet signature (`r || s || v`) into `(r, s, yParity)`.
+ * Accepts `v` of 0/1 (y-parity) or 27/28 (`eth_sign` / `personal_sign` style).
+ * @param signature - 65-byte signature as 0x-hex string or Uint8Array.
+ * @example
+ * Split a signature returned by a wallet before verifying it.
+ * ```ts
+ * const { r, s, yParity } = parseSignature('0x' + 'ab'.repeat(64) + '1b');
+ * ```
+ */
+export function parseSignature(signature: TArg<string | Uint8Array>): TRet<SignatureRsv> {
+  const bytes = isBytes(signature) ? signature : ethHex.decode(astring(signature, 'signature'));
+  if (bytes.length !== 65) throw new Error(`signature must be 65 bytes, got ${bytes.length}`);
+  // Signature constructor validates that r and s are in [1, n).
+  const sig = secp256k1.Signature.fromBytes(bytes.subarray(0, 64), 'compact');
+  const v = bytes[64];
+  let yParity: number;
+  if (v === 0 || v === 1) yParity = v;
+  else if (v === 27 || v === 28) yParity = v - 27;
+  else throw new Error(`signature v must be 0, 1, 27 or 28, got ${v}`);
+  return { r: sig.r, s: sig.s, yParity } as TRet<SignatureRsv>;
+}
+/**
+ * Serializes `(r, s, yParity)` into the 65-byte `r || s || v` hex format.
+ * `v` is written as 27/28 for compatibility with `eth_sign` / `personal_sign` consumers.
+ * @param signature - signature scalars with recovery bit.
+ * @example
+ * Re-create the wallet wire format from parsed parts.
+ * ```ts
+ * serializeSignature({ r, s, yParity: 0 });
+ * ```
+ */
+export function serializeSignature(signature: TArg<SignatureRsv>): string {
+  const { r, s, yParity } = signature;
+  const sig = initSig({ r, s }, yParity);
+  const v = yParity === 0 ? 0x1b : 0x1c;
+  return ethHex.encode(concatBytes(sig.toBytes('compact'), Uint8Array.of(v)));
+}
+
 /**
  * Recovers the public key from a recoverable signature and digest.
  * Centralizes the noble call details ('recovered' encoding, no prehashing);

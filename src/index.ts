@@ -1,8 +1,12 @@
 import { addr as _addr } from './core/address.ts';
 import { authorization as _authorization } from './core/authorization.ts';
 import {
+  AggregatedError as _AggregatedError,
+  type AccessList as _AccessList,
   type AuthorizationItem as _AuthorizationItem,
   type AuthorizationRequest as _AuthorizationRequest,
+  type TxCoder as _TxCoder,
+  type TxType as _TxType,
 } from './core/tx-internal.ts';
 import { Transaction as _Transaction } from './core/tx.ts';
 import {
@@ -19,9 +23,12 @@ import {
   amounts as _amounts,
   ethHex as _ethHex,
   ethHexNoLeadingZero as _ethHexNoLeadingZero,
+  parseSignature as _parseSignature,
+  serializeSignature as _serializeSignature,
   weieth as _weieth,
   weigwei as _weigwei,
   type Bytes as _Bytes,
+  type SignatureRsv as _SignatureRsv,
 } from './utils.ts';
 
 /**
@@ -57,8 +64,8 @@ export type AuthorizationItem = _AuthorizationItem;
  * Typed transaction builder, signer, and serializer.
  * @param type - Transaction version to validate against.
  * @param raw - Parsed transaction fields for the selected version.
- * @param strict - Whether to enforce the library safety limits.
- * @param allowSignatureFields - Whether signature fields may be present on input.
+ * @param opts - `strict` enforces the library safety limits; `allowSignatureFields` controls
+ * whether signature fields may be present on input.
  * @example
  * Prepare a transaction and serialize the signed result as hex.
  * ```ts
@@ -74,6 +81,19 @@ export type AuthorizationItem = _AuthorizationItem;
  * ```
  */
 export const Transaction = _Transaction;
+/** Supported transaction type names: `legacy`, `eip2930`, `eip1559`, `eip4844`, `eip7702`. */
+export type TxType = _TxType;
+/** Field shape of a transaction for the given {@link TxType}. */
+export type TxCoder<T extends TxType> = _TxCoder<T>;
+/** EIP-2930 access list: per-address storage keys. */
+export type AccessList = _AccessList;
+/**
+ * Error thrown by transaction validation.
+ * Carries per-field problems in `errors` as `{ field, error }` pairs,
+ * so UIs can render all invalid fields at once.
+ */
+export const AggregatedError = _AggregatedError;
+export type AggregatedError = _AggregatedError;
 /**
  * EIP-191 signer helper.
  * @example
@@ -239,3 +259,24 @@ export const weieth = _weieth;
 export const weigwei = _weigwei;
 /** Byte-array input accepted by the package helpers. */
 export type Bytes = _Bytes;
+/** Signature `(r, s)` scalars plus y-parity recovery bit. */
+export type SignatureRsv = _SignatureRsv;
+/**
+ * Parses a 65-byte wallet signature (`r || s || v`) into `(r, s, yParity)`.
+ * Accepts `v` of 0/1 or 27/28.
+ * @example
+ * Split a `personal_sign` result before verifying it.
+ * ```ts
+ * const { r, s, yParity } = parseSignature(sigHex);
+ * ```
+ */
+export const parseSignature = _parseSignature;
+/**
+ * Serializes `(r, s, yParity)` back into 65-byte `r || s || v` hex, with `v` as 27/28.
+ * @example
+ * Rebuild the wallet wire format from parsed parts.
+ * ```ts
+ * serializeSignature({ r, s, yParity: 0 });
+ * ```
+ */
+export const serializeSignature = _serializeSignature;

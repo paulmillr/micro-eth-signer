@@ -15,12 +15,15 @@ withRetry) built on it. Higher-level modules ship as their own entry points:
 import { createContract } from './abi/index.ts';
 import type { ContractType, FnArg } from './abi/decoder.ts';
 import type { ArrLike, Writable } from './abi/mapper.ts';
+import { MULTICALL3, MULTICALL3_ABI } from './abi/multicall.ts';
 import { TxVersions, legacySig, type AccessList } from './core/tx-internal.ts';
 import { Transaction } from './core/tx.ts';
 import {
   ADDRESS_ZERO,
   amounts,
+  ethHex,
   ethHexNum,
+  isObject,
   type IWeb3Provider,
   type TRet,
   type Web3CallArgs,
@@ -491,10 +494,10 @@ function txInfoRaw(info: TxInfo, receipt: TxReceipt | undefined, verify: boolean
   // `verify: false` a failed rebuild (e.g. a chain-specific tx type) only
   // leaves `raw` undefined instead of making the tx unfetchable.
   try {
-    const tx = new Transaction(type, rawData as any, false, true);
+    const tx = new Transaction(type, rawData as any, { strict: false });
     if (tx.recoverSender().address.toLowerCase() !== info.from.toLowerCase())
       throw new Error('txInfo: wrong sender');
-    if (info.hash !== `0x${tx.hash}`) throw new Error('txInfo: wrong hash');
+    if (info.hash !== tx.hash) throw new Error('txInfo: wrong hash');
     raw = tx.toHex();
   } catch (e) {
     if (verify) throw e;
@@ -587,10 +590,48 @@ export class RpcClient implements IWeb3Provider {
    * @returns transaction hash
    */
   async broadcast(tx: string | Transaction<keyof typeof TxVersions>): Promise<string> {
-    const hex = typeof tx === 'string' ? tx : tx.toHex(true);
+    const hex = typeof tx === 'string' ? tx : tx.toHex({ includeSignature: true });
     if (typeof hex !== 'string' || !hex.startsWith('0x'))
       throw new Error('broadcast: wrong transaction');
     return await this.call('eth_sendRawTransaction', hex);
+  }
+  /**
+   * Batches multiple read-only calls into a single Multicall3 `aggregate3` eth_call.
+   * @param calls - list of `{ to, data }` calls; `allowFailure` (default true) lets a
+   * single call revert without failing the whole batch
+   * @param opts.tag - block tag, as in `ethCall`
+   * @param opts.contract - Multicall3 deployment address, defaults to the canonical one
+   * @returns per-call `{ success, data }` with hex-encoded return data
+   * @example
+   * ```ts
+   * const [name, symbol] = await rpc.multicall([
+   *   { to: token, data: nameCalldata },
+   *   { to: token, data: symbolCalldata },
+   * ]);
+   * ```
+   */
+  async multicall(
+    calls: { to: string; data: string; allowFailure?: boolean }[],
+    opts: { tag?: Web3CallArgs['tag']; contract?: string } = {}
+  ): Promise<{ success: boolean; data: string }[]> {
+    if (!Array.isArray(calls)) throw new TypeError('multicall: expected array of calls');
+    const arg = calls.map((call, i) => {
+      if (!isObject(call) || typeof call.to !== 'string' || typeof call.data !== 'string')
+        throw new Error(`multicall: wrong call at index ${i}`);
+      return {
+        target: call.to,
+        allowFailure: call.allowFailure !== false,
+        callData: ethHex.decode(call.data),
+      };
+    });
+    const m = createContract(MULTICALL3_ABI).aggregate3;
+    const to = opts.contract === undefined ? MULTICALL3 : opts.contract;
+    const res = await this.ethCall({ to, data: ethHex.encode(m.encodeInput(arg)) }, opts.tag);
+    const decoded = m.decodeOutput(ethHex.decode(res));
+    return decoded.map(({ success, returnData }) => ({
+      success,
+      data: ethHex.encode(returnData),
+    }));
   }
   /** Polls until the transaction is included (+ optional confirmations). */
   async waitForReceipt(txHash: string, opts: WaitReceiptOpts = {}): Promise<TxReceipt> {

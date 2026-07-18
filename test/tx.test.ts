@@ -251,19 +251,28 @@ describe('Transactions', () => {
         },
         false
       );
-      deepStrictEqual(created.toHex(false), tx);
+      deepStrictEqual(created.toHex({ includeSignature: false }), tx);
       // Emulate signing
-      created.raw.r = 0x60fdd29ff912ce880cd3edaf9f932dc61d3dae823ea77e0323f94adb9f6a72fen;
-      created.raw.s = 0x60fdd29ff912ce880cd3edaf9f932dc61d3dae823ea77e0323f94adb9f6a72fen;
-      created.raw.yParity = 1;
-      created.isSigned = true;
+      const sig = {
+        r: 0x60fdd29ff912ce880cd3edaf9f932dc61d3dae823ea77e0323f94adb9f6a72fen,
+        s: 0x60fdd29ff912ce880cd3edaf9f932dc61d3dae823ea77e0323f94adb9f6a72fen,
+      };
+      const signed1 = new Transaction(
+        'eip7702',
+        { ...created.raw, ...sig, yParity: 1 },
+        { strict: false }
+      );
       deepStrictEqual(
-        created.toHex(true),
+        signed1.toHex({ includeSignature: true }),
         `0x04f90126018203118080809470997970c51812dc3a010c7d01b50e0d17dc79c8880de0b6b3a764000080c0f8baf85c0194fba3912ca04dd458c843e2ee08967fc04f3579c28201a480a060fdd29ff912ce880cd3edaf9f932dc61d3dae823ea77e0323f94adb9f6a72fea060fdd29ff912ce880cd3edaf9f932dc61d3dae823ea77e0323f94adb9f6a72fef85a0a9400000000000000000000000000000000000000004501a060fdd29ff912ce880cd3edaf9f932dc61d3dae823ea77e0323f94adb9f6a72fea060fdd29ff912ce880cd3edaf9f932dc61d3dae823ea77e0323f94adb9f6a72fe01a060fdd29ff912ce880cd3edaf9f932dc61d3dae823ea77e0323f94adb9f6a72fea060fdd29ff912ce880cd3edaf9f932dc61d3dae823ea77e0323f94adb9f6a72fe`
       );
-      created.raw.yParity = 0;
+      const signed0 = new Transaction(
+        'eip7702',
+        { ...created.raw, ...sig, yParity: 0 },
+        { strict: false }
+      );
       deepStrictEqual(
-        created.toHex(true),
+        signed0.toHex({ includeSignature: true }),
         `0x04f90126018203118080809470997970c51812dc3a010c7d01b50e0d17dc79c8880de0b6b3a764000080c0f8baf85c0194fba3912ca04dd458c843e2ee08967fc04f3579c28201a480a060fdd29ff912ce880cd3edaf9f932dc61d3dae823ea77e0323f94adb9f6a72fea060fdd29ff912ce880cd3edaf9f932dc61d3dae823ea77e0323f94adb9f6a72fef85a0a9400000000000000000000000000000000000000004501a060fdd29ff912ce880cd3edaf9f932dc61d3dae823ea77e0323f94adb9f6a72fea060fdd29ff912ce880cd3edaf9f932dc61d3dae823ea77e0323f94adb9f6a72fe80a060fdd29ff912ce880cd3edaf9f932dc61d3dae823ea77e0323f94adb9f6a72fea060fdd29ff912ce880cd3edaf9f932dc61d3dae823ea77e0323f94adb9f6a72fe`
       );
     });
@@ -676,6 +685,59 @@ describe('Transactions', () => {
     should('generate correct address with Address.fromPublicKey()', () => {
       deepStrictEqual(addr.fromPublicKey(pub), addr_);
     });
+    should('getCreateAddress', () => {
+      // Cross-checked with ethers getCreateAddress
+      const from = '0x8ba1f109551bD432803012645Ac136ddd64DBA72';
+      const vectors = [
+        [0, '0xcF59cf8A176d2a046d434110bEc2E124496356Ff'],
+        [1, '0xB2ecEad63c92F3936595572B03303aEaF8666fB1'],
+        [127, '0x258238Ba5e34Ee04aFe23b47d961e20a4B18F273'],
+        [128, '0x9d64C5AC3dB371e7a073883dA1e7D36B0b907B32'],
+        [255, '0x9F81A42C056C402579f6E3E69b906e285cAfD285'],
+        [256, '0xb7130b1be359fDF6c71A401371a4cb8a5919b3eD'],
+        [4294967295, '0x7cf2959195eAC62938d5B02968e33AB32a5D9e9a'],
+      ] as const;
+      for (const [nonce, expected] of vectors) {
+        deepStrictEqual(addr.getCreateAddress(from, nonce), expected);
+        deepStrictEqual(addr.getCreateAddress(from, BigInt(nonce)), expected);
+      }
+      throws(() => addr.getCreateAddress(from, -1));
+      throws(() => addr.getCreateAddress(from, 1.5));
+      throws(() => addr.getCreateAddress(from, 2n ** 64n));
+      throws(() => addr.getCreateAddress('0x1234', 0));
+    });
+    should('getCreate2Address (EIP-1014 examples)', () => {
+      const keccakOf00 = '0xbc36789e7a1e281436464229828f817d6612f7b477d66591ff96a9e064bcc98a'; // keccak(0x00)
+      const keccakOfDeadbeef = '0xd4fd4e189132273036449fc9e11198c739161b4c0116a9a2dccdfa1c492006f1'; // keccak(0xdeadbeef)
+      const keccakOfEmpty = '0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470'; // keccak(0x)
+      const zeros32 = `0x${'00'.repeat(32)}`;
+      const vectors = [
+        ['0x0000000000000000000000000000000000000000', zeros32, keccakOf00,
+          '0x4D1A2e2bB4F88F0250f26Ffff098B0b30B26BF38'],
+        ['0xdeadbeef00000000000000000000000000000000', zeros32, keccakOf00,
+          '0xB928f69Bb1D91Cd65274e3c79d8986362984fDA3'],
+        ['0xdeadbeef00000000000000000000000000000000',
+          '0x000000000000000000000000feed000000000000000000000000000000000000', keccakOf00,
+          '0xD04116cDd17beBE565EB2422F2497E06cC1C9833'],
+        ['0x0000000000000000000000000000000000000000', zeros32, keccakOfDeadbeef,
+          '0x70f2b2914A2a4b783FaEFb75f459A580616Fcb5e'],
+        ['0x00000000000000000000000000000000deadbeef',
+          `0x${'00'.repeat(28)}cafebabe`, keccakOfDeadbeef,
+          '0x60f3f640a8508fC6a86d45DF051962668E1e8AC7'],
+        ['0x0000000000000000000000000000000000000000', zeros32, keccakOfEmpty,
+          '0xE33C0C7F7df4809055C3ebA6c09CFe4BaF1BD9e0'],
+      ] as const;
+      for (const [from, salt, initCodeHash, expected] of vectors) {
+        deepStrictEqual(addr.getCreate2Address(from, salt, initCodeHash), expected);
+        deepStrictEqual(
+          addr.getCreate2Address(from, ethHex.decode(salt), ethHex.decode(initCodeHash)),
+          expected
+        );
+      }
+      throws(() => addr.getCreate2Address('0x1234', zeros32, keccakOf00));
+      throws(() => addr.getCreate2Address(addr_, '0x00', keccakOf00));
+      throws(() => addr.getCreate2Address(addr_, zeros32, '0x00'));
+    });
   });
   const eip155 = EIP155_VECTORS.slice(1);
 
@@ -709,7 +771,7 @@ describe('Transactions', () => {
       ...common,
     }).signBy(priv, false);
     deepStrictEqual(pre155.v, BigInt(27 + pre155.raw.yParity!));
-    const rt = Transaction.fromHex(pre155.toHex(true));
+    const rt = Transaction.fromHex(pre155.toHex({ includeSignature: true }));
     deepStrictEqual(rt.raw.chainId, undefined);
     deepStrictEqual(rt.sender, addr_);
     deepStrictEqual(rt.v, pre155.v);
@@ -746,7 +808,7 @@ describe('Transactions', () => {
   should('handle EIP155 test vectors (recursive)', () => {
     for (const vector of eip155) {
       const ours = Transaction.fromHex(vector.rlp);
-      deepStrictEqual(ours.raw, Transaction.fromHex(ours.toHex(true)).raw);
+      deepStrictEqual(ours.raw, Transaction.fromHex(ours.toHex({ includeSignature: true })).raw);
     }
   });
 
@@ -800,7 +862,7 @@ describe('Transactions', () => {
           // Try to sign unsigned tx
           if (signed) {
             const sig = etx.signBy(tx.privateKey, false);
-            deepStrictEqual(sig.toHex(true), signed);
+            deepStrictEqual(sig.toHex({ includeSignature: true }), signed);
             deepStrictEqual(sig.raw.r, signature.r);
             deepStrictEqual(sig.raw.s, signature.s);
           }
@@ -808,8 +870,8 @@ describe('Transactions', () => {
         // parse signed
         if (signed) {
           const tx = Transaction.fromHex(signed);
-          deepStrictEqual(tx.toHex(true), signed);
-          if (unsigned) deepStrictEqual(tx.toHex(false), unsigned);
+          deepStrictEqual(tx.toHex({ includeSignature: true }), signed);
+          if (unsigned) deepStrictEqual(tx.toHex({ includeSignature: false }), unsigned);
         }
         // try to build tx
         if (unsigned && signed) {
@@ -839,9 +901,9 @@ describe('Transactions', () => {
             }
           }
           const preparedTx = Transaction.prepare(d, false);
-          deepStrictEqual(preparedTx.toHex(false), unsigned);
+          deepStrictEqual(preparedTx.toHex({ includeSignature: false }), unsigned);
           const sig = etx.signBy(tx.privateKey, false);
-          deepStrictEqual(sig.toHex(true), signed);
+          deepStrictEqual(sig.toHex({ includeSignature: true }), signed);
         }
       }
     }
@@ -862,7 +924,7 @@ describe('Transactions', () => {
           // Try to sign unsigned tx
           if (signed) {
             const sig = etx.signBy(vtx.privateKey, false);
-            deepStrictEqual(sig.toHex(true), signed);
+            deepStrictEqual(sig.toHex({ includeSignature: true }), signed);
             deepStrictEqual(sig.raw.r, signature.r);
             deepStrictEqual(sig.raw.s, signature.s);
             if (signature.yParity !== undefined) deepStrictEqual(sig.raw.yParity, signature.yParity);
@@ -871,8 +933,8 @@ describe('Transactions', () => {
         // parse signed
         if (signed) {
           const tx = Transaction.fromHex(signed);
-          deepStrictEqual(tx.toHex(true), signed);
-          if (unsigned) deepStrictEqual(tx.toHex(false), unsigned);
+          deepStrictEqual(tx.toHex({ includeSignature: true }), signed);
+          if (unsigned) deepStrictEqual(tx.toHex({ includeSignature: false }), unsigned);
         }
         // try to build tx
         if (unsigned && signed) {
@@ -892,9 +954,9 @@ describe('Transactions', () => {
           if (['eip4844'].includes(etx.type) && d.blobVersionedHashes === undefined)
             d.blobVersionedHashes = [];
           const preparedTx = Transaction.prepare(d, false);
-          deepStrictEqual(preparedTx.toHex(false), unsigned);
+          deepStrictEqual(preparedTx.toHex({ includeSignature: false }), unsigned);
           const sig = etx.signBy(vtx.privateKey, false);
-          deepStrictEqual(sig.toHex(true), signed);
+          deepStrictEqual(sig.toHex({ includeSignature: true }), signed);
         }
       }
     } finally {
@@ -955,15 +1017,15 @@ describe('Transactions', () => {
       );
       const looseClone = looseTx.clone();
       deepStrictEqual(looseClone.raw, looseTx.raw);
-      deepStrictEqual(looseClone.toHex(false), looseTx.toHex(false));
+      deepStrictEqual(looseClone.toHex({ includeSignature: false }), looseTx.toHex({ includeSignature: false }));
       const looseSigned = looseTx.signBy(priv, false);
       const looseUnsigned = looseSigned.removeSignature();
       deepStrictEqual(looseUnsigned.raw, looseTx.raw);
-      deepStrictEqual(looseUnsigned.toHex(false), looseTx.toHex(false));
+      deepStrictEqual(looseUnsigned.toHex({ includeSignature: false }), looseTx.toHex({ includeSignature: false }));
       const tx = raw.signBy(priv, false);
       const txH = raw.signBy(priv, true);
       deepStrictEqual(
-        tx.toHex(true),
+        tx.toHex({ includeSignature: true }),
         '0x02f86a0180843b9aca00847735940082520894df90dea0e0bf5ca6d2a7f0cb86874ba6714f463e0180c080a09448b25a696cb0f66945be1844711a5f6979c6cbf060e4f7b5a53e0dceeb3bdca004c61d9b91ecea687f78aa7e65108438e9b12a4fe90b1f70b0956134dfaba18f'
       );
       const secp256k1N = BigInt(
@@ -976,7 +1038,7 @@ describe('Transactions', () => {
           s: secp256k1N - tx.raw.s!,
           yParity: tx.raw.yParity === 0 ? 1 : 0,
         },
-        false
+        { strict: false }
       );
       deepStrictEqual(highS.verifySignature(), false);
       throws(() => raw.verifySignature(), /expected signed transaction/);
@@ -989,7 +1051,7 @@ describe('Transactions', () => {
         gasPrice: 1n,
       }).signBy(priv, false);
       deepStrictEqual(
-        tx2.toHex(true),
+        tx2.toHex({ includeSignature: true }),
         '0x01f86101800182520894df90dea0e0bf5ca6d2a7f0cb86874ba6714f463e0180c001a0fa53be4a77c94bfc8de4430c2828cb641e010870b1f62912b5cb69630507423fa04a1ab522f1691d55ba558d656d94e063f0cfbf02c70b68ac2a13628c768dd4c2'
       );
       const tx3 = Transaction.prepare({
@@ -1000,7 +1062,7 @@ describe('Transactions', () => {
         gasPrice: 1n,
       }).signBy(priv, false);
       deepStrictEqual(
-        tx3.toHex(true),
+        tx3.toHex({ includeSignature: true }),
         '0xf85f800182520894df90dea0e0bf5ca6d2a7f0cb86874ba6714f463e018026a09082d97700034dff9cfaa0a64136437eb7adf16940d0672491b80cfbc642a78ba04d2fd86634189e1e5e049ce958edb0ccb5dafce25559836346c360772be71a5f'
       );
     });
@@ -1022,7 +1084,7 @@ describe('Transactions', () => {
       const highS = new Transaction(
         tx.type,
         { ...tx.raw, s: secp256k1N - tx.raw.s!, yParity: tx.raw.yParity === 0 ? 1 : 0 },
-        false
+        { strict: false }
       );
       throws(() => highS.recoverSender(), /invalid s/);
       // prepare() must reject user-provided signature fields
@@ -1075,15 +1137,15 @@ describe('Transactions', () => {
         accessList: [] as any[],
         data: '',
       };
-      const stableTx = new Transaction('eip1559', mutableRaw, false);
-      const stableHex = stableTx.toHex(false);
+      const stableTx = new Transaction('eip1559', mutableRaw, { strict: false });
+      const stableHex = stableTx.toHex({ includeSignature: false });
       mutableRaw.maxFeePerGas = 9n;
       mutableRaw.accessList.push({
         address: '0x0000000000000000000000000000000000000000',
         storageKeys: [],
       });
       Object.assign(mutableRaw, { r: 1n, s: 1n, yParity: 0 });
-      deepStrictEqual(stableTx.toHex(false), stableHex);
+      deepStrictEqual(stableTx.toHex({ includeSignature: false }), stableHex);
       deepStrictEqual(stableTx.isSigned, false);
       deepStrictEqual(stableTx.raw, {
         to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
@@ -1107,7 +1169,7 @@ describe('Transactions', () => {
             gasLimit: 21000n,
             data: '',
           },
-          false
+          { strict: false }
         ).raw,
         {
           to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
@@ -1271,7 +1333,7 @@ describe('Transactions', () => {
           data: '',
           chainId: undefined,
         },
-        false
+        { strict: false }
       );
       const signedLegacyChainId = amounts.maxChainId;
       const signedLegacy = {
@@ -1586,14 +1648,20 @@ describe('Transactions', () => {
       ),
     });
     // Copy signature since we don't have private key
-    newTx.raw.r = fullTx.raw.r;
-    newTx.raw.s = fullTx.raw.s;
-    newTx.raw.yParity = fullTx.raw.yParity;
-    newTx.raw.chainId = fullTx.raw.chainId;
-    newTx.isSigned = true;
+    const signedNew = new Transaction(
+      'legacy',
+      {
+        ...newTx.raw,
+        r: fullTx.raw.r,
+        s: fullTx.raw.s,
+        yParity: fullTx.raw.yParity,
+        chainId: fullTx.raw.chainId,
+      },
+      { strict: false }
+    );
     // Same as real tx
-    deepStrictEqual(RawTx.decode(newTx.toBytes()), RawTx.decode(ethHex.decode(txHex)));
-    deepStrictEqual(newTx.toHex(), txHex);
+    deepStrictEqual(RawTx.decode(signedNew.toBytes()), RawTx.decode(ethHex.decode(txHex)));
+    deepStrictEqual(signedNew.toHex(), txHex);
   });
   should('parse weird TXs without to or data', () => {
     const h =

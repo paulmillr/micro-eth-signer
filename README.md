@@ -111,6 +111,10 @@ console.log(
   addr.fromPrivateKey(priv),
   addr.fromPublicKey(pub)
 );
+
+// Contract addresses: CREATE (deployment tx) and CREATE2 (EIP-1014)
+addr.getCreateAddress('0x8ba1f109551bD432803012645Ac136ddd64DBA72', 1n);
+addr.getCreate2Address(factory, salt, initCodeHash); // salt & initCodeHash are 32 bytes
 ```
 
 ### Messages: sign, verify
@@ -134,6 +138,13 @@ console.log('Signature:', signature);
 const address = '0xYourEthereumAddress';
 const isValid = eip191Signer.verify(signature, message, address);
 console.log('Is valid:', isValid);
+
+// The digest that gets signed ("hashMessage") is available directly:
+eip191Signer.getHash(message);
+// 65-byte wallet signatures (r || s || v) can be split & rebuilt:
+import { parseSignature, serializeSignature } from 'micro-eth-signer';
+const { r, s, yParity } = parseSignature(signature); // v: 0/1 or 27/28
+serializeSignature({ r, s, yParity }); // back to 0x hex, v as 27/28
 ```
 
 #### EIP-712
@@ -232,6 +243,32 @@ type Contract = typeof contract;
 //     };
 //   };
 // }
+```
+
+Human-readable signatures can be parsed into JSON ABI with `parseAbi` / `parseAbiItem`.
+Parsed ABIs are runtime-only: `createContract` / `events` return string-indexed untyped
+methods for them, so prefer `as const` JSON ABIs when type inference matters:
+
+```ts
+import { createContract, parseAbi } from 'micro-eth-signer/abi.js';
+const abi = parseAbi([
+  'function balanceOf(address owner) view returns (uint256)',
+  'event Transfer(address indexed from, address indexed to, uint256 value)',
+  'error InsufficientBalance(uint256 available, uint256 required)',
+]);
+const erc20 = createContract(abi);
+erc20.balanceOf.encodeInput('0x6B175474E89094C44Da98b954EedeAC495271d0F');
+// Inline tuples work: 'function f((address a, uint256 b) point)'. Struct references don't.
+```
+
+Revert data of a failed call can be decoded with `decodeError`:
+
+```ts
+import { decodeError, parseAbi } from 'micro-eth-signer/abi.js';
+decodeError('0x08c379a0...'); // { name: 'Error', message: 'Not enough Ether provided.', ... }
+decodeError('0x4e487b71...'); // { name: 'Panic', message: 'panic: arithmetic overflow...', ... }
+// Custom errors are matched by selector against `type: 'error'` ABI entries:
+decodeError(data, parseAbi(['error InsufficientBalance(uint256 available, uint256 required)']));
 ```
 
 We're parsing values as:
@@ -351,7 +388,7 @@ const call = decodeData(to, data, value, { customContracts });
 // decodeTx with a clear-signing map extended by the same tokens:
 const unsigned = Transaction.prepare({
   to, value, data, nonce: 0n, maxFeePerGas: 2000000000n, gasLimit: 250000n,
-}).toHex(false);
+}).toHex({ includeSignature: false });
 const decodedSwap = decodeTx(unsigned, { clearSig: addTokens(CLEARSIG_REPO, customContracts) });
 if (!decodedSwap || Array.isArray(decodedSwap)) throw new Error('expected exact ABI match');
 console.log((await decodedSwap.clearSig).interpolatedIntent);
@@ -655,6 +692,17 @@ async function main(privateKey: string) {
 `prepare` runs `nonce()`, `fees()` (EIP-1559 suggestion from `eth_feeHistory`, `eth_gasPrice`
 fallback on legacy chains), `estimateGas()` and `eth_chainId` in one parallel round.
 `waitForReceipt` accepts `{ confirmations, timeoutMs, pollIntervalMs, signal }`.
+
+Read-only calls can be batched into a single request through
+[Multicall3](https://www.multicall3.com) (`aggregate3`, canonical deployment by default):
+
+```ts
+const [name, symbol] = await prov.multicall([
+  { to: token, data: nameCalldata },
+  { to: token, data: symbolCalldata, allowFailure: false },
+]);
+// [{ success: true, data: '0x...' }, ...]
+```
 
 ### Fetch balances & history
 

@@ -101,6 +101,24 @@ export type ContractMethodNet<T extends FunctionType> = ContractMethod<T> &
   ContractMethodGas<T> &
   ContractMethodCall<T>;
 
+// Runtime-built ABIs (e.g. parseAbi) carry no literal types, so their contract
+// methods are exposed as a string-indexed record of untyped methods instead.
+// The brand is type-level only; it routes such ABIs to the untyped overloads
+// without affecting `as const` JSON ABIs.
+export type ParsedABI = FnArg[] & { readonly __parsedAbi: true };
+export type ContractMethodUntyped = {
+  encodeInput: (v?: unknown) => Uint8Array;
+  decodeOutput: (b: Uint8Array) => unknown;
+};
+export type ContractMethodNetUntyped = ContractMethodUntyped & {
+  estimateGas: (v?: unknown, overrides?: Web3CallArgs) => Promise<bigint>;
+  call: (v?: unknown, overrides?: Web3CallArgs) => Promise<unknown>;
+};
+export type EventMethodUntyped = {
+  decode: (topics: string[], data: string) => unknown;
+  topics: (values: unknown) => (string | null)[];
+};
+
 export type FnArg = {
   readonly type: string;
   readonly name?: string;
@@ -126,7 +144,7 @@ export type ContractType<T extends Array<FnArg>, N, F = ContractTypeFilter<T>> =
 
 function fnSignature(o: FnArg): string {
   if (!o.type) throw new Error('ABI.fnSignature wrong argument');
-  if (o.type === 'function' || o.type === 'event')
+  if (o.type === 'function' || o.type === 'event' || o.type === 'error')
     return `${o.name || 'function'}(${(o.inputs || []).map((i) => fnSignature(i)).join(',')})`;
   if (o.type.startsWith('tuple')) {
     // Keep selector generation aligned with the mapper policy: empty tuples are disabled.
@@ -143,6 +161,78 @@ export function fnSigHash(o: FnArg): string {
   return evSigHash(o).slice(0, 8);
 }
 
+// Solidity panic codes (Panic(uint256), https://docs.soliditylang.org/en/latest/control-structures.html#panic-via-assert-and-error-via-require)
+const PANIC_CODES: Record<number, string> = {
+  0x00: 'generic compiler panic',
+  0x01: 'assertion failed',
+  0x11: 'arithmetic overflow or underflow',
+  0x12: 'division or modulo by zero',
+  0x21: 'invalid enum value',
+  0x22: 'incorrectly encoded storage byte array',
+  0x31: 'pop on empty array',
+  0x32: 'array index out of bounds',
+  0x41: 'out of memory',
+  0x51: 'called invalid internal function',
+};
+// Built-in solidity revert shapes: Error(string) and Panic(uint256)
+const ERROR_STRING_SELECTOR = '08c379a0';
+const PANIC_SELECTOR = '4e487b71';
+
+/** Decoded revert reason: built-in `Error`/`Panic`, or a custom error matched from an ABI. */
+export type DecodedError = {
+  /** Error name: `Error`, `Panic`, or the custom error name. */
+  name: string;
+  /** Canonical error signature, e.g. `InsufficientBalance(uint256,uint256)`. */
+  signature: string;
+  /** Decoded error arguments; single argument is returned as-is, several as array/object. */
+  args?: unknown;
+  /** Human-readable summary. */
+  message: string;
+};
+
+/**
+ * Decodes revert data returned by a failed call.
+ * Handles solidity built-ins `Error(string)` and `Panic(uint256)`; custom errors are
+ * matched by selector against `type: 'error'` entries of the provided ABI.
+ * @param data - revert data (`error.data` of an `eth_call` / receipt), hex or bytes
+ * @param abi - optional ABI with `type: 'error'` entries for custom error decoding
+ * @returns decoded error, or `undefined` when data is empty or the selector is unknown
+ * @example
+ * ```ts
+ * decodeError('0x08c379a0...'); // { name: 'Error', message: 'Not enough Ether provided.', ... }
+ * ```
+ */
+export function decodeError(
+  data: TArg<string | Uint8Array>,
+  abi?: ContractABI
+): DecodedError | undefined {
+  const bytes = isBytes(data) ? data : ethHex.decode(data as string);
+  if (bytes.length === 0) return undefined; // reverted without a reason
+  if (bytes.length < 4) throw new Error(`decodeError: wrong data length=${bytes.length}`);
+  const selector = bytesToHex(bytes.subarray(0, 4));
+  const args = bytes.subarray(4);
+  if (selector === ERROR_STRING_SELECTOR) {
+    const message = mapArgs([{ type: 'string' }] as const).decode(args) as string;
+    return { name: 'Error', signature: 'Error(string)', args: message, message };
+  }
+  if (selector === PANIC_SELECTOR) {
+    const code = mapArgs([{ type: 'uint256' }] as const).decode(args) as bigint;
+    const known = PANIC_CODES[Number(code)];
+    const message = `panic: ${known || 'unknown code'} (0x${code.toString(16)})`;
+    return { name: 'Panic', signature: 'Panic(uint256)', args: code, message };
+  }
+  if (abi !== undefined) aarray(abi, 'abi');
+  for (const fn of abi || []) {
+    if (fn.type !== 'error' || !fn.name || fnSigHash(fn) !== selector) continue;
+    const signature = fnSignature(fn);
+    const inputs = fn.inputs && fn.inputs.length ? mapArgs(fn.inputs) : undefined;
+    if (!inputs && args.length) throw new Error('decodeError: unexpected data in zero-arg error');
+    const value = inputs ? inputs.decode(args) : undefined;
+    return { name: fn.name, signature, args: value, message: signature };
+  }
+  return undefined;
+}
+
 // High-level constructs for common ABI use-cases
 
 /*
@@ -151,6 +241,16 @@ output is array/obj too, but if there is single input or output, then they proce
 if there is at least one named input/output (like (uin256 balance, address)) then it is processed as object, where unnamed elements
 is refered by index position. Unfortunately it is impossible to do args/kwargs, since named arguments can be before unnamed one.
 */
+export function createContract(
+  abi: ParsedABI,
+  net: IWeb3Provider,
+  contract?: string
+): Record<string, ContractMethodNetUntyped>;
+export function createContract(
+  abi: ParsedABI,
+  net?: undefined,
+  contract?: string
+): Record<string, ContractMethodUntyped>;
 export function createContract<T extends ArrLike<FnArg>>(
   abi: T,
   net: IWeb3Provider,
@@ -266,6 +366,8 @@ export type ContractEventType<T extends Array<FnArg>, F = ContractEventTypeFilte
     : never;
 
 // TODO: try to simplify further
+export function events(abi: ParsedABI): Record<string, EventMethodUntyped>;
+export function events<T extends ArrLike<FnArg>>(abi: T): TRet<ContractEventType<Writable<T>>>;
 export function events<T extends ArrLike<FnArg>>(abi: T): TRet<ContractEventType<Writable<T>>> {
   aarray(abi, 'abi');
   let res: Record<string, any> = {};

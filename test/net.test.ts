@@ -296,6 +296,37 @@ describe('Network', () => {
       args: [{ to, data: '0x1234' }, '0x7b'],
     });
   });
+  should('batches calls through multicall', async () => {
+    // Response vector generated with ethers Interface (aggregate3):
+    // [{ success: true, returnData: uint256(7) }, { success: false, returnData: 0x }]
+    const RESULT =
+      '0x00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000c00000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000007000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000400000000000000000000000000000000000000000000000000000000000000000';
+    let seen;
+    const archive = new RpcClient({
+      call: async (method, ...args) => {
+        seen = { method, args };
+        return RESULT;
+      },
+    });
+    const DAI = '0x6B175474E89094C44Da98b954EedeAC495271d0F';
+    const res = await archive.multicall(
+      [
+        { to: DAI, data: '0x06fdde03' },
+        { to: DAI, data: '0x95d89b41', allowFailure: false },
+      ],
+      { tag: 123 }
+    );
+    deepStrictEqual(res, [
+      { success: true, data: `0x${'00'.repeat(31)}07` },
+      { success: false, data: '0x' },
+    ]);
+    deepStrictEqual(seen.method, 'eth_call');
+    deepStrictEqual(seen.args[1], '0x7b'); // tag passed through
+    // Sent to the canonical Multicall3 deployment with the aggregate3 selector
+    deepStrictEqual(seen.args[0].to, '0xcA11bde05977b3631167028862bE2a173976CA11');
+    deepStrictEqual(seen.args[0].data.slice(0, 10), '0x82ad56cb');
+    await rejects(() => archive.multicall([{ to: DAI }]), /wrong call at index 0/);
+  });
   should('quotes Uniswap V2 spot rates', async () => {
     const USDC = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48';
     const WETH = '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2';
@@ -1045,7 +1076,7 @@ describe('Network', () => {
       false
     ).signBy('6b911fd37cdf5c81d4c0adb1ab7fa822ed253ab0ad9aa18d77257c88b29b718e', false);
     const raw = tx.raw as any;
-    const hash = `0x${tx.hash}`;
+    const hash = tx.hash;
     const info = {
       blockHash: `0x${'11'.repeat(32)}`,
       blockNumber: '0x1',
@@ -1137,7 +1168,7 @@ describe('Network', () => {
       false
     ).signBy('6b911fd37cdf5c81d4c0adb1ab7fa822ed253ab0ad9aa18d77257c88b29b718e', false);
     const raw = tx.raw as any;
-    const hash = `0x${tx.hash}`;
+    const hash = tx.hash;
     const info = {
       blockHash: `0x${'11'.repeat(32)}`,
       blockNumber: '0x1',
