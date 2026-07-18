@@ -1,7 +1,7 @@
 import { describe, should } from '@paulmillr/jsbt/test.js';
 import * as mftch from 'micro-ftch';
-import { readFile } from 'node:fs/promises';
 import { deepStrictEqual, rejects, throws } from 'node:assert';
+import { readFile } from 'node:fs/promises';
 import { DEFAULT_TOKENS, ERC1155, ERC20, events, tokenFromSymbol } from '../src/abi/index.ts';
 import { Transaction } from '../src/index.ts';
 import { RpcClient, Web3Error } from '../src/net.ts';
@@ -10,25 +10,24 @@ import { calcTransfersDiff, history, historyMulti, newestFirst } from '../src/ne
 import { Quoter } from '../src/net/quoter.ts';
 import { NameResolver } from '../src/net/resolver.ts';
 import {
-  approvalTopics,
-  calcAllowances,
-  contractCapabilities,
-  decodeReceiptTokenTransfers,
-  detectTokenContracts,
-  ipfsToHttp,
-  nftCandidates,
-  nftHoldings,
-  nftMetadata,
-  tokenBalances,
-  tokenInfo,
-  tokenInfos,
-  tokenTransferFromCalldata,
-  tokenURI,
+    approvalTopics,
+    calcAllowances,
+    contractCapabilities,
+    decodeReceiptTokenTransfers,
+    detectTokenContracts,
+    ipfsToHttp,
+    nftCandidates,
+    nftHoldings,
+    nftMetadata,
+    tokenBalances,
+    tokenInfo,
+    tokenInfos,
+    tokenTransferFromCalldata,
+    tokenURI,
 } from '../src/net/tokens.ts';
 
 import { internalTransactions, traceFilterSingle } from '../src/net/trace.ts';
-import { awaitDeep, UniswapAbstract } from '../src/net/uniswap-common.ts';
-import { UniswapV3 } from '../src/net/uniswap-v3.ts';
+import { awaitDeep, UniswapAbstract, UniswapV3 } from '../src/net/uniswap.ts';
 import { ethHexNum, numberTo0xHex, weieth } from '../src/utils.ts';
 
 // These real network responses from real nodes, captured by replayable

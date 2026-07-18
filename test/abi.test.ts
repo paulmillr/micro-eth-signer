@@ -5,22 +5,24 @@ import * as P from 'micro-packed';
 import { deepStrictEqual, throws } from 'node:assert';
 import { addHints } from '../src/abi/common.ts';
 import * as abi from '../src/abi/decoder.ts';
-import { mapArgs, mapComponent } from '../src/abi/mapper.ts';
 import {
-  CONTRACTS,
   CLEARSIG_REPO,
+  CONTRACTS,
   DEFAULT_TOKENS,
   Decoder,
-  TOKENS_BY_SYMBOL,
+  MULTICALL3_ABI,
   TOKENS,
+  TOKENS_BY_SYMBOL,
   decodeData,
+  decodeError,
   decodeEvent,
   decodeTx,
   deployContract,
+  parseAbi, parseAbiItem,
   tokenFromSymbol,
   tokensBySymbol,
 } from '../src/abi/index.ts';
-import { MULTICALL3_ABI, decodeError, parseAbi, parseAbiItem } from '../src/abi/index.ts';
+import { mapArgs, mapComponent } from '../src/abi/mapper.ts';
 import { Transaction } from '../src/index.ts';
 import { ethHex, strip0x } from '../src/utils.ts';
 
@@ -35,7 +37,7 @@ import {
 } from '../src/abi/uniswap-v2.ts';
 import {
   default as UNISWAP_V3_ROUTER,
-  UNISWAP_V3_ROUTER_CONTRACT,
+  UNISWAP_V3_ROUTER_CONTRACT
 } from '../src/abi/uniswap-v3.ts';
 import { WETH_CONTRACT } from '../src/abi/weth.ts';
 
