@@ -1,8 +1,12 @@
 import { bytesToHex, concatBytes, hexToBytes } from '@noble/hashes/utils.js';
 import { describe, should } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual, throws } from 'node:assert';
-import * as uniswap2 from '../src/net/uniswap-v2.ts';
-import * as uniswap3 from '../src/net/uniswap-v3.ts';
+import * as u2 from '../src/net/uniswap-v2.ts';
+import * as u3 from '../src/net/uniswap-v3.ts';
+
+// txData carries a version suffix (merge-ready naming); vectors below are unchanged
+const uniswap2 = { ...u2, txData: u2.txDataV2 };
+const uniswap3 = { ...u3, txData: u3.txDataV3 };
 import { strip0x, weieth } from '../src/utils.ts';
 
 const vitalik = '0xd8da6bf26964af9d7eed9e03e53415d37aa96045';

@@ -1,9 +1,19 @@
-import { CONTRACTS, createContract, tokenFromSymbol } from '../advanced/abi.ts';
+import {
+  DEFAULT_TOKENS,
+  TOKENS_BY_SYMBOL,
+  createContract,
+  tokensBySymbol,
+  type TokenDef,
+} from '../abi/index.ts';
 import { addr } from '../core/address.ts';
-import { astring, createDecimal, type IWeb3Provider, type Web3CallArgs } from '../utils.ts';
-import { QUOTER_TOKENS } from './quoter_tokens.ts';
+import {
+  ADDRESS_ZERO,
+  astring,
+  createDecimal,
+  type IWeb3Provider,
+  type Web3CallArgs,
+} from '../utils.ts';
 
-const ADDRESS_ZERO = '0x0000000000000000000000000000000000000000';
 const UNISWAP_V2_FACTORY = '0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f';
 const UNISWAP_V3_FACTORY = '0x1F98431c8aD98523631AE4a59f267346ea31F984';
 const DEFAULT_V3_FEES = [100, 500, 3000, 10000];
@@ -17,6 +27,30 @@ const CHAINLINK_COINS: Record<string, { decimals: number; contract: string }> = 
   XMR: { decimals: 8, contract: '0xfa66458cce7dd15d8650015c4fce4d278271618f' },
   ZEC: { decimals: 8, contract: '0xd54b033d48d0475f19c5fccf7484e8a981848501' },
 };
+type TokenSymbolIndex = Record<string, TokenDef & { contract: string }>;
+type TokenRegistry = { byAddress: Record<string, TokenDef>; bySymbol: TokenSymbolIndex };
+const DEFAULT_TOKEN_REGISTRY: TokenRegistry = {
+  byAddress: DEFAULT_TOKENS,
+  bySymbol: TOKENS_BY_SYMBOL,
+};
+
+function tokenRegistry(tokens: Record<string, TokenDef> = DEFAULT_TOKENS): TokenRegistry {
+  if (tokens === DEFAULT_TOKENS) return DEFAULT_TOKEN_REGISTRY;
+  return { byAddress: tokens, bySymbol: tokensBySymbol(tokens) };
+}
+
+function tokenRegistryFromParams(registry: TokenRegistry, params: ObjectParams): TokenRegistry {
+  return params.tokens === undefined ? registry : tokenRegistry(params.tokens);
+}
+
+function tokenByAddress(
+  registry: TokenRegistry,
+  contract: string
+): (TokenDef & { contract: string }) | undefined {
+  return Object.prototype.hasOwnProperty.call(registry.byAddress, contract)
+    ? { contract, ...registry.byAddress[contract] }
+    : undefined;
+}
 
 const CHAINLINK_ABI = [
   {
@@ -63,12 +97,13 @@ async function chainlinkCoinPrice(
 async function chainlinkTokenPrice(
   net: IWeb3Provider,
   symbol: string,
+  registry: TokenRegistry,
   opt?: ChainlinkPriceOpt
 ): Promise<number> {
   astring(symbol, 'symbol');
-  const token = QUOTER_TOKENS[symbol.toUpperCase()];
-  if (!token) throw new Error(`micro-web3/chainlink: unknown token: ${symbol}`);
-  return await chainlinkPrice(net, token.contract, token.decimals, opt);
+  const token = registry.bySymbol[symbol.toUpperCase()];
+  if (!token?.feed) throw new Error(`micro-web3/chainlink: unknown token: ${symbol}`);
+  return await chainlinkPrice(net, token.feed.contract, token.feed.decimals, opt);
 }
 
 const UNISWAP_V2_FACTORY_ABI = [
@@ -170,7 +205,8 @@ const ERC4626_ABI = [
 ] as const;
 
 export type RateDirection = 'forward' | 'reverse' | 'Forward' | 'Reverse';
-export type QuoterOpt = { tag?: Web3CallArgs['tag'] };
+export type QuoterInit = { tokens?: Record<string, TokenDef> };
+export type QuoterOpt = { tag?: Web3CallArgs['tag']; tokens?: Record<string, TokenDef> };
 export type UniswapPriceOpt = QuoterOpt & { quoteSymbols?: string[] };
 export type UniswapPriceInOpt = {
   priceIn: string;
@@ -235,7 +271,7 @@ type ObjectParams = Record<string, any>;
 
 const USD_QUOTE_SYMBOLS = ['USDC', 'USDT', 'DAI'];
 const COIN_TOKEN_SYMBOLS: Record<string, string> = { ETH: 'WETH', BTC: 'WBTC' };
-const DEFAULT_UNISWAP_PRICE_IN = tokenFromSymbol('USDT').contract.toLowerCase();
+const DEFAULT_UNISWAP_PRICE_IN_SYMBOL = 'USDT';
 const TOKEN_ALIASES: Record<string, SymbolToken> = {
   EUR: {
     symbol: 'EUR',
@@ -330,43 +366,50 @@ function tokenInfoFromAlias(symbol: string): SymbolToken | undefined {
 function tokenInfoFromAliasAddress(contract: string): SymbolToken | undefined {
   const tokenContract = contract.toLowerCase();
   const aliases = Object.values(TOKEN_ALIASES);
-  return aliases.find((token) => token.symbol === 'EURC' && token.contract === tokenContract)
-    || aliases.find((token) => token.contract === tokenContract);
+  return (
+    aliases.find((token) => token.symbol === 'EURC' && token.contract === tokenContract) ||
+    aliases.find((token) => token.contract === tokenContract)
+  );
 }
 
-function tokenInfoFromKnownSymbol(symbol: string): SymbolToken | undefined {
+function tokenInfoFromKnownSymbol(
+  symbol: string,
+  registry: TokenRegistry
+): SymbolToken | undefined {
   const tokenSymbol = symbol.toUpperCase();
   const alias = tokenInfoFromAlias(tokenSymbol);
   if (alias) return alias;
-  try {
-    const token = tokenFromSymbol(tokenSymbol);
-    return {
-      symbol: tokenSymbol,
-      contract: token.contract.toLowerCase(),
-      decimals: token.decimals,
-    };
-  } catch {}
-  return undefined;
+  const token = registry.bySymbol[tokenSymbol];
+  if (!token) return undefined;
+  return {
+    symbol: tokenSymbol,
+    contract: token.contract.toLowerCase(),
+    decimals: token.decimals,
+  };
 }
 
-function tokenInfoFromSymbol(symbol: string, name: string): SymbolToken {
+function tokenInfoFromSymbol(symbol: string, name: string, registry: TokenRegistry): SymbolToken {
   astring(symbol, name);
-  const token = tokenInfoFromKnownSymbol(symbol);
+  const token = tokenInfoFromKnownSymbol(symbol, registry);
   if (!token) throw new Error(`quoter: unknown token: ${symbol}`);
   return token;
 }
 
-function coinInfoFromSymbol(symbol: string): SymbolToken {
+function coinInfoFromSymbol(symbol: string, registry: TokenRegistry): SymbolToken {
   astring(symbol, 'symbol');
   const tokenSymbol = COIN_TOKEN_SYMBOLS[symbol.toUpperCase()];
   if (!tokenSymbol) throw new Error(`quoter: unknown coin: ${symbol}`);
-  return tokenInfoFromSymbol(tokenSymbol, 'symbol');
+  return tokenInfoFromSymbol(tokenSymbol, 'symbol', registry);
 }
 
-function quoteTokenInfo(contract: string, opt?: UniswapPriceOpt): SymbolToken | undefined {
+function quoteTokenInfo(
+  contract: string,
+  registry: TokenRegistry,
+  opt?: UniswapPriceOpt
+): SymbolToken | undefined {
   const quoteSymbols = opt?.quoteSymbols || USD_QUOTE_SYMBOLS;
   for (const symbol of quoteSymbols) {
-    const token = tokenInfoFromKnownSymbol(symbol);
+    const token = tokenInfoFromKnownSymbol(symbol, registry);
     if (token && token.contract.toLowerCase() === contract)
       return {
         symbol: token.symbol,
@@ -380,23 +423,18 @@ function quoteTokenInfo(contract: string, opt?: UniswapPriceOpt): SymbolToken | 
 function tokenInfoFromAddress(
   contract: string,
   name: string,
+  registry: TokenRegistry,
   opt?: UniswapPriceInOpt
 ): SymbolToken {
-  const known = tokenInfoFromKnownSymbol(contract);
+  const known = tokenInfoFromKnownSymbol(contract, registry);
   if (known) return known;
   const tokenContract = assertAddress(contract, name);
   const alias = tokenInfoFromAliasAddress(tokenContract);
   if (alias) return alias;
-  const quote = quoteTokenInfo(tokenContract, opt);
+  const quote = quoteTokenInfo(tokenContract, registry, opt);
   if (quote) return quote;
-  const token = (CONTRACTS as Record<string, any>)[tokenContract];
-  if (
-    token &&
-    typeof token.symbol === 'string' &&
-    Number.isSafeInteger(token.decimals) &&
-    token.decimals >= 0
-  )
-    return { symbol: token.symbol, contract: tokenContract, decimals: token.decimals };
+  const token = tokenByAddress(registry, tokenContract);
+  if (token) return { symbol: token.symbol, contract: tokenContract, decimals: token.decimals };
   if (opt?.priceInDecimals !== undefined) {
     if (!Number.isSafeInteger(opt.priceInDecimals) || opt.priceInDecimals < 0)
       throw new Error('quoter: invalid priceIn decimals');
@@ -418,13 +456,15 @@ function decimalNumber(amount: bigint, decimals: number): number {
 async function tokenPriceFromPair(
   quoter: PairPriceQuoter,
   token: SymbolToken,
+  registry: TokenRegistry,
   opt?: UniswapPriceOpt
 ): Promise<number> {
   await quoter.resolve?.(opt);
   const quote = isPriceInOpt(opt)
-    ? tokenInfoFromAddress(opt.priceIn, 'priceIn', opt)
+    ? tokenInfoFromAddress(opt.priceIn, 'priceIn', registry, opt)
     : quoteTokenInfo(
         token.contract.toLowerCase() === quoter.token0 ? quoter.token1 : quoter.token0,
+        registry,
         opt
       );
   if (!quote)
@@ -549,8 +589,14 @@ type AmmSourceInit<O extends QuoterOpt, P extends O & UniswapPriceInOpt> =
 type AmmSourceConfig<O extends QuoterOpt> = {
   id: string;
   addressName: string;
-  bridgeTokens?(token: SymbolToken, quote: SymbolToken): SymbolToken[];
-  hopOpt?(from: SymbolToken, to: SymbolToken, path: SymbolToken[], opt?: O): O | undefined;
+  bridgeTokens?(token: SymbolToken, quote: SymbolToken, registry: TokenRegistry): SymbolToken[];
+  hopOpt?(
+    from: SymbolToken,
+    to: SymbolToken,
+    path: SymbolToken[],
+    registry: TokenRegistry,
+    opt?: O
+  ): O | undefined;
   discover(net: IWeb3Provider, tokenA: string, tokenB: string, opt?: O): Promise<ResolvedPool>;
   quote(
     net: IWeb3Provider,
@@ -561,8 +607,12 @@ type AmmSourceConfig<O extends QuoterOpt> = {
   ): Promise<bigint>;
 };
 
-function uniswapV3BridgeTokens(token: SymbolToken, quote: SymbolToken): SymbolToken[] {
-  const usdc = tokenInfoFromSymbol('USDC', 'bridge token');
+function uniswapV3BridgeTokens(
+  token: SymbolToken,
+  quote: SymbolToken,
+  registry: TokenRegistry
+): SymbolToken[] {
+  const usdc = tokenInfoFromSymbol('USDC', 'bridge token', registry);
   if (quote.contract === TOKEN_ALIASES.EUR.contract && token.contract !== usdc.contract)
     return [usdc];
   return [];
@@ -572,9 +622,10 @@ function uniswapV3HopOpt(
   from: SymbolToken,
   to: SymbolToken,
   _path: SymbolToken[],
+  registry: TokenRegistry,
   opt?: UniswapV3AutoOpt
 ): UniswapV3AutoOpt | undefined {
-  const usdc = tokenInfoFromSymbol('USDC', 'bridge token');
+  const usdc = tokenInfoFromSymbol('USDC', 'bridge token', registry);
   const eurc = TOKEN_ALIASES.EUR.contract;
   if (from.contract === usdc.contract && to.contract === eurc) return { ...opt, fees: [500] };
   return opt;
@@ -586,21 +637,23 @@ async function tokenPriceInPath<O extends QuoterOpt, P extends O & UniswapPriceI
   quote: SymbolToken,
   opt: O | undefined,
   config: AmmSourceConfig<O>,
+  registry: TokenRegistry,
   routeCache?: RouteCache
 ): Promise<number> {
   if (token.contract === quote.contract) return 1;
   let amount = 10n ** BigInt(token.decimals);
-  const path = [token, ...(config.bridgeTokens?.(token, quote) || []), quote];
+  const path = [token, ...(config.bridgeTokens?.(token, quote, registry) || []), quote];
   for (let i = 0; i < path.length - 1; i++) {
     const from = path[i];
     const to = path[i + 1];
     if (from.contract === to.contract) continue;
-    const hopOpt = config.hopOpt?.(from, to, path, opt) || opt;
+    const hopOpt = config.hopOpt?.(from, to, path, registry, opt) || opt;
     amount = await tokenRateIn(
       createAmmSource<O, P>(
         net,
         { tokenA: from.contract, tokenB: to.contract, opt: hopOpt },
         config,
+        registry,
         routeCache
       ),
       from,
@@ -616,6 +669,7 @@ function createAmmSource<O extends QuoterOpt, P extends O & UniswapPriceInOpt>(
   net: IWeb3Provider,
   init: AmmSourceInit<O, P>,
   config: AmmSourceConfig<O>,
+  registry: TokenRegistry,
   routeCache?: RouteCache
 ): PriceQuoter {
   let sourceAddress = ADDRESS_ZERO;
@@ -628,7 +682,7 @@ function createAmmSource<O extends QuoterOpt, P extends O & UniswapPriceInOpt>(
   let resolving: Promise<void> | undefined;
 
   if ('priceIn' in init) {
-    priceIn = tokenInfoFromAddress(init.priceIn.priceIn, 'priceIn', init.priceIn);
+    priceIn = tokenInfoFromAddress(init.priceIn.priceIn, 'priceIn', registry, init.priceIn);
     lazyOpt = init.priceIn;
     token1 = priceIn.contract;
   } else if ('address' in init) {
@@ -672,8 +726,16 @@ function createAmmSource<O extends QuoterOpt, P extends O & UniswapPriceInOpt>(
 
   async function price(token: SymbolToken, opt?: UniswapPriceOpt): Promise<number> {
     if (priceIn)
-      return await tokenPriceInPath<O, P>(net, token, priceIn, lazyOpt, config, routeCache);
-    return await tokenPriceFromPair(quoter, token, opt);
+      return await tokenPriceInPath<O, P>(
+        net,
+        token,
+        priceIn,
+        lazyOpt,
+        config,
+        registry,
+        routeCache
+      );
+    return await tokenPriceFromPair(quoter, token, registry, opt);
   }
 
   const quoter: PriceQuoter = {
@@ -699,10 +761,10 @@ function createAmmSource<O extends QuoterOpt, P extends O & UniswapPriceInOpt>(
       return await config.quote(net, sourceAddress, amountIn, direction, opt);
     },
     async coinPrice(symbol, opt) {
-      return await price(coinInfoFromSymbol(symbol), opt);
+      return await price(coinInfoFromSymbol(symbol, registry), opt);
     },
     async tokenPrice(symbol, opt) {
-      return await price(tokenInfoFromSymbol(symbol, 'symbol'), opt);
+      return await price(tokenInfoFromSymbol(symbol, 'symbol', registry), opt);
     },
   };
   return quoter;
@@ -727,6 +789,7 @@ async function ammFromAddress<O extends QuoterOpt, P extends O & UniswapPriceInO
   opt: QuoterOpt | undefined,
   abi: any,
   config: AmmSourceConfig<O>,
+  registry: TokenRegistry,
   routeCache?: RouteCache
 ): Promise<PriceQuoter> {
   const address = assertFound(sourceAddress, config.addressName);
@@ -735,7 +798,7 @@ async function ammFromAddress<O extends QuoterOpt, P extends O & UniswapPriceInO
     (source.token0.call as any)(undefined, callOpt(opt)),
     (source.token1.call as any)(undefined, callOpt(opt)),
   ]);
-  return createAmmSource<O, P>(net, { address, token0, token1 }, config, routeCache);
+  return createAmmSource<O, P>(net, { address, token0, token1 }, config, registry, routeCache);
 }
 
 const UNISWAP_V3_SOURCE: AmmSourceConfig<UniswapV3AutoOpt> = {
@@ -758,12 +821,14 @@ async function uniswapV3FromTokens(
   fee: number = 3000,
   factory: string = UNISWAP_V3_FACTORY,
   opt?: QuoterOpt,
+  registry: TokenRegistry = DEFAULT_TOKEN_REGISTRY,
   routeCache?: RouteCache
 ): Promise<PriceQuoter> {
   return createAmmSource<UniswapV3AutoOpt, UniswapV3PriceOpt>(
     net,
     { tokenA, tokenB, opt: { ...opt, factory, fees: [fee] } },
     UNISWAP_V3_SOURCE,
+    registry,
     routeCache
   );
 }
@@ -814,10 +879,17 @@ function hasParams(params: ObjectParams, names: string[]): boolean {
   return names.some((name) => params[name] !== undefined);
 }
 
-function priceInParams(params: ObjectParams): ObjectParams & UniswapPriceInOpt {
+function defaultUniswapPriceIn(registry: TokenRegistry): string {
+  return tokenInfoFromSymbol(DEFAULT_UNISWAP_PRICE_IN_SYMBOL, 'priceIn', registry).contract;
+}
+
+function priceInParams(
+  params: ObjectParams,
+  registry: TokenRegistry
+): ObjectParams & UniswapPriceInOpt {
   assertPriceIn(params);
   return (
-    isPriceInOpt(params) ? params : { ...params, priceIn: DEFAULT_UNISWAP_PRICE_IN }
+    isPriceInOpt(params) ? params : { ...params, priceIn: defaultUniswapPriceIn(registry) }
   ) as ObjectParams & UniswapPriceInOpt;
 }
 
@@ -839,28 +911,29 @@ async function uniswapPrice(
   net: IWeb3Provider,
   symbol: string,
   kind: PriceKind,
-  params: unknown,
+  params: ObjectParams,
   routeParams: string[],
   priceSource: (
     net: IWeb3Provider,
     opt: ObjectParams & UniswapPriceInOpt,
+    registry: TokenRegistry,
     routeCache?: RouteCache
   ) => PriceQuoter,
   rateSource: (
     net: IWeb3Provider,
     opt: ObjectParams,
+    registry: TokenRegistry,
     routeCache?: RouteCache
   ) => Promise<PriceQuoter>,
+  registry: TokenRegistry,
   routeCache?: RouteCache,
   normalize?: NormalizeParams
 ): Promise<number> {
-  const opt = normalize
-    ? normalize(objectParams(params, 'params'))
-    : objectParams(params, 'params');
+  const opt = normalize ? normalize(params) : params;
   assertPriceIn(opt);
   const source = hasParams(opt, routeParams)
-    ? await rateSource(net, opt, routeCache)
-    : priceSource(net, priceInParams(opt), routeCache);
+    ? await rateSource(net, opt, registry, routeCache)
+    : priceSource(net, priceInParams(opt, registry), registry, routeCache);
   return kind === 'coin'
     ? await source.coinPrice(symbol, opt)
     : await source.tokenPrice(symbol, opt);
@@ -872,30 +945,35 @@ async function quoterPrice(
   kind: PriceKind,
   provider?: QuoterPriceProvider,
   params?: unknown,
+  registry: TokenRegistry = DEFAULT_TOKEN_REGISTRY,
   routeCache?: RouteCache
 ): Promise<number> {
+  const opt = objectParams(params, 'params');
+  registry = tokenRegistryFromParams(registry, opt);
   switch (provider || 'chainlink') {
     case 'chainlink': {
-      const opt = objectParams(params, 'params') as ChainlinkPriceOpt;
+      const chainlinkOpt = opt as ChainlinkPriceOpt;
       return kind === 'coin'
-        ? await chainlinkCoinPrice(net, symbol, opt)
-        : await chainlinkTokenPrice(net, symbol, opt);
+        ? await chainlinkCoinPrice(net, symbol, chainlinkOpt)
+        : await chainlinkTokenPrice(net, symbol, registry, chainlinkOpt);
     }
     case 'uniswap-v2':
       return await uniswapPrice(
         net,
         symbol,
         kind,
-        params,
+        opt,
         ['pair', 'pairAddress', 'token0', 'token1', 'tokenA', 'tokenB', 'tokenIn', 'tokenOut'],
-        (net, opt) =>
+        (net, opt, registry) =>
           createAmmSource<UniswapV2AutoOpt, UniswapV2PriceOpt>(
             net,
             { priceIn: opt as UniswapV2PriceOpt },
             UNISWAP_V2_SOURCE,
+            registry,
             routeCache
           ),
         uniswapV2RateQuoter,
+        registry,
         routeCache
       );
     case 'uniswap-v3':
@@ -903,16 +981,18 @@ async function quoterPrice(
         net,
         symbol,
         kind,
-        params,
+        opt,
         ['pool', 'poolAddress', 'token0', 'token1', 'tokenA', 'tokenB', 'tokenIn', 'tokenOut'],
-        (net, opt) =>
+        (net, opt, registry) =>
           createAmmSource<UniswapV3AutoOpt, UniswapV3PriceOpt>(
             net,
             { priceIn: opt as UniswapV3PriceOpt },
             UNISWAP_V3_SOURCE,
+            registry,
             routeCache
           ),
         uniswapV3RateQuoter,
+        registry,
         routeCache,
         normalizeV3Params
       );
@@ -924,6 +1004,7 @@ async function quoterPrice(
 async function uniswapV2RateQuoter(
   net: IWeb3Provider,
   params: ObjectParams,
+  registry: TokenRegistry,
   routeCache?: RouteCache
 ): Promise<PriceQuoter> {
   const pairAddress = params.pairAddress || params.pair;
@@ -933,6 +1014,7 @@ async function uniswapV2RateQuoter(
         net,
         { address: pairAddress, token0: params.token0, token1: params.token1 },
         UNISWAP_V2_SOURCE,
+        registry,
         routeCache
       );
     return await ammFromAddress<UniswapV2AutoOpt, UniswapV2PriceOpt>(
@@ -941,6 +1023,7 @@ async function uniswapV2RateQuoter(
       params,
       UNISWAP_V2_PAIR_ABI,
       UNISWAP_V2_SOURCE,
+      registry,
       routeCache
     );
   }
@@ -952,6 +1035,7 @@ async function uniswapV2RateQuoter(
     net,
     { tokenA, tokenB, opt: params },
     UNISWAP_V2_SOURCE,
+    registry,
     routeCache
   );
 }
@@ -959,6 +1043,7 @@ async function uniswapV2RateQuoter(
 async function uniswapV3RateQuoter(
   net: IWeb3Provider,
   params: ObjectParams,
+  registry: TokenRegistry,
   routeCache?: RouteCache
 ): Promise<PriceQuoter> {
   const poolAddress = params.poolAddress || params.pool;
@@ -968,6 +1053,7 @@ async function uniswapV3RateQuoter(
         net,
         { address: poolAddress, token0: params.token0, token1: params.token1 },
         UNISWAP_V3_SOURCE,
+        registry,
         routeCache
       );
     return await ammFromAddress<UniswapV3AutoOpt, UniswapV3PriceOpt>(
@@ -976,6 +1062,7 @@ async function uniswapV3RateQuoter(
       params,
       UNISWAP_V3_POOL_ABI,
       UNISWAP_V3_SOURCE,
+      registry,
       routeCache
     );
   }
@@ -991,12 +1078,14 @@ async function uniswapV3RateQuoter(
       params.fee,
       params.factory,
       params,
+      registry,
       routeCache
     );
   return createAmmSource<UniswapV3AutoOpt, UniswapV3PriceOpt>(
     net,
     { tokenA, tokenB, opt: params },
     UNISWAP_V3_SOURCE,
+    registry,
     routeCache
   );
 }
@@ -1014,6 +1103,7 @@ async function quoterRate(
   amountIn: bigint,
   provider: QuoterRateProvider,
   params?: QuoterRateParams,
+  registry: TokenRegistry = DEFAULT_TOKEN_REGISTRY,
   routeCache?: RouteCache
 ): Promise<bigint> {
   assertAmount(amountIn);
@@ -1021,11 +1111,12 @@ async function quoterRate(
     provider === 'uniswap-v3'
       ? normalizeV3Params(objectParams(params, 'params'))
       : objectParams(params, 'params');
+  registry = tokenRegistryFromParams(registry, opt);
   if (provider === 'uniswap-v2' || provider === 'uniswap-v3') {
     const quoter =
       provider === 'uniswap-v2'
-        ? await uniswapV2RateQuoter(net, opt, routeCache)
-        : await uniswapV3RateQuoter(net, opt, routeCache);
+        ? await uniswapV2RateQuoter(net, opt, registry, routeCache)
+        : await uniswapV3RateQuoter(net, opt, registry, routeCache);
     await quoter.resolve?.(opt);
     return await quoter.rate(amountIn, rateDirection(quoter, opt), opt);
   }
@@ -1036,10 +1127,12 @@ async function quoterRate(
 
 export class Quoter {
   readonly net: IWeb3Provider;
+  private readonly tokens: TokenRegistry;
   private readonly routeCache: RouteCache = new Map();
 
-  constructor(net: IWeb3Provider) {
+  constructor(net: IWeb3Provider, opt: QuoterInit = {}) {
     this.net = net;
+    this.tokens = tokenRegistry(opt.tokens);
   }
 
   async coinPrice(symbol: string): Promise<number>;
@@ -1050,7 +1143,15 @@ export class Quoter {
     params?: unknown
   ): Promise<number> {
     astring(symbol, 'symbol');
-    return await quoterPrice(this.net, symbol, 'coin', provider, params, this.routeCache);
+    return await quoterPrice(
+      this.net,
+      symbol,
+      'coin',
+      provider,
+      params,
+      this.tokens,
+      this.routeCache
+    );
   }
 
   async tokenPrice(symbol: string): Promise<number>;
@@ -1061,7 +1162,15 @@ export class Quoter {
     params?: unknown
   ): Promise<number> {
     astring(symbol, 'symbol');
-    return await quoterPrice(this.net, symbol, 'token', provider, params, this.routeCache);
+    return await quoterPrice(
+      this.net,
+      symbol,
+      'token',
+      provider,
+      params,
+      this.tokens,
+      this.routeCache
+    );
   }
 
   async rate<P extends QuoterRateParams>(
@@ -1074,7 +1183,7 @@ export class Quoter {
     provider: QuoterRateProvider,
     params?: QuoterRateParams
   ): Promise<bigint> {
-    return await quoterRate(this.net, amountIn, provider, params, this.routeCache);
+    return await quoterRate(this.net, amountIn, provider, params, this.tokens, this.routeCache);
   }
 
   clearRoutes(): void {

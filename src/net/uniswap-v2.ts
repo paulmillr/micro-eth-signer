@@ -1,10 +1,7 @@
 import { keccak_256 } from '@noble/hashes/sha3.js';
 import { concatBytes, hexToBytes, type TArg } from '@noble/hashes/utils.js';
-import { type ContractInfo, createContract } from '../advanced/abi-decoder.ts';
-import {
-  default as UNISWAP_V2_ROUTER,
-  UNISWAP_V2_ROUTER_CONTRACT,
-} from '../advanced/abi-uniswap-v2.ts';
+import { type ContractInfo, createContract } from '../abi/decoder.ts';
+import { default as UNISWAP_V2_ROUTER, UNISWAP_V2_ROUTER_CONTRACT } from '../abi/uniswap-v2.ts';
 import { type IWeb3Provider, ethHex } from '../utils.ts';
 import * as uni from './uniswap-common.ts';
 
@@ -74,7 +71,7 @@ export function amount(
 
 export type Path = { path: string[]; amountIn: bigint; amountOut: bigint };
 
-async function bestPath(
+async function bestPathV2(
   net: IWeb3Provider,
   tokenA: string,
   tokenB: string,
@@ -127,7 +124,7 @@ async function bestPath(
   return res[0];
 }
 
-const ROUTER_CONTRACT = createContract(UNISWAP_V2_ROUTER, undefined, UNISWAP_V2_ROUTER_CONTRACT);
+const ROUTER_CONTRACT_V2 = createContract(UNISWAP_V2_ROUTER, undefined, UNISWAP_V2_ROUTER_CONTRACT);
 
 const TX_DEFAULT_OPT = {
   ...uni.DEFAULT_SWAP_OPT,
@@ -135,7 +132,7 @@ const TX_DEFAULT_OPT = {
   feeOnTransfer: false,
 };
 
-export function txData(
+export function txDataV2(
   to: string,
   input: string,
   output: string,
@@ -184,13 +181,13 @@ export function txData(
     'For' +
     (amountOut ? 'Exact' : '') +
     (output === 'eth' ? 'ETH' : 'Tokens') +
-    (opt.feeOnTransfer ? 'SupportingFeeOnTransferTokens' : '')) as keyof typeof ROUTER_CONTRACT;
-  if (!(method in ROUTER_CONTRACT)) throw new Error('Invalid method');
+    (opt.feeOnTransfer ? 'SupportingFeeOnTransferTokens' : '')) as keyof typeof ROUTER_CONTRACT_V2;
+  if (!(method in ROUTER_CONTRACT_V2)) throw new Error('Invalid method');
   const deadline = opt.deadline ? opt.deadline : Math.floor(Date.now() / 1000) + opt.ttl;
   const amountInMax = uni.addPercent(path.amountIn, opt.slippagePercent);
   const amountOutMin = uni.addPercent(path.amountOut, -opt.slippagePercent);
   // TODO: remove any
-  const data = (ROUTER_CONTRACT as any)[method].encodeInput({
+  const data = (ROUTER_CONTRACT_V2 as any)[method].encodeInput({
     amountInMax,
     amountOutMin,
     amountIn,
@@ -207,11 +204,11 @@ export function txData(
 
 // Here goes Exchange API. Everything above is SDK. Supports almost everything
 // from official sdk except liquidity stuff.
-export default class UniswapV2 extends uni.UniswapAbstract {
+export class UniswapV2 extends uni.UniswapAbstract {
   name = 'Uniswap V2';
   contract: string = UNISWAP_V2_ROUTER_CONTRACT;
   bestPath(fromCoin: string, toCoin: string, inputAmount: bigint): Promise<Path> {
-    return bestPath(this.net, fromCoin, toCoin, inputAmount);
+    return bestPathV2(this.net, fromCoin, toCoin, inputAmount);
   }
   txData(
     toAddress: string,
@@ -222,7 +219,7 @@ export default class UniswapV2 extends uni.UniswapAbstract {
     outputAmount?: bigint,
     opt: uni.SwapOpt = uni.DEFAULT_SWAP_OPT
   ): any {
-    return txData(toAddress, fromCoin, toCoin, path, inputAmount, outputAmount, {
+    return txDataV2(toAddress, fromCoin, toCoin, path, inputAmount, outputAmount, {
       ...TX_DEFAULT_OPT,
       ...opt,
     });

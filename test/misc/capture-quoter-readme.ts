@@ -2,7 +2,7 @@ import { writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { jsonrpc } from 'micro-ftch';
-import { Quoter, Web3Provider } from '../../src/net.ts';
+import { Quoter, RpcClient } from '../../src/net.ts';
 
 const root = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const fixture = join(root, 'test', 'fixtures', 'rpc', 'quoter-readme.json');
@@ -43,7 +43,7 @@ const recordingFetch = async (url: string, opt: RequestInit): Promise<Response> 
   return await next;
 };
 
-const prov = new Web3Provider(jsonrpc(recordingFetch as typeof fetch, liveUrl));
+const prov = new RpcClient(jsonrpc(recordingFetch as typeof fetch, liveUrl));
 const quoter = new Quoter(prov);
 const btc = await quoter.coinPrice('BTC');
 const bat = await quoter.tokenPrice('BAT');
