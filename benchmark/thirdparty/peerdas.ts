@@ -2,7 +2,7 @@ import { hexToBytes } from '@noble/curves/utils.js';
 import { utils as butils, bench as mark } from '@paulmillr/jsbt/bench.js';
 import { trustedSetup as s_fast } from '@paulmillr/trusted-setups/fast-peerdas.js';
 import ckzg from 'c-kzg';
-import * as kzg from '../../src/advanced/kzg.ts';
+import * as kzg from '../../src/kzg.ts';
 import { VECTORS } from '../../test/peerdas.test.ts';
 
 function strip0x(hex) {

@@ -26,8 +26,8 @@ import {
   randomBytes,
   utf8ToBytes,
 } from '@noble/hashes/utils.js';
-import { addr } from '../index.ts';
-import { deepFreeze, isBytes, strip0x, type TArg, type TRet } from '../utils.ts';
+import { addr } from './index.ts';
+import { deepFreeze, isBytes, strip0x, type TArg, type TRet } from './utils.ts';
 
 // treeshake: single helpers should not keep the full longSignatures/fields objects live.
 const _0n = /* @__PURE__ */ BigInt(0);
@@ -109,7 +109,7 @@ function parentSKToLamportPK(parentSK: TArg<Uint8Array>, index: number): TRet<Ui
  * Feed raw input keying material into the EIP-2333 keygen primitive.
  * ```ts
  * import { randomBytes } from '@noble/hashes/utils.js';
- * import { hkdfModR } from 'micro-eth-signer/advanced/keystore.js';
+ * import { hkdfModR } from 'micro-eth-signer/keystore.js';
  * hkdfModR(randomBytes(32));
  * ```
  */
@@ -143,7 +143,7 @@ export function hkdfModR(
  * Start from fresh entropy and derive the BLS root secret defined by EIP-2333.
  * ```ts
  * import { randomBytes } from '@noble/hashes/utils.js';
- * import { deriveMaster } from 'micro-eth-signer/advanced/keystore.js';
+ * import { deriveMaster } from 'micro-eth-signer/keystore.js';
  * const seed = randomBytes(32);
  * deriveMaster(seed);
  * ```
@@ -166,7 +166,7 @@ export function deriveMaster(seed: TArg<Uint8Array>): TRet<Uint8Array> {
  * First derive the master key, then walk one hardened child step.
  * ```ts
  * import { randomBytes } from '@noble/hashes/utils.js';
- * import { deriveChild, deriveMaster } from 'micro-eth-signer/advanced/keystore.js';
+ * import { deriveChild, deriveMaster } from 'micro-eth-signer/keystore.js';
  * const seed = randomBytes(32);
  * deriveChild(deriveMaster(seed), 0);
  * ```
@@ -187,7 +187,7 @@ export function deriveChild(parentKey: TArg<Uint8Array>, index: number): TRet<Ui
  * Follow a full validator derivation path directly from the seed bytes.
  * ```ts
  * import { randomBytes } from '@noble/hashes/utils.js';
- * import { deriveSeedTree } from 'micro-eth-signer/advanced/keystore.js';
+ * import { deriveSeedTree } from 'micro-eth-signer/keystore.js';
  * const seed = randomBytes(32);
  * deriveSeedTree(seed, 'm/12381/3600/0/0');
  * ```
@@ -230,7 +230,7 @@ export type EIP2334KeyType = (typeof EIP2334_KEY_TYPES)[number];
  * Ask for either the withdrawal or signing branch and keep the returned path string.
  * ```ts
  * import { randomBytes } from '@noble/hashes/utils.js';
- * import { deriveEIP2334Key } from 'micro-eth-signer/advanced/keystore.js';
+ * import { deriveEIP2334Key } from 'micro-eth-signer/keystore.js';
  * const seed = randomBytes(32);
  * deriveEIP2334Key(seed, 'signing', 0).path;
  * ```
@@ -273,7 +273,7 @@ export function deriveEIP2334Key(
  * Show that the signing branch can be reconstructed later from the withdrawal branch.
  * ```ts
  * import { bytesToHex, randomBytes } from '@noble/hashes/utils.js';
- * import { deriveEIP2334Key, deriveEIP2334SigningKey } from 'micro-eth-signer/advanced/keystore.js';
+ * import { deriveEIP2334Key, deriveEIP2334SigningKey } from 'micro-eth-signer/keystore.js';
  * const seed = randomBytes(64);
  * const signing = deriveEIP2334Key(seed, 'signing', 0);
  * const withdrawal = deriveEIP2334Key(seed, 'withdrawal', 0);
@@ -450,7 +450,7 @@ function deriveEIP2335Key(
  * Decrypt the keystore back into the original secret bytes.
  * ```ts
  * import { randomBytes } from '@noble/hashes/utils.js';
- * import { EIP2335Keystore, decryptEIP2335Keystore } from 'micro-eth-signer/advanced/keystore.js';
+ * import { EIP2335Keystore, decryptEIP2335Keystore } from 'micro-eth-signer/keystore.js';
  * const ctx = new EIP2335Keystore('password', 'pbkdf2', randomBytes);
  * const store = ctx.create(randomBytes(32));
  * decryptEIP2335Keystore(store, 'password');
@@ -509,7 +509,7 @@ export type RandFn = (bytes: number) => Uint8Array;
  * Reuse one keystore context when exporting multiple derived validators with the same password.
  * ```ts
  * import { randomBytes } from '@noble/hashes/utils.js';
- * import { EIP2335Keystore } from 'micro-eth-signer/advanced/keystore.js';
+ * import { EIP2335Keystore } from 'micro-eth-signer/keystore.js';
  * const ctx = new EIP2335Keystore('password', 'pbkdf2', randomBytes);
  * const seed = randomBytes(32);
  * const stores = [0, 1].map((i) => ctx.createDerivedEIP2334(seed, 'signing', i));
@@ -550,7 +550,7 @@ export class EIP2335Keystore<T extends KDFType> {
    * Encrypt a raw BLS private key into an EIP-2335 JSON object.
    * ```ts
    * import { randomBytes } from '@noble/hashes/utils.js';
-   * import { EIP2335Keystore } from 'micro-eth-signer/advanced/keystore.js';
+   * import { EIP2335Keystore } from 'micro-eth-signer/keystore.js';
    * const ctx = new EIP2335Keystore('password', 'pbkdf2', randomBytes);
    * const store = ctx.create(randomBytes(32), '', 'imported key');
    * ctx.clean();
@@ -603,7 +603,7 @@ export class EIP2335Keystore<T extends KDFType> {
    * Derive validator key 0 and encrypt it into an EIP-2335 keystore.
    * ```ts
    * import { randomBytes } from '@noble/hashes/utils.js';
-   * import { EIP2335Keystore } from 'micro-eth-signer/advanced/keystore.js';
+   * import { EIP2335Keystore } from 'micro-eth-signer/keystore.js';
    * const ctx = new EIP2335Keystore('password', 'scrypt', randomBytes);
    * const store = ctx.createDerivedEIP2334(randomBytes(32), 'signing', 0);
    * ctx.clean();
@@ -643,7 +643,7 @@ export class EIP2335Keystore<T extends KDFType> {
  * Export several validator keystores from one mnemonic-derived seed.
  * ```ts
  * import { mnemonicToSeedSync } from '@scure/bip39';
- * import { createDerivedEIP2334Keystores } from 'micro-eth-signer/advanced/keystore.js';
+ * import { createDerivedEIP2334Keystores } from 'micro-eth-signer/keystore.js';
  * const mnemonic = 'letter advice cage absurd amount doctor acoustic avoid letter advice cage above';
  * const seed = mnemonicToSeedSync(mnemonic, '');
  * createDerivedEIP2334Keystores('password', 'pbkdf2', seed, 'signing', [0, 1, 2, 3]);
@@ -885,7 +885,7 @@ function prepEncKdf(params: EncryptedJsonV3Params) {
  * @example
  * Recover a private key from a parsed v3 keystore.
  * ```ts
- * import { privFromLegacyKeystore } from 'micro-eth-signer/advanced/keystore.js';
+ * import { privFromLegacyKeystore } from 'micro-eth-signer/keystore.js';
  * declare const keystoreJson: string;
  * const store = JSON.parse(keystoreJson);
  * const privateKey = await privFromLegacyKeystore(store, 'password');
@@ -927,7 +927,7 @@ export async function privFromLegacyKeystore(
  * Export and import a legacy v3 execution-layer keystore.
  * ```ts
  * import { addr } from 'micro-eth-signer';
- * import { privFromLegacyKeystore, privToLegacyKeystore } from 'micro-eth-signer/advanced/keystore.js';
+ * import { privFromLegacyKeystore, privToLegacyKeystore } from 'micro-eth-signer/keystore.js';
  * const account = addr.random();
  * const store = await privToLegacyKeystore(account.privateKey, 'password');
  * const privateKey = await privFromLegacyKeystore(store, 'password');
@@ -979,7 +979,7 @@ export async function privToLegacyKeystore(
  * import {
  *   type LegacySaleKeystore,
  *   privFromLegacySaleKeystore,
- * } from 'micro-eth-signer/advanced/keystore.js';
+ * } from 'micro-eth-signer/keystore.js';
  * declare const saleWalletJson: string;
  * const wallet = JSON.parse(saleWalletJson) as LegacySaleKeystore;
  * const privateKey = await privFromLegacySaleKeystore(wallet, 'password');

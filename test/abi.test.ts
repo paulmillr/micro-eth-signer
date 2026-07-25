@@ -3,37 +3,40 @@ import { bytesToHex, concatBytes, hexToBytes, utf8ToBytes } from '@noble/hashes/
 import { describe, should } from '@paulmillr/jsbt/test.js';
 import * as P from 'micro-packed';
 import { deepStrictEqual, throws } from 'node:assert';
-import { addHints } from '../src/advanced/abi-common.ts';
-import * as abi from '../src/advanced/abi-decoder.ts';
-import { mapArgs, mapComponent } from '../src/advanced/abi-mapper.ts';
+import { addHints } from '../src/abi/common.ts';
+import * as abi from '../src/abi/decoder.ts';
+import { mapArgs, mapComponent } from '../src/abi/mapper.ts';
 import {
   CONTRACTS,
   CLEARSIG_REPO,
+  DEFAULT_TOKENS,
   Decoder,
+  TOKENS_BY_SYMBOL,
   TOKENS,
   decodeData,
   decodeEvent,
   decodeTx,
   deployContract,
   tokenFromSymbol,
-} from '../src/advanced/abi.ts';
+  tokensBySymbol,
+} from '../src/abi/index.ts';
 import { Transaction } from '../src/index.ts';
 import { strip0x } from '../src/utils.ts';
 
-import ERC20, { hints as ERC20_HINTS } from '../src/advanced/abi-erc20.ts';
+import ERC20, { hints as ERC20_HINTS } from '../src/abi/erc20.ts';
 import {
   default as KYBER_NETWORK_PROXY,
   KYBER_NETWORK_PROXY_CONTRACT,
-} from '../src/advanced/abi-kyber.ts';
+} from '../src/abi/kyber.ts';
 import {
   default as UNISWAP_V2_ROUTER,
   UNISWAP_V2_ROUTER_CONTRACT,
-} from '../src/advanced/abi-uniswap-v2.ts';
+} from '../src/abi/uniswap-v2.ts';
 import {
   default as UNISWAP_V3_ROUTER,
   UNISWAP_V3_ROUTER_CONTRACT,
-} from '../src/advanced/abi-uniswap-v3.ts';
-import { WETH_CONTRACT } from '../src/advanced/abi-weth.ts';
+} from '../src/abi/uniswap-v3.ts';
+import { WETH_CONTRACT } from '../src/abi/weth.ts';
 
 const hex = { encode: bytesToHex, decode: hexToBytes };
 const clearSigFor = (to: string, data: Uint8Array, opt: Record<string, unknown>) => {
@@ -2247,6 +2250,8 @@ should('built-in registries deep-freeze metadata and ABIs', () => {
   const wethABI = CONTRACTS[weth].abi as any;
   deepStrictEqual(
     {
+      defaultToken: Object.isFrozen(DEFAULT_TOKENS[usdt]),
+      symbolToken: Object.isFrozen(TOKENS_BY_SYMBOL.USDT),
       token: Object.isFrozen(TOKENS[usdt]),
       sharedContract: Object.isFrozen(CONTRACTS[usdt]),
       router: Object.isFrozen(CONTRACTS[UNISWAP_V2_ROUTER_CONTRACT]),
@@ -2257,6 +2262,8 @@ should('built-in registries deep-freeze metadata and ABIs', () => {
       wethABIItem: Object.isFrozen(wethABI[0]),
     },
     {
+      defaultToken: true,
+      symbolToken: true,
       token: true,
       sharedContract: true,
       router: true,
@@ -2267,6 +2274,8 @@ should('built-in registries deep-freeze metadata and ABIs', () => {
       wethABIItem: true,
     }
   );
+  throws(() => ((DEFAULT_TOKENS[usdt] as any).symbol = 'MUT'), TypeError);
+  throws(() => ((TOKENS_BY_SYMBOL.USDT as any).symbol = 'MUT'), TypeError);
   throws(() => ((TOKENS[usdt] as any).symbol = 'MUT'), TypeError);
   throws(() => ((CONTRACTS[usdt] as any).symbol = 'MUT'), TypeError);
   throws(() => ((CONTRACTS[UNISWAP_V2_ROUTER_CONTRACT] as any).name = 'MUT'), TypeError);
@@ -2275,21 +2284,61 @@ should('built-in registries deep-freeze metadata and ABIs', () => {
   throws(() => ((CONTRACTS[weth] as any).symbol = 'MUT'), TypeError);
   throws(() => wethABI.push({}), TypeError);
   throws(() => (wethABI[0].name = 'MUT'), TypeError);
+  deepStrictEqual(DEFAULT_TOKENS[usdt].symbol, 'USDT');
+  deepStrictEqual(TOKENS_BY_SYMBOL.USDT.contract, usdt);
   deepStrictEqual(TOKENS[usdt].symbol, 'USDT');
   deepStrictEqual(CONTRACTS[usdt].symbol, 'USDT');
   deepStrictEqual(CONTRACTS[UNISWAP_V2_ROUTER_CONTRACT].name, 'UNISWAP V2 ROUTER');
   deepStrictEqual(CONTRACTS[weth].symbol, 'WETH');
 });
-should('tokenFromSymbol ignores inherited token registry entries', () => {
+should('tokensBySymbol derives symbol indexes and rejects duplicates', () => {
+  const tokenA = '0x00000000000000000000000000000000000000a1';
+  const tokenB = '0x00000000000000000000000000000000000000b1';
+  const table = {
+    [tokenA]: {
+      symbol: 'TOKA',
+      decimals: 7,
+      feed: { contract: '0x00000000000000000000000000000000000000f1', decimals: 3 },
+    },
+  };
+  const bySymbol = tokensBySymbol(table);
+  deepStrictEqual(Object.getPrototypeOf(bySymbol), null);
+  deepStrictEqual(bySymbol.TOKA, { contract: tokenA, ...table[tokenA] });
+  throws(() => ((bySymbol.TOKA as any).symbol = 'MUT'), TypeError);
+  throws(
+    () =>
+      tokensBySymbol({
+        [tokenA]: { symbol: 'DUP', decimals: 18 },
+        [tokenB]: { symbol: 'DUP', decimals: 18 },
+      }),
+    /duplicate token symbol: DUP/
+  );
+});
+should('tokenFromSymbol returns undefined and supports custom token tables', () => {
+  const token = '0x00000000000000000000000000000000000000c1';
+  const table = {
+    [token]: { symbol: 'CUSTOM', decimals: 5 },
+  };
+  deepStrictEqual(tokenFromSymbol('UNKNOWN'), undefined);
+  deepStrictEqual(tokenFromSymbol('CUSTOM', table), { contract: token, ...table[token] });
+});
+should('token symbol indexes ignore inherited token registry entries', () => {
   const key = 'evilToken';
   const prev = Object.getOwnPropertyDescriptor(Object.prototype, key);
+  const token = '0x00000000000000000000000000000000000000d1';
+  const table = {
+    [token]: { symbol: 'REAL', decimals: 18 },
+  };
   Object.defineProperty(Object.prototype, key, {
-    value: { abi: 'ERC20', symbol: 'FAKE', decimals: 18 },
+    value: { symbol: 'FAKE', decimals: 18 },
     enumerable: true,
     configurable: true,
   });
   try {
-    throws(() => tokenFromSymbol('FAKE'), /unknown token/);
+    const bySymbol = tokensBySymbol(table);
+    deepStrictEqual(bySymbol.FAKE, undefined);
+    deepStrictEqual(tokenFromSymbol('FAKE', table), undefined);
+    deepStrictEqual(tokenFromSymbol('REAL', table), { contract: token, ...table[token] });
   } finally {
     if (prev) Object.defineProperty(Object.prototype, key, prev);
     else delete (Object.prototype as Record<string, unknown>)[key];

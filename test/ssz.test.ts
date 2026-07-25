@@ -4,7 +4,7 @@ import { deepStrictEqual, notStrictEqual, throws } from 'node:assert';
 import { readdirSync, readFileSync } from 'node:fs';
 import * as snappy from 'snappyjs';
 import * as yaml from 'yaml';
-import * as SSZ from '../src/advanced/ssz.ts';
+import * as SSZ from '../src/ssz.ts';
 import { __dirname, forceGC, getVectorsPath } from './util.ts';
 
 const vectorPaths = (path) => [getVectorsPath(path)];

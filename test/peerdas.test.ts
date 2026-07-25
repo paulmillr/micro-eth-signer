@@ -5,7 +5,7 @@ import { bytesToHex, concatBytes } from '@noble/hashes/utils.js';
 import { deepStrictEqual, throws } from 'node:assert';
 import { readdirSync, readFileSync } from 'node:fs';
 import * as yaml from 'yaml';
-import { KZG } from '../src/advanced/kzg.ts';
+import { KZG } from '../src/kzg.ts';
 import { add0x } from '../src/utils.ts';
 import { __dirname, forceGC } from './util.ts';
 
@@ -30,6 +30,18 @@ function readFunctionVectors(name) {
   for (const t of readFunctionVectorCases(name, false)) res.valid.push(t);
   for (const t of readFunctionVectorCases(name, true)) res.invalid.push(t);
   return res;
+}
+
+function firstValidFunctionVector(name) {
+  const t = readFunctionVectorCases(name, false).next().value;
+  if (!t) throw new Error(`missing valid vector for ${name}`);
+  return t;
+}
+
+function replaceFirstIndex(indices, idx) {
+  const next = indices.slice();
+  next[0] = idx;
+  return next;
 }
 
 export const VECTORS = new Proxy(
@@ -60,7 +72,7 @@ const getKzg = async (setup) => {
   return KZG_CACHE;
 };
 should('Cell.encode rejects non-canonical field elements', () => {
-  const src = readFileSync(`${__dirname}/../src/advanced/kzg.ts`, 'utf8');
+  const src = readFileSync(`${__dirname}/../src/kzg.ts`, 'utf8');
   const m = src.match(/encode\(fields: bigint\[\]\): string \{([\s\S]*?)\n  \},/);
   if (!m) throw new Error('failed to locate Cell.encode body');
   // Keep Cell private in the module API while still regression-testing its field invariant.
@@ -119,6 +131,17 @@ function run(setup) {
       throws(() => kzg.recoverCellsAndProofs(t.input.cell_indices, t.input.cells));
     }
   });
+  should('recoverCellsAndProofs rejects invalid cell indices', async () => {
+    const kzg = await getKzg(setup);
+    const t = firstValidFunctionVector('recover_cells_and_kzg_proofs');
+    for (const idx of [1.5, -1, NaN]) {
+      throws(
+        () =>
+          kzg.recoverCellsAndProofs(replaceFirstIndex(t.input.cell_indices, idx), t.input.cells),
+        /Invalid cell index/
+      );
+    }
+  });
   should('verifyCellKzgProofBatch', async () => {
     const kzg = await getKzg(setup);
     for (const t of readFunctionVectorCases('verify_cell_kzg_proof_batch', false)) {
@@ -146,6 +169,22 @@ function run(setup) {
         valid = false;
       }
       deepStrictEqual(valid, false);
+    }
+  });
+  should('verifyCellKzgProofBatch rejects invalid cell indices', async () => {
+    const kzg = await getKzg(setup);
+    const t = firstValidFunctionVector('verify_cell_kzg_proof_batch');
+    for (const idx of [-1, 1.5, NaN]) {
+      throws(
+        () =>
+          kzg.verifyCellKzgProofBatch(
+            t.input.commitments,
+            replaceFirstIndex(t.input.cell_indices, idx),
+            t.input.cells,
+            t.input.proofs
+          ),
+        /invalid cell index/
+      );
     }
   });
 }

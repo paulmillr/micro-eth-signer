@@ -26,7 +26,7 @@ import {
   type MapTuple,
   type NamedComponent,
   type Writable,
-} from './abi-mapper.ts';
+} from './mapper.ts';
 import {
   _chain as clearSigChain,
   repository as clearSigRepository,
@@ -34,7 +34,7 @@ import {
   type ClearSigFactoryEntry,
   type ClearSigOpt,
   type ClearSigRepositoryEntry,
-} from './clearsig.ts';
+} from '../clearsig/index.ts';
 
 /*
 There is NO network code in the file. However, a user can pass
@@ -362,8 +362,6 @@ export type ContractInfo = {
   decimals?: number;
   // For useful common contracts/exchanges
   name?: string;
-  // Stable coin price against USD
-  price?: number;
 };
 export type HintOpt = {
   contract?: string;

@@ -5,7 +5,7 @@ import { basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { inspect } from 'node:util';
 import * as snappy from 'snappyjs';
-import * as SSZ from '../src/advanced/ssz.ts';
+import * as SSZ from '../src/ssz.ts';
 
 // Test-only ERA/E2Store parser for public Nimbus mainnet files.
 // Local EIPs only reference this format at a high level: EIP-7927 names

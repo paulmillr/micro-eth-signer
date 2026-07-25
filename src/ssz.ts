@@ -1,6 +1,6 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import * as P from 'micro-packed';
-import { aarray, astring, isBytes, isObject, type Bytes, type TArg, type TRet } from '../utils.ts';
+import { aarray, astring, isBytes, isObject, type Bytes, type TArg, type TRet } from './utils.ts';
 /*
 
 Simple serialize (SSZ) is the serialization method used on the Beacon Chain.
@@ -295,10 +295,375 @@ const isProgressiveCompat = <T>(a: TArg<SSZCoder<T>>, b: TArg<SSZCoder<any>>): b
   return false;
 };
 
+// ---------------- Flat single-buffer serialization fast path ----------------
+// packed streams allocate a Writer per dynamic field (P.pointer) and a Reader per array element;
+// on consensus types this dominates encode/decode cost by an order of magnitude. SSZ layouts allow
+// computing the exact byte size upfront, so public encode()/decode() run over one flat buffer via
+// the `Flat` codecs below. encodeStream/decodeStream stay on packed so SSZ coders still compose
+// inside other packed structures; both paths must serialize identically.
+const _0n: bigint = /* @__PURE__ */ BigInt(0);
+const _1n: bigint = /* @__PURE__ */ BigInt(1);
+const _64n: bigint = /* @__PURE__ */ BigInt(64);
+const _u64mask: bigint = /* @__PURE__ */ (() => (_1n << _64n) - _1n)();
+
+type Flat<T> = {
+  /** Serialized byte length when the type is fixed-size, undefined when dynamic. */
+  fixedSize: number | undefined;
+  /** Byte length of one value. Validates dynamic values; fixed-size flats validate in write. */
+  size: (value: T) => number;
+  /** Writes value at pos into a zero-initialized region, returns the end position. */
+  write: (b: Uint8Array, view: DataView, pos: number, value: T) => number;
+  /** Reads value from exactly [start, end); keeps the strictness of the stream decoders. */
+  read: (b: Uint8Array, view: DataView, start: number, end: number) => T;
+};
+
+// checkSSZ admits hand-written coders without a flat part; route those through packed encode/decode.
+const getFlat = (coder: any): Flat<any> =>
+  coder._flat ?? {
+    fixedSize: coder.size,
+    size: (value: any) => (coder.size !== undefined ? coder.size : coder.encode(value).length),
+    write: (b: Uint8Array, _view: DataView, pos: number, value: any) => {
+      const encoded = coder.encode(value);
+      b.set(encoded, pos);
+      return pos + encoded.length;
+    },
+    read: (b: Uint8Array, _view: DataView, start: number, end: number) =>
+      coder.decode(b.subarray(start, end)),
+  };
+
+// Public encode/decode over the flat codec. Unlike the stream path, decode copies byte values out
+// of the input instead of returning subarray views into it.
+const flatMethods = <T>(coder: P.CoderType<T>, flat: Flat<T>) => ({
+  _flat: flat,
+  encode: (value: T): Bytes => {
+    const size = flat.fixedSize !== undefined ? flat.fixedSize : flat.size(value);
+    const b = new Uint8Array(size);
+    const end = flat.write(b, new DataView(b.buffer), 0, value);
+    if (end !== size) throw new Error(`SSZ/encode: wrong serialized size ${end}, expected ${size}`);
+    return b;
+  },
+  decode: (data: Bytes, opts?: P.ReaderOpts): T => {
+    // ReaderOpts tune stream-decoder strictness; the flat path has fixed strict behavior.
+    if (opts !== undefined) return coder.decode(data, opts);
+    if (!isBytes(data)) throw new Error(`SSZ/decode: expected Uint8Array, got type=${typeof data}`);
+    return flat.read(
+      data,
+      new DataView(data.buffer, data.byteOffset, data.byteLength),
+      0,
+      data.length
+    );
+  },
+});
+
+const uintFlat = (size: number): Flat<number | bigint> => {
+  const bits = 8 * size;
+  const maxNum = size <= 4 ? 2 ** bits - 1 : Number.MAX_SAFE_INTEGER;
+  const maxBig = (_1n << BigInt(bits)) - _1n;
+  const limbs = size >>> 3;
+  const check = (value: number | bigint) => {
+    if (typeof value === 'number') {
+      if (!Number.isSafeInteger(value) || value < 0 || value > maxNum)
+        throw new Error(`SSZ/uint${bits}: wrong value=${value}`);
+    } else if (typeof value === 'bigint') {
+      if (value < _0n || value > maxBig) throw new Error(`SSZ/uint${bits}: wrong value=${value}`);
+    } else throw new Error(`SSZ/uint${bits}: expected number or bigint, got type=${typeof value}`);
+  };
+  return {
+    fixedSize: size,
+    size: () => size,
+    write: (b, view, pos, value) => {
+      check(value);
+      if (size === 1) b[pos] = Number(value);
+      else if (size === 2) view.setUint16(pos, Number(value), true);
+      else if (size === 4) view.setUint32(pos, Number(value), true);
+      else {
+        let x = BigInt(value);
+        for (let i = 0; i < limbs; i++) {
+          view.setBigUint64(pos + 8 * i, x & _u64mask, true);
+          x >>= _64n;
+        }
+      }
+      return pos + size;
+    },
+    read: (b, view, start, end) => {
+      if (end - start !== size) throw new Error(`SSZ/uint${bits}: wrong size=${end - start}`);
+      if (size === 1) return b[start];
+      if (size === 2) return view.getUint16(start, true);
+      if (size === 4) return view.getUint32(start, true);
+      // Most-significant limb first: one shift+or per limb.
+      let res = _0n;
+      for (let i = limbs - 1; i >= 0; i--)
+        res = (res << _64n) | view.getBigUint64(start + 8 * i, true);
+      return res;
+    },
+  };
+};
+
+const booleanFlat: Flat<boolean> = {
+  fixedSize: 1,
+  size: () => 1,
+  write: (b, _view, pos, value) => {
+    if (typeof value !== 'boolean') throw new TypeError(`SSZ/boolean: wrong value=${value}`);
+    b[pos] = value ? 1 : 0;
+    return pos + 1;
+  },
+  read: (b, _view, start, end) => {
+    if (end - start !== 1) throw new Error(`SSZ/boolean: wrong size=${end - start}`);
+    const value = b[start];
+    if (value !== 0 && value !== 1) throw new Error(`SSZ/boolean: invalid value=${value}`);
+    return value === 1;
+  },
+};
+
+const bytesFlat = (title: string, len: number, exact: boolean): Flat<Bytes> => {
+  const check = (value: Bytes) => {
+    if (!isBytes(value) || (exact ? value.length !== len : value.length > len))
+      throw new Error(`SSZ/${title}: wrong value=${value} (len=${(value as any)?.length})`);
+  };
+  return {
+    fixedSize: exact ? len : undefined,
+    size: (value) => {
+      check(value);
+      return value.length;
+    },
+    write: (b, _view, pos, value) => {
+      check(value);
+      b.set(value, pos);
+      return pos + value.length;
+    },
+    // Uint8Array.prototype.slice copies even when b is a Node Buffer (Buffer#slice is a view).
+    read: (b, _view, start, end) => {
+      if (exact ? end - start !== len : end - start > len)
+        throw new Error(`SSZ/${title}: wrong size=${end - start}`);
+      return Uint8Array.prototype.slice.call(b, start, end);
+    },
+  };
+};
+
+const bitvectorFlat = (len: number): Flat<boolean[]> => {
+  const byteLen = Math.ceil(len / 8);
+  return {
+    fixedSize: byteLen,
+    size: () => byteLen,
+    write: (b, _view, pos, value) => {
+      if (!Array.isArray(value) || value.length !== len)
+        throw new Error(`SSZ/bitVector: wrong value=${value} (len=${(value as any)?.length})`);
+      for (let i = 0; i < len; i++) if (value[i]) b[pos + (i >>> 3)] |= 1 << (i & 7);
+      return pos + byteLen;
+    },
+    read: (b, _view, start, end) => {
+      if (end - start !== byteLen) throw new Error(`SSZ/bitVector: wrong size=${end - start}`);
+      for (let i = len; i < 8 * byteLen; i++)
+        if (b[start + (i >>> 3)] & (1 << (i & 7)))
+          throw new Error('SSZ/bitVector: non-zero padding');
+      const res: boolean[] = new Array(len);
+      for (let i = 0; i < len; i++) res[i] = !!(b[start + (i >>> 3)] & (1 << (i & 7)));
+      return res;
+    },
+  };
+};
+
+// maxLen is Infinity for progressive bitlists.
+const bitlistFlat = (title: string, maxLen: number): Flat<boolean[]> => {
+  const check = (value: boolean[]) => {
+    if (!Array.isArray(value) || value.length > maxLen)
+      throw new Error(`SSZ/${title}/encode: wrong value=${value} (${typeof value})`);
+  };
+  return {
+    fixedSize: undefined,
+    size: (value) => {
+      check(value);
+      return Math.floor(value.length / 8) + 1;
+    },
+    write: (b, _view, pos, value) => {
+      check(value);
+      const len = value.length;
+      for (let i = 0; i < len; i++) if (value[i]) b[pos + (i >>> 3)] |= 1 << (i & 7);
+      b[pos + (len >>> 3)] |= 1 << (len & 7); // terminator bit
+      return pos + Math.floor(len / 8) + 1;
+    },
+    read: (b, _view, start, end) => {
+      const byteLen = end - start;
+      const last = b[end - 1];
+      if (byteLen === 0 || last === 0) throw new Error(`SSZ/${title}: empty trailing byte`);
+      const bitLen = 8 * (byteLen - 1) + (31 - Math.clz32(last)); // terminator = last set bit
+      if (bitLen > maxLen) throw new Error(`SSZ/${title}: wrong length=${bitLen}`);
+      const res: boolean[] = new Array(bitLen);
+      for (let i = 0; i < bitLen; i++) res[i] = !!(b[start + (i >>> 3)] & (1 << (i & 7)));
+      return res;
+    },
+  };
+};
+
+// Shared by vector (exact), list (max) and progressiveList (unbounded).
+const arrayFlat = <T>(
+  title: string,
+  inner: Flat<T>,
+  exact: number | undefined,
+  max: number | undefined
+): Flat<T[]> => {
+  const checkValue = (value: T[]) => {
+    if (
+      !Array.isArray(value) ||
+      (exact !== undefined && value.length !== exact) ||
+      (max !== undefined && value.length > max)
+    )
+      throw new Error(`SSZ/${title}: wrong value=${value} (len=${(value as any)?.length})`);
+  };
+  const checkLen = (len: number) => {
+    if ((exact !== undefined && len !== exact) || (max !== undefined && len > max))
+      throw new Error(`SSZ/${title}: wrong length=${len}`);
+  };
+  const isz = inner.fixedSize;
+  if (isz !== undefined) {
+    return {
+      fixedSize: exact !== undefined ? exact * isz : undefined,
+      size: (value) => {
+        checkValue(value);
+        return value.length * isz;
+      },
+      write: (b, view, pos, value) => {
+        checkValue(value);
+        for (let i = 0; i < value.length; i++) pos = inner.write(b, view, pos, value[i]);
+        return pos;
+      },
+      read: (b, view, start, end) => {
+        const total = end - start;
+        if (total % isz !== 0) throw new Error(`SSZ/${title}: wrong size=${total}`);
+        const len = total / isz;
+        checkLen(len);
+        const res: T[] = new Array(len);
+        for (let i = 0, pos = start; i < len; i++, pos += isz)
+          res[i] = inner.read(b, view, pos, pos + isz);
+        return res;
+      },
+    };
+  }
+  // Dynamic elements: uint32 offset table, then tightly packed element bytes.
+  return {
+    fixedSize: undefined,
+    size: (value) => {
+      checkValue(value);
+      let size = 4 * value.length;
+      for (let i = 0; i < value.length; i++) size += inner.size(value[i]);
+      return size;
+    },
+    write: (b, view, pos, value) => {
+      checkValue(value);
+      let tablePos = pos;
+      let dataPos = pos + 4 * value.length;
+      for (let i = 0; i < value.length; i++) {
+        view.setUint32(tablePos, dataPos - pos, true);
+        tablePos += 4;
+        dataPos = inner.write(b, view, dataPos, value[i]);
+      }
+      return dataPos;
+    },
+    read: (b, view, start, end) => {
+      // Empty input is only valid for genuinely empty dynamic lists; fixed-length callers still
+      // need a full offset table.
+      if (start === end) {
+        checkLen(0);
+        return [];
+      }
+      if (end - start < 4) throw new Error(`SSZ/${title}: wrong offset table`);
+      const first = view.getUint32(start, true);
+      if (first === 0 || first % 4 !== 0) throw new Error(`SSZ/${title}: wrong offset table`);
+      const len = first / 4;
+      checkLen(len);
+      if (start + first > end) throw new Error(`SSZ/${title}: wrong offset`);
+      const res: T[] = new Array(len);
+      let prev = start + first;
+      for (let i = 0; i < len; i++) {
+        const next = i + 1 < len ? start + view.getUint32(start + 4 * (i + 1), true) : end;
+        // Offsets must be non-decreasing and tile [table end, end) exactly.
+        if (next < prev || next > end) throw new Error(`SSZ/${title}: wrong offset`);
+        res[i] = inner.read(b, view, prev, next);
+        prev = next;
+      }
+      return res;
+    },
+  };
+};
+
+// Shared by container, progressiveContainer (same serialization) and profile (present fields).
+const containerFlat = (names: string[], flats: Flat<any>[], title = 'container') => {
+  let fixedPart = 0;
+  const dynIdx: number[] = [];
+  for (let i = 0; i < flats.length; i++) {
+    const fsz = flats[i].fixedSize;
+    if (fsz === undefined) {
+      dynIdx.push(i);
+      fixedPart += 4;
+    } else fixedPart += fsz;
+  }
+  const checkValue = (value: any) => {
+    if (!isObject(value)) throw new TypeError(`SSZ/${title}: expected object, got ${typeof value}`);
+  };
+  const res: Flat<Record<string, any>> = {
+    fixedSize: dynIdx.length ? undefined : fixedPart,
+    size: (value) => {
+      checkValue(value);
+      let size = fixedPart;
+      for (const i of dynIdx) size += flats[i].size(value[names[i]]);
+      return size;
+    },
+    write: (b, view, pos, value) => {
+      checkValue(value);
+      let fixedPos = pos;
+      let varPos = pos + fixedPart;
+      for (let i = 0; i < flats.length; i++) {
+        const f = flats[i];
+        if (f.fixedSize === undefined) {
+          view.setUint32(fixedPos, varPos - pos, true);
+          fixedPos += 4;
+          varPos = f.write(b, view, varPos, value[names[i]]);
+        } else fixedPos = f.write(b, view, fixedPos, value[names[i]]);
+      }
+      return varPos;
+    },
+    read: (b, view, start, end) => {
+      const res: Record<string, any> = {};
+      const offsets: number[] = [];
+      let pos = start;
+      for (let i = 0; i < flats.length; i++) {
+        const f = flats[i];
+        if (f.fixedSize === undefined) {
+          if (pos + 4 > end) throw new Error(`SSZ/${title}: unexpected end of buffer`);
+          offsets.push(start + view.getUint32(pos, true));
+          pos += 4;
+          res[names[i]] = undefined; // keep declaration key order; patched in the offsets pass
+        } else {
+          if (pos + f.fixedSize > end) throw new Error(`SSZ/${title}: unexpected end of buffer`);
+          res[names[i]] = f.read(b, view, pos, pos + f.fixedSize);
+          pos += f.fixedSize;
+        }
+      }
+      if (!offsets.length) {
+        if (pos !== end) throw new Error(`SSZ/${title}: leftover bytes`);
+        return res;
+      }
+      let prev = offsets[0];
+      if (prev !== pos) throw new Error(`SSZ/${title}: wrong first offset`);
+      for (let i = 0; i < dynIdx.length; i++) {
+        const next = i + 1 < offsets.length ? offsets[i + 1] : end;
+        // Offsets are consumed in field order and must tile [fixed end, end) exactly; equal
+        // offsets are valid when an earlier dynamic field is empty.
+        if (next < prev || next > end) throw new Error(`SSZ/${title}: wrong offset`);
+        res[names[dynIdx[i]]] = flats[dynIdx[i]].read(b, view, prev, next);
+        prev = next;
+      }
+      return res;
+    },
+  };
+  return res;
+};
+
 // Basic SSZ objects hash as a single 32-byte chunk with their serialized bytes right-padded by zeros.
-const basic = <T>(type: string, inner: P.CoderType<T>, def: T): TRet<SSZCoder<T>> =>
+const basic = <T>(type: string, inner: P.CoderType<T>, def: T, flat: Flat<T>): TRet<SSZCoder<T>> =>
   freezeSSZ({
     ...inner,
+    ...flatMethods(inner, flat),
     default: def,
     chunkCount: 1,
     composite: false,
@@ -311,7 +676,7 @@ const basic = <T>(type: string, inner: P.CoderType<T>, def: T): TRet<SSZCoder<T>
     },
     merkleRoot: (value: TArg<T>) => {
       const res = new Uint8Array(32);
-      res.set(inner.encode(value as T));
+      flat.write(res, new DataView(res.buffer), 0, value as T);
       return res;
     },
   } as any) as TRet<SSZCoder<T>>;
@@ -333,34 +698,56 @@ const int = (len: number, small = true): P.CoderType<number | bigint> =>
     },
   });
 
-const _0n: bigint = /* @__PURE__ */ BigInt(0);
 type SSZInt = SSZCoder<number | bigint>;
 /** SSZ coder for 8-bit unsigned integers. */
-export const uint8: TRet<SSZInt> = /* @__PURE__ */ basic('uint8', /* @__PURE__ */ int(1), 0);
+export const uint8: TRet<SSZInt> = /* @__PURE__ */ basic(
+  'uint8',
+  /* @__PURE__ */ int(1),
+  0,
+  /* @__PURE__ */ uintFlat(1)
+);
 /** SSZ coder for 16-bit unsigned integers. */
-export const uint16: TRet<SSZInt> = /* @__PURE__ */ basic('uint16', /* @__PURE__ */ int(2), 0);
+export const uint16: TRet<SSZInt> = /* @__PURE__ */ basic(
+  'uint16',
+  /* @__PURE__ */ int(2),
+  0,
+  /* @__PURE__ */ uintFlat(2)
+);
 /** SSZ coder for 32-bit unsigned integers. */
-export const uint32: TRet<SSZInt> = /* @__PURE__ */ basic('uint32', /* @__PURE__ */ int(4), 0);
+export const uint32: TRet<SSZInt> = /* @__PURE__ */ basic(
+  'uint32',
+  /* @__PURE__ */ int(4),
+  0,
+  /* @__PURE__ */ uintFlat(4)
+);
 /** SSZ coder for 64-bit unsigned integers. */
 export const uint64: TRet<SSZInt> = /* @__PURE__ */ basic(
   'uint64',
   /* @__PURE__ */ int(8, false),
-  _0n
+  _0n,
+  /* @__PURE__ */ uintFlat(8)
 );
 /** SSZ coder for 128-bit unsigned integers. */
 export const uint128: TRet<SSZInt> = /* @__PURE__ */ basic(
   'uint128',
   /* @__PURE__ */ int(16, false),
-  _0n
+  _0n,
+  /* @__PURE__ */ uintFlat(16)
 );
 /** SSZ coder for 256-bit unsigned integers. */
 export const uint256: TRet<SSZInt> = /* @__PURE__ */ basic(
   'uint256',
   /* @__PURE__ */ int(32, false),
-  _0n
+  _0n,
+  /* @__PURE__ */ uintFlat(32)
 );
 /** SSZ coder for booleans. */
-export const boolean: TRet<SSZCoder<boolean>> = /* @__PURE__ */ basic('boolean', P.bool, false);
+export const boolean: TRet<SSZCoder<boolean>> = /* @__PURE__ */ basic(
+  'boolean',
+  P.bool,
+  false,
+  booleanFlat
+);
 
 const array = <T>(len: P.Length, inner: TArg<SSZCoder<T>>): P.CoderType<T[]> => {
   const item = inner as SSZCoder<T>;
@@ -414,7 +801,7 @@ type VectorType<T> = SSZCoder<T[]> & { info: { type: 'vector'; N: number; inner:
  * @example
  * Encode exactly two `uint8` values with a fixed-size SSZ vector.
  * ```ts
- * import { uint8, vector } from 'micro-eth-signer/advanced/ssz.js';
+ * import { uint8, vector } from 'micro-eth-signer/ssz.js';
  * vector(2, uint8).encode([1, 2]);
  * ```
  */
@@ -422,8 +809,10 @@ export const vector = <T>(len: number, inner: TArg<SSZCoder<T>>): TRet<VectorTyp
   const item = inner as SSZCoder<T>;
   if (!Number.isSafeInteger(len) || len <= 0)
     throw new Error(`SSZ/vector: wrong length=${len} (should be positive integer)`);
+  const coder = array(len, item);
   return freezeSSZ({
-    ...array(len, item),
+    ...coder,
+    ...flatMethods(coder, arrayFlat('vector', getFlat(item), len, undefined)),
     info: { type: 'vector', N: len, inner: item },
     _isProgressiveCompat(other: TArg<SSZCoder<any>>) {
       return isProgressiveCompat(this, other);
@@ -455,7 +844,7 @@ type ListType<T> = SSZCoder<T[]> & { info: { type: 'list'; N: number; inner: SSZ
  * @example
  * Encode a variable-length list with an upper bound of two elements.
  * ```ts
- * import { list, uint8 } from 'micro-eth-signer/advanced/ssz.js';
+ * import { list, uint8 } from 'micro-eth-signer/ssz.js';
  * list(2, uint8).encode([1]);
  * ```
  */
@@ -469,6 +858,7 @@ export const list = <T>(maxLen: number, inner: TArg<SSZCoder<T>>): TRet<ListType
   });
   return freezeSSZ({
     ...coder,
+    ...flatMethods(coder, arrayFlat('list', getFlat(item), undefined, maxLen)),
     info: { type: 'list', N: maxLen, inner: item },
     _isProgressiveCompat(other: TArg<SSZCoder<any>>) {
       return isProgressiveCompat(this, other);
@@ -500,7 +890,7 @@ type ProgressiveListType<T> = SSZCoder<T[]> & {
  * @example
  * Encode a progressive list of small integers.
  * ```ts
- * import { progressiveList, uint8 } from 'micro-eth-signer/advanced/ssz.js';
+ * import { progressiveList, uint8 } from 'micro-eth-signer/ssz.js';
  * progressiveList(uint8).encode([1, 2]);
  * ```
  */
@@ -513,6 +903,7 @@ export const progressiveList = <T>(inner: TArg<SSZCoder<T>>): TRet<ProgressiveLi
   });
   return freezeSSZ({
     ...coder,
+    ...flatMethods(coder, arrayFlat('progressiveList', getFlat(item), undefined, undefined)),
     info: { type: 'progressiveList', inner: item },
     _isProgressiveCompat(other: TArg<SSZCoder<any>>) {
       return isProgressiveCompat(this, other);
@@ -574,7 +965,7 @@ type ContainerCoder<T extends Record<string, SSZCoder<any>>> = SSZCoder<{
  * @example
  * Encode a single-field SSZ container object.
  * ```ts
- * import { container, uint8 } from 'micro-eth-signer/advanced/ssz.js';
+ * import { container, uint8 } from 'micro-eth-signer/ssz.js';
  * container({ a: uint8 }).encode({ a: 1 });
  * ```
  */
@@ -596,8 +987,16 @@ export const container = <T extends Record<string, SSZCoder<any>>>(
     encodeStream: ptrCoder.encodeStream,
     decodeStream: (r) => fixOffsets(r, fs, offsetFields, fixedCoder.decodeStream(r), 0) as any,
   }) as ContainerCoder<T>;
+  const names = Object.keys(fs);
   return freezeSSZ({
     ...coder,
+    ...flatMethods(
+      coder,
+      containerFlat(
+        names,
+        names.map((k) => getFlat(fs[k]))
+      ) as Flat<any>
+    ),
     info: { type: 'container', fields: fs },
     _isProgressiveCompat(other: TArg<SSZCoder<any>>) {
       return isProgressiveCompat(this, other);
@@ -666,6 +1065,7 @@ export const bitvector = (len: number): TRet<BitVectorType> => {
   });
   return freezeSSZ({
     ...coder,
+    ...flatMethods(coder, bitvectorFlat(len)),
     info: { type: 'bitVector', N: len },
     _isProgressiveCompat(other: TArg<SSZCoder<any>>) {
       return isProgressiveCompat(this, other);
@@ -722,6 +1122,7 @@ export const bitlist = (maxLen: number): TRet<BitListType> => {
   });
   return freezeSSZ({
     ...coder,
+    ...flatMethods(coder, bitlistFlat('bitList', maxLen)),
     info: { type: 'bitList', N: maxLen },
     _isProgressiveCompat(other: TArg<SSZCoder<any>>) {
       return isProgressiveCompat(this, other);
@@ -751,7 +1152,7 @@ type ProgressiveBitListType = SSZCoder<boolean[]> & { info: { type: 'progressive
  * @example
  * Encode boolean flags with progressive bitlist serialization.
  * ```ts
- * import { progressiveBitlist } from 'micro-eth-signer/advanced/ssz.js';
+ * import { progressiveBitlist } from 'micro-eth-signer/ssz.js';
  * progressiveBitlist().encode([true, false]);
  * ```
  */
@@ -777,6 +1178,7 @@ export const progressiveBitlist = (): TRet<ProgressiveBitListType> => {
   });
   return freezeSSZ({
     ...coder,
+    ...flatMethods(coder, bitlistFlat('progressiveBitList', Infinity)),
     info: { type: 'progressiveBitList' },
     _isProgressiveCompat(other: TArg<SSZCoder<any>>) {
       return isProgressiveCompat(this, other);
@@ -806,7 +1208,7 @@ export const progressiveBitlist = (): TRet<ProgressiveBitListType> => {
  * @example
  * Encode the second union variant with selector `1`.
  * ```ts
- * import { uint8, union } from 'micro-eth-signer/advanced/ssz.js';
+ * import { uint8, union } from 'micro-eth-signer/ssz.js';
  * union(null, uint8).encode({ selector: 1, value: 7 });
  * ```
  */
@@ -839,8 +1241,53 @@ export const union = (
       decode: ({ selector, value }) => ({ TAG: selector, data: value }),
     }
   );
+  const flats = ts.map((t) => (t === null ? null : getFlat(t)));
+  const checkSelector = (value: any): number => {
+    if (!isObject(value)) throw new Error(`SSZ/union: expected object, got ${typeof value}`);
+    const selector = (value as any).selector;
+    if (!Number.isSafeInteger(selector) || selector < 0 || selector >= ts.length)
+      throw new Error(`SSZ/union: wrong selector=${selector}`);
+    return selector;
+  };
+  const checkNull = (value: any) => {
+    if (value !== null && value !== undefined)
+      throw new Error(`SSZ/union: wrong null-branch value=${value}`);
+  };
+  const flat: Flat<{ selector: number; value: any }> = {
+    fixedSize: undefined,
+    size: (value) => {
+      const f = flats[checkSelector(value)];
+      if (f === null) {
+        checkNull(value.value);
+        return 1;
+      }
+      return 1 + (f.fixedSize !== undefined ? f.fixedSize : f.size(value.value));
+    },
+    write: (b, view, pos, value) => {
+      const selector = checkSelector(value);
+      const f = flats[selector];
+      b[pos] = selector;
+      if (f === null) {
+        checkNull(value.value);
+        return pos + 1;
+      }
+      return f.write(b, view, pos + 1, value.value);
+    },
+    read: (b, view, start, end) => {
+      if (end - start < 1) throw new Error('SSZ/union: empty data');
+      const selector = b[start];
+      if (selector >= ts.length) throw new Error(`SSZ/union: wrong selector=${selector}`);
+      const f = flats[selector];
+      if (f === null) {
+        if (end - start !== 1) throw new Error('SSZ/union: wrong null-branch size');
+        return { selector, value: null };
+      }
+      return { selector, value: f.read(b, view, start + 1, end) };
+    },
+  };
   const res: SSZCoder<{ selector: number; value: any }> = {
     ...(coder as any),
+    ...flatMethods(coder as any, flat),
     size: undefined, // union is always variable size
     chunkCount: NaN,
     // SSZ None maps to public `null`; `undefined` is still accepted on encode for older callers.
@@ -878,7 +1325,7 @@ type CompatibleUnionType<T extends Record<number, SSZCoder<any>>> = SSZCoder<{
  * @example
  * Encode a value with selector `1`.
  * ```ts
- * import { compatibleUnion, uint8 } from 'micro-eth-signer/advanced/ssz.js';
+ * import { compatibleUnion, uint8 } from 'micro-eth-signer/ssz.js';
  * compatibleUnion({ 1: uint8 }).encode({ selector: 1, data: 7 });
  * ```
  */
@@ -906,8 +1353,37 @@ export const compatibleUnion = <T extends Record<number, SSZCoder<any>>>(
       decode: ({ selector, data }) => ({ TAG: selector, data }),
     }
   );
+  const flats: Record<number, Flat<any>> = {};
+  for (const [k, t] of entries) flats[Number(k)] = getFlat(t);
+  const flat: Flat<{ selector: number; data: any }> = {
+    fixedSize: undefined,
+    size: (value) => {
+      if (!isObject(value))
+        throw new Error(`SSZ/compatibleUnion: expected object, got ${typeof value}`);
+      const f = flats[(value as any).selector];
+      if (f === undefined)
+        throw new Error(`SSZ/compatibleUnion: wrong selector=${(value as any).selector}`);
+      return 1 + (f.fixedSize !== undefined ? f.fixedSize : f.size(value.data));
+    },
+    write: (b, view, pos, value) => {
+      const selector = (value as any).selector;
+      const f = flats[selector];
+      if (!Number.isSafeInteger(selector) || f === undefined)
+        throw new Error(`SSZ/compatibleUnion: wrong selector=${selector}`);
+      b[pos] = selector;
+      return f.write(b, view, pos + 1, value.data);
+    },
+    read: (b, view, start, end) => {
+      if (end - start < 1) throw new Error('SSZ/compatibleUnion: empty data');
+      const selector = b[start];
+      const f = flats[selector];
+      if (f === undefined) throw new Error(`SSZ/compatibleUnion: wrong selector=${selector}`);
+      return { selector, data: f.read(b, view, start + 1, end) };
+    },
+  };
   const res: CompatibleUnionType<T> = {
     ...(coder as any),
+    ...flatMethods(coder as any, flat as Flat<any>),
     info: { type: 'compatibleUnion', types: ts },
     size: undefined,
     chunkCount: NaN,
@@ -952,6 +1428,7 @@ export const bytelist = (maxLen: number): TRet<ByteListType> => {
   });
   return freezeSSZ({
     ...coder,
+    ...flatMethods(coder, bytesFlat('bytelist', maxLen, false)),
     info: { type: 'list', N: maxLen, inner: byte },
     _isProgressiveCompat(other: TArg<SSZCoder<any>>) {
       return isProgressiveCompat(this, other);
@@ -986,8 +1463,10 @@ type ByteVectorType = SSZCoder<Bytes> & {
 export const bytevector = (len: number): TRet<ByteVectorType> => {
   if (!Number.isSafeInteger(len) || len <= 0)
     throw new Error(`SSZ/vector: wrong length=${len} (should be positive integer)`);
+  const coder = P.bytes(len);
   return freezeSSZ({
-    ...P.bytes(len),
+    ...coder,
+    ...flatMethods(coder, bytesFlat('bytevector', len, true)),
     info: { type: 'vector', N: len, inner: byte },
     _isProgressiveCompat(other: TArg<SSZCoder<any>>) {
       return isProgressiveCompat(this, other);
@@ -1020,7 +1499,7 @@ type ProgressiveContainerCoder<T extends Record<string, SSZCoder<any>>> = SSZCod
  * @example
  * Encode a progressive container with one active field.
  * ```ts
- * import { progressiveContainer, uint8 } from 'micro-eth-signer/advanced/ssz.js';
+ * import { progressiveContainer, uint8 } from 'micro-eth-signer/ssz.js';
  * progressiveContainer([1], { side: uint8 }).encode({ side: 3 });
  * ```
  */
@@ -1112,7 +1591,7 @@ type ProfileType<
  * @example
  * Build related required-field and optional-field views over one progressive container.
  * ```ts
- * import * as SSZ from 'micro-eth-signer/advanced/ssz.js';
+ * import * as SSZ from 'micro-eth-signer/ssz.js';
  * const Shape = SSZ.progressiveContainer([1, 1, 1], {
  *   side: SSZ.uint16,
  *   color: SSZ.uint8,
@@ -1125,7 +1604,7 @@ type ProfileType<
  * @example
  * Build a required-field view over a progressive container.
  * ```ts
- * import { profile, progressiveContainer, uint8 } from 'micro-eth-signer/advanced/ssz.js';
+ * import { profile, progressiveContainer, uint8 } from 'micro-eth-signer/ssz.js';
  * const Shape = progressiveContainer([1], { side: uint8 });
  * profile(Shape, [], ['side']).encode({ side: 3 });
  * ```
@@ -1188,41 +1667,94 @@ export const profile = <
         if (isOpt) optPos++;
       }
     };
+    const streamCoder = P.wrap({
+      encodeStream: (w, value) => {
+        const bsVal = new Array(optFS.size).fill(false);
+        const ptrCoder: any = {};
+        forFields((f, optPos) => {
+          const val = (value as any)[f];
+          if (optPos !== undefined && val !== undefined) bsVal[optPos] = true;
+          if (optPos === undefined && val === undefined)
+            throw new Error(`profile.encode: empty required field ${f}`);
+          if (val !== undefined) ptrCoder[f] = wrapPointer(fieldCoders[f]);
+        });
+        bv.encodeStream(w, bsVal);
+        w.bytes(P.struct(ptrCoder).encode(value as Record<string, any>));
+      },
+      decodeStream: (r) => {
+        let bsVal = bv.decodeStream(r);
+        const fixedCoder: any = {};
+        const offsetFields: string[] = [];
+        forFields((f, optPos) => {
+          if (optPos !== undefined && bsVal[optPos] === false) return;
+          if (fieldCoders[f].size === undefined) offsetFields.push(f);
+          fixedCoder[f] = wrapRawPointer(fieldCoders[f]);
+        });
+        return fixOffsets(
+          r,
+          fieldCoders,
+          offsetFields,
+          P.struct(fixedCoder).decodeStream(r),
+          bv.size!
+        ) as any;
+      },
+    });
+    const bvSize = bv.size!;
+    const fieldFlats: Record<string, Flat<any>> = {};
+    for (const f of allFields) fieldFlats[f] = getFlat(fieldCoders[f]);
+    // Present fields depend on the value/bitmap, so the struct layout is rebuilt per operation;
+    // stored offsets are relative to the struct start (right after the optionality bitvector).
+    const presentStruct = (present: (f: string) => boolean) => {
+      const names: string[] = [];
+      const flats: Flat<any>[] = [];
+      forFields((f, optPos) => {
+        if (optPos !== undefined && !present(f)) return;
+        names.push(f);
+        flats.push(fieldFlats[f]);
+      });
+      return containerFlat(names, flats, 'profile');
+    };
+    const flat: Flat<any> = {
+      fixedSize: undefined,
+      size: (value) => {
+        if (!isObject(value)) throw new Error(`SSZ/profile: expected object, got ${typeof value}`);
+        forFields((f, optPos) => {
+          if (optPos === undefined && (value as any)[f] === undefined)
+            throw new Error(`profile.encode: empty required field ${f}`);
+        });
+        return bvSize + presentStruct((f) => (value as any)[f] !== undefined).size(value);
+      },
+      write: (b, view, pos, value) => {
+        forFields((f, optPos) => {
+          const val = (value as any)[f];
+          if (optPos === undefined && val === undefined)
+            throw new Error(`profile.encode: empty required field ${f}`);
+          if (optPos !== undefined && val !== undefined)
+            b[pos + (optPos >>> 3)] |= 1 << (optPos & 7);
+        });
+        const struct = presentStruct((f) => (value as any)[f] !== undefined);
+        return struct.write(b, view, pos + bvSize, value);
+      },
+      read: (b, view, start, end) => {
+        if (end - start < bvSize) throw new Error('SSZ/profile: unexpected end of buffer');
+        for (let i = optFS.size; i < 8 * bvSize; i++)
+          if (b[start + (i >>> 3)] & (1 << (i & 7)))
+            throw new Error('SSZ/profile: non-zero padding');
+        const names: string[] = [];
+        const flats: Flat<any>[] = [];
+        forFields((f, optPos) => {
+          if (optPos !== undefined && !(b[start + (optPos >>> 3)] & (1 << (optPos & 7)))) return;
+          names.push(f);
+          flats.push(fieldFlats[f]);
+        });
+        return containerFlat(names, flats, 'profile').read(b, view, start + bvSize, end);
+      },
+    };
     coder = {
-      ...P.wrap({
-        encodeStream: (w, value) => {
-          const bsVal = new Array(optFS.size).fill(false);
-          const ptrCoder: any = {};
-          forFields((f, optPos) => {
-            const val = (value as any)[f];
-            if (optPos !== undefined && val !== undefined) bsVal[optPos] = true;
-            if (optPos === undefined && val === undefined)
-              throw new Error(`profile.encode: empty required field ${f}`);
-            if (val !== undefined) ptrCoder[f] = wrapPointer(fieldCoders[f]);
-          });
-          bv.encodeStream(w, bsVal);
-          w.bytes(P.struct(ptrCoder).encode(value));
-        },
-        decodeStream: (r) => {
-          let bsVal = bv.decodeStream(r);
-          const fixedCoder: any = {};
-          const offsetFields: string[] = [];
-          forFields((f, optPos) => {
-            if (optPos !== undefined && bsVal[optPos] === false) return;
-            if (fieldCoders[f].size === undefined) offsetFields.push(f);
-            fixedCoder[f] = wrapRawPointer(fieldCoders[f]);
-          });
-          return fixOffsets(
-            r,
-            fieldCoders,
-            offsetFields,
-            P.struct(fixedCoder).decodeStream(r),
-            bv.size!
-          ) as any;
-        },
-      }),
+      ...streamCoder,
+      ...flatMethods(streamCoder, flat),
       size: undefined,
-    } as ProfileCoder<T, OptK, ReqK>;
+    } as unknown as ProfileCoder<T, OptK, ReqK>;
   }
   return freezeSSZ({
     ...coder,
@@ -3240,7 +3772,7 @@ type CapellaExecutionPayloadHeader = ReturnType<typeof _CapellaExecutionPayloadH
  * @example
  * Access the default Capella execution payload header.
  * ```ts
- * import { CapellaExecutionPayloadHeader } from 'micro-eth-signer/advanced/ssz.js';
+ * import { CapellaExecutionPayloadHeader } from 'micro-eth-signer/ssz.js';
  * const header = CapellaExecutionPayloadHeader.default;
  * ```
  */
@@ -3427,7 +3959,7 @@ type BellatrixExecutionPayloadHeader = ReturnType<typeof _BellatrixExecutionPayl
  * @example
  * Access the default Bellatrix execution payload header.
  * ```ts
- * import { BellatrixExecutionPayloadHeader } from 'micro-eth-signer/advanced/ssz.js';
+ * import { BellatrixExecutionPayloadHeader } from 'micro-eth-signer/ssz.js';
  * const header = BellatrixExecutionPayloadHeader.default;
  * ```
  */
@@ -3896,7 +4428,7 @@ type ETH2_TYPES = Omit<ETH2_BASE_TYPES, keyof ETH2_PROFILES['fulu']> & ETH2_PROF
  * Encode a checkpoint via the grouped ETH2 field registry.
  * ```ts
  * import { sha256 } from '@noble/hashes/sha2.js';
- * import { ETH2_TYPES } from 'micro-eth-signer/advanced/ssz.js';
+ * import { ETH2_TYPES } from 'micro-eth-signer/ssz.js';
  * const root = sha256(new TextEncoder().encode('checkpoint-root'));
  * ETH2_TYPES.Checkpoint.encode({ epoch: 0n, root });
  * ```

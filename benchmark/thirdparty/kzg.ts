@@ -3,7 +3,7 @@ import { trustedSetup as s_fast } from '@paulmillr/trusted-setups/fast-kzg.js';
 import { trustedSetup } from '@paulmillr/trusted-setups/small-kzg.js';
 import { loadKZG } from 'kzg-wasm';
 import { deepStrictEqual as eql } from 'node:assert';
-import * as kzg from '../../src/advanced/kzg.ts';
+import * as kzg from '../../src/kzg.ts';
 import { jsonGZ } from '../../test/util.ts';
 
 // Test cases
@@ -39,7 +39,8 @@ export async function main() {
   });
 
   const i0 = VIEM['blob-to-kzg-commitment'][1].input;
-  const i1 = VIEM['compute-kzg-proof'][0].input;
+  // [0] is a constant-polynomial case; it skips the expensive MSM path in computeProof.
+  const i1 = VIEM['compute-kzg-proof'][2].input;
   const i2 = VIEM['compute-blob-kzg-proof'][3].input;
   const i3 = VIEM['verify-kzg-proof'][0].input;
   const i4 = VIEM['verify-blob-kzg-proof'][0].input;

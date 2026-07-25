@@ -1,7 +1,7 @@
 import { deepFreeze, type TArg } from '../utils.ts';
-import { addHints } from './abi-common.ts';
-import { type HintOpt } from './abi-decoder.ts';
-import { hints as erc20hints } from './abi-erc20.ts';
+import { addHints } from './common.ts';
+import { type HintOpt } from './decoder.ts';
+import { hints as erc20hints } from './erc20.ts';
 
 // Canonical WETH9 ABI: archive.ts and named-object wrappers depend on the legacy
 // `src` / `dst` / `guy` / `wad` field names plus explicit Deposit/Withdrawal events.

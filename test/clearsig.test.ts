@@ -13,11 +13,11 @@ import {
   createContract,
   decodeData,
   decodeTx,
-} from '../src/advanced/abi.ts';
-import { CLEARSIG_REPO_FULL } from '../src/advanced/clearsig-repo-full.ts';
-import { eip712 } from '../src/advanced/clearsig.ts';
+} from '../src/abi/index.ts';
+import { CLEARSIG_REPO_FULL } from '../src/clearsig/repo-full.ts';
+import { eip712 } from '../src/clearsig/index.ts';
 import { Transaction } from '../src/core/tx.ts';
-import { encoder, getDomainType } from '../src/core/typed-data.ts';
+import { encoder, getDomainType } from '../src/core/message.ts';
 import { cloneDeep, ethHex } from '../src/utils.ts';
 import { getVectorsPath } from './util.ts';
 
