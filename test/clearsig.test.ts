@@ -715,6 +715,12 @@ const FACTORY_MISS_CLEAR = {
 };
 
 describe('ERC-7730 clear signing', () => {
+  should('keeps the generated full-repository import aligned with its output directory', () => {
+    const builder = readFileSync(new URL('./misc/build-clearsig.ts', import.meta.url), 'utf8');
+    const generatedImport = builder.match(/import type \{ ClearSigDef \} from '[^']+';/)?.[0];
+    deepStrictEqual(generatedImport, "import type { ClearSigDef } from './index.ts';");
+  });
+
   should('renders ERC-20 calldata with registry-style spaced ABI key', async () => {
     const data = ethHex.encode(
       createContract(ERC20).transfer.encodeInput({

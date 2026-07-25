@@ -61,7 +61,7 @@ const ALL = {
     ethers: async () => await ETHERS_PRIV.signTransaction(TX_PARAMS.ethers),
     viem: async () => await VIEM_PRIV.signTransaction(TX_PARAMS.viem),
     'micro-eth-signer': () =>
-      micro.Transaction.prepare(TX_PARAMS.micro).signBy(PRIV, false).toHex(true),
+      micro.Transaction.prepare(TX_PARAMS.micro).signBy(PRIV, false).toHex({ includeSignature: true }),
   },
 };
 

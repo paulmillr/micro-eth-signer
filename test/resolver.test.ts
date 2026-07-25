@@ -219,6 +219,9 @@ describe('resolver', () => {
       // 0 expiry: unregistered name or subdomain (which has no own expiry)
       const empty = new NameResolver(mockGns(() => `0x${word(0)}`));
       deepStrictEqual(await empty.expiresAt('alice'), undefined);
+      // ABI uint256 values outside JavaScript's exact integer range must not be silently rounded.
+      const unsafe = new NameResolver(mockGns(() => `0x${word(9_007_199_254_740_993n)}`));
+      await rejects(() => unsafe.expiresAt('alice'), /safe integer/);
       await rejects(() => empty.getText('alice.gwei', 1 as any), /expected string/);
       // GNS-only methods reject names under other TLDs
       await rejects(() => empty.expiresAt('alice.eth'), /only \.gwei/);

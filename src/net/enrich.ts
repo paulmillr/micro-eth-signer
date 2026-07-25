@@ -88,7 +88,10 @@ export function historyRow(
   const row: HistoryTx = {
     hash: info.hash,
     timestamp: receipt?.timestamp ?? info.blockTimestamp,
-    block: receipt?.blockNumber,
+    // Mined receipt-less OTS rows still need their transaction block for pagination.
+    block:
+      receipt?.blockNumber ??
+      (info.blockNumber !== undefined && info.blockNumber > 0 ? info.blockNumber : undefined),
     reverted: receipt?.status === 0,
     diff: txDiff(address, info, receipt),
     tokenTransfers: decodeReceiptTokenTransfers(receipt, address, tokens),
@@ -328,6 +331,7 @@ export async function enrichTx(
   let info: TxInfo;
   let receipt: TxReceipt | undefined;
   if (typeof tx === 'string') {
+    // Sender is intentionally not re-validated for enrichment compatibility.
     // enrichment must tolerate txs the library cannot re-serialize
     ({ info, receipt } = await prov.txInfo(tx, { verify: false }));
   } else if (tx !== null && typeof tx === 'object' && tx.info) {

@@ -127,10 +127,15 @@ const rlpEncode = (data: RLPInput): Bytes => {
   return out;
 };
 
-// Decodes a single item spanning exactly [offset, end). Enforces canonical encoding: shortest
-// length form, no leading zeros in lengths, single bytes < 0x80 without a prefix.
+// Decodes one item starting at offset; strict mode requires it to span exactly [offset, end),
+// while the public reader option permits a trailing outer buffer. Canonical item checks remain.
 // NOTE: returned Uint8Arrays are subarrays of the input, same as before. Do not modify.
-const rlpDecodeSlice = (d: Bytes, offset: number, end: number): RLPInput => {
+const rlpDecodeSlice = (
+  d: Bytes,
+  offset: number,
+  end: number,
+  allowUnreadBytes = false
+): RLPInput => {
   let pos = offset;
   const readLength = (lengthLen: number, boundary: number): number => {
     if (pos + lengthLen > boundary) throw new Error('RLP.decode: out of range');
@@ -169,13 +174,13 @@ const rlpDecodeSlice = (d: Bytes, offset: number, end: number): RLPInput => {
     return items;
   };
   const res = item(end);
-  if (pos !== end) throw new Error('RLP.decode: unread bytes left');
+  if (!allowUnreadBytes && pos !== end) throw new Error('RLP.decode: unread bytes left');
   return res;
 };
 
-const rlpDecode = (data: Bytes): RLPInput => {
+const rlpDecode = (data: Bytes, opts?: P.ReaderOpts): RLPInput => {
   if (!isBytes(data)) throw new Error('RLP.decode: expected Uint8Array');
-  return rlpDecodeSlice(data, 0, data.length);
+  return rlpDecodeSlice(data, 0, data.length, opts?.allowUnreadBytes);
 };
 
 // Reads the length bytes of a long-form prefix without advancing the reader.

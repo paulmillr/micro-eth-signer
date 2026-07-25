@@ -1,4 +1,5 @@
 import { ERC1155, ERC20, WETH, TOKENS, events } from '../abi/index.ts';
+import { addChecksum } from '../core/address.ts';
 import {
   enrichCore,
   historyRow,
@@ -162,6 +163,7 @@ async function historyOtsPage(
     opts.signal
   );
   const tokens = opts.tokens || (TOKENS as TokenRegistry);
+  // Sender is intentionally not re-validated: OTS pages can contain tx types we cannot rebuild.
   const txs = page.txs.map(({ info, receipt }) => historyRow(address, info, receipt, tokens));
   if (oldest) txs.reverse();
   // OTS flags are relative to newest-first: firstPage touches the chain head,
@@ -279,7 +281,10 @@ function pageLogsRange(page: HistoryPage, opts: HistoryOpts): EthLogsOpts | unde
   if (!range) return;
   const blocks = page.txs
     .map((tx) => tx.block ?? tx.info.info.blockNumber)
-    .filter((block) => Number.isSafeInteger(block) && block >= 0);
+    .filter(
+      (block): block is number =>
+        typeof block === 'number' && Number.isSafeInteger(block) && block >= 0
+    );
   const partialPage = page.txs.length > 0 && !page.done && blocks.length > 0;
   if ((opts.order ?? 'newest') === 'oldest') {
     const toBlock = !partialPage
@@ -329,6 +334,7 @@ async function historyLogRows(
     const key = hash.toLowerCase();
     let tx = txCache.get(key);
     if (!tx) {
+      // Sender is intentionally not re-validated for history compatibility.
       // a discovery scan must tolerate txs the library cannot re-serialize
       tx = withRetry(() => prov.txInfo(hash, { verify: false }), opts.signal);
       txCache.set(key, tx);
@@ -369,7 +375,8 @@ type LogsWindowPlan = { total: number; at: (index: number) => LogsWindow };
 async function fullLogsWindowPlan(prov: Pick<RpcClient, 'height'>, opts: HistoryOpts) {
   const range = logsRange(opts);
   if (!range) return;
-  const bottom = opts.fromBlock ?? 0;
+  // `range` already folds the exclusive after cursor into the effective lower bound.
+  const bottom = range.fromBlock ?? 0;
   const size = opts.logsWindow ?? 2_000_000;
   if (size === 0) {
     return {
@@ -492,16 +499,20 @@ async function* historyFullLogs(
 }
 
 function newestFirstInfo(a: TxInfo, b: TxInfo): number {
-  if (a.blockNumber !== b.blockNumber) return a.blockNumber < b.blockNumber ? 1 : -1;
-  if (a.transactionIndex !== b.transactionIndex)
-    return a.transactionIndex < b.transactionIndex ? 1 : -1;
+  // Pending rows have no block and precede every mined row in newest-first order.
+  const aBlock = a.blockNumber ?? Infinity;
+  const bBlock = b.blockNumber ?? Infinity;
+  if (aBlock !== bBlock) return aBlock < bBlock ? 1 : -1;
+  const aIndex = a.transactionIndex ?? -1;
+  const bIndex = b.transactionIndex ?? -1;
+  if (aIndex !== bIndex) return aIndex < bIndex ? 1 : -1;
   return 0;
 }
 
 /** Internal comparator for callers/tests that collect both history passes before sorting. */
 export function newestFirst(a: HistoryTx, b: HistoryTx): number {
-  const aBlock = a.block ?? -1;
-  const bBlock = b.block ?? -1;
+  const aBlock = a.block ?? Infinity;
+  const bBlock = b.block ?? Infinity;
   if (aBlock !== bBlock) return aBlock < bBlock ? 1 : -1;
   return newestFirstInfo(a.info.info, b.info.info);
 }
@@ -672,6 +683,7 @@ async function* historyInner(
   let top = 0; // newest: anchor = first page's max block
   let bottom = 0; // oldest: anchor = first page's min block
   let scannedTxs = 0;
+  let completedBlock: number | undefined;
   // progress baseline: the far end of the address's ACTIVE block span, so
   // percent tracks coverage of that span — measured against the whole chain
   // the percent barely moves. One extra indexed call, only when listening.
@@ -684,7 +696,8 @@ async function* historyInner(
     throwIfAborted(opts.signal, 'history');
     const blocks = probe.txs
       .map((t) => t.receipt?.blockNumber ?? t.info.blockNumber)
-      .filter((b) => typeof b === 'number' && b > 0);
+      // Pending transactions have no block and cannot anchor scan progress.
+      .filter((b): b is number => typeof b === 'number' && b > 0);
     if (blocks.length) {
       if (oldest) lastBlock = Math.max(...blocks);
       else firstBlock = Math.min(...blocks);
@@ -709,14 +722,29 @@ async function* historyInner(
       if (!inBlockRange(row, opts)) continue;
       yield await finish(row);
     }
-    if (!page.txs.length || page.done) break;
     const blocks = page.txs.map((t) => t.block).filter((i) => i !== undefined);
+    if (!page.txs.length) {
+      completedBlock = cursor;
+      break;
+    }
+    if (page.done) {
+      completedBlock = blocks.length
+        ? oldest
+          ? Math.max(...blocks)
+          : Math.min(...blocks)
+        : cursor;
+      break;
+    }
     if (!blocks.length) break;
     if (oldest) {
       if (!bottom) bottom = Math.min(...blocks);
       const next = Math.max(...blocks);
       if (cursor !== 0 && next <= cursor) break;
       cursor = next;
+      if (opts.toBlock !== undefined && cursor > opts.toBlock) {
+        completedBlock = cursor;
+        break;
+      }
       if (opts.onProgress)
         opts.onProgress({
           source,
@@ -728,12 +756,15 @@ async function* historyInner(
           scannedTxs,
           currentBlock: cursor,
         });
-      if (opts.toBlock !== undefined && cursor > opts.toBlock) break;
     } else {
       if (!top) top = Math.max(...blocks);
       const next = Math.min(...blocks);
       if (cursor !== 0 && next >= cursor) break;
       cursor = next;
+      if (opts.fromBlock !== undefined && cursor < opts.fromBlock) {
+        completedBlock = cursor;
+        break;
+      }
       if (opts.onProgress)
         opts.onProgress({
           source,
@@ -742,9 +773,17 @@ async function* historyInner(
           scannedTxs,
           currentBlock: cursor,
         });
-      if (opts.fromBlock !== undefined && cursor < opts.fromBlock) break;
     }
   }
+  // Reserve 100% for successful exhaustion; defensive non-advancing exits may be incomplete.
+  if (opts.onProgress && completedBlock !== undefined)
+    opts.onProgress({
+      source,
+      phase: 'ots',
+      percent: 100,
+      scannedTxs,
+      currentBlock: completedBlock,
+    });
   if (source === 'ots') return;
   for await (const row of historyFullLogs(prov, address, opts, source, seen, scannedTxs)) {
     throwIfAborted(opts.signal, 'history');
@@ -754,7 +793,7 @@ async function* historyInner(
 
 /** Merged multi-account history row; the watched address set is one wallet. */
 export type MultiHistoryTx = HistoryTx & {
-  /** Watched addresses participating in this tx; never empty (see historyMulti docs). */
+  /** Checksummed watched addresses participating in this tx; never empty. */
   addresses: string[];
 };
 
@@ -795,7 +834,10 @@ function multiRow(
     ...row,
     diff,
     tokenTransfers,
-    addresses: participants.length ? participants : [discoverer],
+    // Do not pass addChecksum directly: Array.map's index is not its allowEmpty flag.
+    addresses: (participants.length ? participants : [discoverer]).map((address) =>
+      addChecksum(address)
+    ),
   };
 }
 
@@ -807,7 +849,8 @@ function multiRow(
  * accounts nets to just the fee) and `tokenTransfers` keeps movements touching
  * any of them; `addresses` lists the participants (when participation is only
  * via internal transfers — invisible without `internal` — it falls back to the
- * discovering address, so it is never empty). All options apply to each
+ * discovering address, so it is never empty); these output addresses are
+ * checksummed. All options apply to each
  * underlying stream, with one shared discovery cache. Merged ordering is as
  * good as the streams': exact for single-pass sources (`ots`, `logs`),
  * per-pass for `ots+logs`. With `internal: true`, `internal` transfers are
@@ -826,8 +869,8 @@ export function historyMulti(
   )
     throw new Error('historyMulti: wrong addresses');
   validateHistoryOpts(opts);
-  // dedupe the watched set; keep the caller's casing for the output field
-  const unique = [...new Map(addresses.map((a) => [a.toLowerCase(), a])).values()];
+  // Keep the canonical RPC-facing form checksummed; lowercase only values used for comparisons.
+  const unique = [...new Set(addresses.map((address) => addChecksum(address)))];
   return historyMultiInner(prov, unique, opts);
 }
 
@@ -858,11 +901,13 @@ async function* historyMultiInner(
       }
       if (best < 0) return;
       const row = heads[best]!;
-      await advance(best);
       const key = row.hash.toLowerCase();
-      if (seen.has(key)) continue;
-      seen.add(key);
-      yield multiRow(row, addresses, opts, addresses[best]);
+      if (!seen.has(key)) {
+        seen.add(key);
+        // A future-page failure must not suppress the already selected merge head.
+        yield multiRow(row, addresses, opts, addresses[best]);
+      }
+      await advance(best);
     }
   } finally {
     await Promise.allSettled(streams.map((stream) => stream.return(undefined)));

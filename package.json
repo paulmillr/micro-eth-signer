@@ -18,10 +18,10 @@
     "@noble/ciphers": "2.2.0",
     "@noble/curves": "2.2.0",
     "@noble/hashes": "2.2.0",
-    "micro-packed": "0.9.0"
+    "micro-packed": "0.10.2"
   },
   "devDependencies": {
-    "@paulmillr/jsbt": "0.6.0",
+    "@paulmillr/jsbt": "0.6.1",
     "@paulmillr/trusted-setups": "~0.3.0",
     "@types/node": "25.9.0",
     "micro-ftch": "1.0.0",
@@ -56,9 +56,7 @@
     "./net/resolver.js": "./net/resolver.js",
     "./net/tokens.js": "./net/tokens.js",
     "./net/trace.js": "./net/trace.js",
-    "./net/uniswap-common.js": "./net/uniswap-common.js",
-    "./net/uniswap-v2.js": "./net/uniswap-v2.js",
-    "./net/uniswap-v3.js": "./net/uniswap-v3.js",
+    "./net/uniswap.js": "./net/uniswap.js",
     "./utils.js": "./utils.js",
     "./abi.js": "./abi/index.js",
     "./clearsig.js": "./clearsig/index.js",

@@ -36,7 +36,15 @@ const DEFAULT_TOKEN_REGISTRY: TokenRegistry = {
 
 function tokenRegistry(tokens: Record<string, TokenDef> = DEFAULT_TOKENS): TokenRegistry {
   if (tokens === DEFAULT_TOKENS) return DEFAULT_TOKEN_REGISTRY;
-  return { byAddress: tokens, bySymbol: tokensBySymbol(tokens) };
+  // Runtime addresses are lowercase, so canonicalize caller-owned table keys once at ingress.
+  const byAddress: Record<string, TokenDef> = Object.create(null);
+  for (const [contract, token] of Object.entries(tokens)) {
+    const address = assertAddress(contract, 'token');
+    if (Object.hasOwn(byAddress, address))
+      throw new Error(`quoter: duplicate token address: ${address}`);
+    byAddress[address] = token;
+  }
+  return { byAddress, bySymbol: tokensBySymbol(byAddress) };
 }
 
 function tokenRegistryFromParams(registry: TokenRegistry, params: ObjectParams): TokenRegistry {

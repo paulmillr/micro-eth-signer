@@ -108,7 +108,7 @@ describe('Fees', () => {
       weigwei.decode('2')
     );
     deepStrictEqual(
-      tx.setWholeAmount(weieth.decode('1'), false).raw.maxPriorityFeePerGas,
+      tx.setWholeAmount(weieth.decode('1'), { burnRemaining: false }).raw.maxPriorityFeePerGas,
       weigwei.decode('1')
     );
     throws(() => tx.setWholeAmount(0n), /must be bigger than 0/);
@@ -127,7 +127,7 @@ describe('Fees', () => {
       },
       false
     );
-    const looseRt = Transaction.fromHex(loose.toHex(false));
+    const looseRt = Transaction.fromHex(loose.toHex({ includeSignature: false }));
     deepStrictEqual(
       looseRt.setWholeAmount(weieth.decode('10')).raw.value,
       weieth.decode('10') - looseRt.fee

@@ -9,7 +9,7 @@ import {
   type TArg,
   type TRet,
 } from '../utils.ts';
-import { addr } from './address.ts';
+import { addChecksum, addr, isValidAddress } from './address.ts';
 import { RLP, type RLPInput } from './rlp.ts';
 
 // Transaction parsers
@@ -453,7 +453,7 @@ export const RawTx = /* @__PURE__ */ (() =>
     // NOTE: we apply checksum to addresses here, since chainId is not available inside coders
     // By construction 'to' field is decoded before anything about chainId is known
     encode: (data) => {
-      data.data.to = addr.addChecksum(data.data.to, true);
+      data.data.to = addChecksum(data.data.to, true);
       if (data.type !== 'legacy' && data.data.accessList) {
         for (const item of data.data.accessList) {
           item.address = addr.addChecksum(item.address);
@@ -605,7 +605,7 @@ const validators: {
     } else minmax(num, _0n, amounts.maxUint64);
   },
   to(address: string, { strict, type, data }: ValidationOpts) {
-    if (!addr.isValid(address, true)) throw new Error('address checksum does not match');
+    if (!isValidAddress(address, true)) throw new Error('address checksum does not match');
     // EIP-4844 §Blob transaction: `to` MUST NOT be nil and must be a 20-byte address.
     // EIP-7702 §Set code transaction imports the same destination semantics.
     if ((type === 'eip4844' || type === 'eip7702') && address === '0x')

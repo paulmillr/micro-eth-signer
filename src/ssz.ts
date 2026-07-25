@@ -334,7 +334,8 @@ const getFlat = (coder: any): Flat<any> =>
 // Public encode/decode over the flat codec. Unlike the stream path, decode copies byte values out
 // of the input instead of returning subarray views into it.
 const flatMethods = <T>(coder: P.CoderType<T>, flat: Flat<T>) => ({
-  _flat: flat,
+  // Freeze the same implementation object captured by public encode/decode.
+  _flat: Object.freeze(flat),
   encode: (value: T): Bytes => {
     const size = flat.fixedSize !== undefined ? flat.fixedSize : flat.size(value);
     const b = new Uint8Array(size);
