@@ -1,6 +1,8 @@
 import { describe, should } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual, rejects } from 'node:assert';
-import { Web3Provider } from '../src/net.ts';
+import { RpcClient } from '../src/net.ts';
+import { clearSigCallbacks, discoverTx } from '../src/net/clearsig.ts';
+import { tokenInfo, tokenURI } from '../src/net/tokens.ts';
 import {
   CLEARSIG_REPO,
   Decoder,
@@ -9,7 +11,7 @@ import {
   createContract,
   decodeData,
   decodeTx,
-} from '../src/advanced/abi.ts';
+} from '../src/abi/index.ts';
 import { Transaction } from '../src/index.ts';
 import { ethHex } from '../src/utils.ts';
 
@@ -230,7 +232,7 @@ const hexString = (s: string) => {
 
 const rpc = () => {
   const calls: string[] = [];
-  const archive = new Web3Provider({
+  const archive = new RpcClient({
     async call(method, ...args) {
       calls.push(method);
       if (method === 'eth_chainId') return '0x1';
@@ -301,7 +303,7 @@ describe('ERC-7730 archive callbacks', () => {
         {
           clearSig: CLEAR,
           async resolveToken(req) {
-            const info = await archive.tokenInfo(req.address);
+            const info = await tokenInfo(archive, req.address);
             if ('error' in info || info.abi !== 'ERC20') return;
             return { name: info.name, symbol: info.symbol, decimals: info.decimals };
           },
@@ -310,9 +312,9 @@ describe('ERC-7730 archive callbacks', () => {
             return { name: 'vitalik.eth', source: 'archive', verified: true };
           },
           async resolveNft(req) {
-            const info = await archive.tokenInfo(req.collection);
+            const info = await tokenInfo(archive, req.collection);
             if ('error' in info) return;
-            const uri = await archive.tokenURI(info, req.tokenId);
+            const uri = await tokenURI(archive, info, req.tokenId);
             return {
               name: `${info.name} #${req.tokenId}`,
               source: typeof uri === 'string' ? uri : undefined,
@@ -320,7 +322,7 @@ describe('ERC-7730 archive callbacks', () => {
             };
           },
           async resolveBlock(req) {
-            return Math.floor((await archive.blockInfo(Number(req.block))).timestamp / 1000);
+            return (await archive.blockInfo(Number(req.block))).timestamp;
           },
           async resolveChain(req) {
             deepStrictEqual(await archive.call('eth_chainId'), `0x${req.chainId.toString(16)}`);
@@ -331,7 +333,7 @@ describe('ERC-7730 archive callbacks', () => {
             return `ens:${ethHex.encode(req.value).slice(2)}`;
           },
           async resolveCalldata(req) {
-            await archive.tokenInfo(req.to);
+            await tokenInfo(archive, req.to);
             return INNER_CLEAR;
           },
           async resolveFactory(req) {
@@ -393,7 +395,7 @@ describe('ERC-7730 archive callbacks', () => {
   });
   should('clearSigCallbacks supplies the standard archive resolvers', async () => {
     const { archive, calls } = rpc();
-    const opts = archive.clearSigCallbacks();
+    const opts = clearSigCallbacks(archive);
     const token = ethHex.encode(
       createContract(ABI).tokenResolve.encodeInput({ token: TOKEN, amount: 123456n })
     );
@@ -481,7 +483,7 @@ describe('ERC-7730 archive callbacks', () => {
     })
       .signBy(KEY, false)
       .toHex();
-    const decoded = await archive.discoverTx(tx, {
+    const decoded = await discoverTx(archive, tx, {
       'erc20.json': OURS['ercs/calldata-erc20-tokens.json'],
     });
     if (!decoded || Array.isArray(decoded) || !decoded.clearSig)
@@ -539,7 +541,7 @@ describe('ERC-7730 archive callbacks', () => {
       customContracts: { [TARGET]: { abi: ABI } },
       clearSig: { 'archive.json': DIRECT_CLEAR },
       async resolveToken(req) {
-        const info = await archive.tokenInfo(req.address);
+        const info = await tokenInfo(archive, req.address);
         if ('error' in info || info.abi !== 'ERC20') return;
         return { name: info.name, symbol: info.symbol, decimals: info.decimals };
       },
@@ -548,9 +550,9 @@ describe('ERC-7730 archive callbacks', () => {
         return { name: 'vitalik.eth', source: 'archive', verified: true };
       },
       async resolveNft(req) {
-        const info = await archive.tokenInfo(req.collection);
+        const info = await tokenInfo(archive, req.collection);
         if ('error' in info) return;
-        const uri = await archive.tokenURI(info, req.tokenId);
+        const uri = await tokenURI(archive, info, req.tokenId);
         return {
           name: `${info.name} #${req.tokenId}`,
           source: typeof uri === 'string' ? uri : undefined,
@@ -558,7 +560,7 @@ describe('ERC-7730 archive callbacks', () => {
         };
       },
       async resolveBlock(req) {
-        return Math.floor((await archive.blockInfo(Number(req.block))).timestamp / 1000);
+        return (await archive.blockInfo(Number(req.block))).timestamp;
       },
       async resolveChain(req) {
         deepStrictEqual(await archive.call('eth_chainId'), `0x${req.chainId.toString(16)}`);
@@ -569,7 +571,7 @@ describe('ERC-7730 archive callbacks', () => {
         return `ens:${ethHex.encode(req.value).slice(2)}`;
       },
       async resolveCalldata(req) {
-        await archive.tokenInfo(req.to);
+        await tokenInfo(archive, req.to);
         return INNER_CLEAR;
       },
     });
@@ -625,7 +627,7 @@ describe('ERC-7730 archive callbacks', () => {
       customContracts: { [TARGET]: { abi: ABI } },
       clearSig: { 'archive.json': DIRECT_CLEAR },
       async resolveToken(req) {
-        const info = await archive.tokenInfo(req.address);
+        const info = await tokenInfo(archive, req.address);
         if ('error' in info || info.abi !== 'ERC20') return;
         return { name: info.name, symbol: info.symbol, decimals: info.decimals };
       },
@@ -634,9 +636,9 @@ describe('ERC-7730 archive callbacks', () => {
         return { name: 'vitalik.eth', source: 'archive', verified: true };
       },
       async resolveNft(req) {
-        const info = await archive.tokenInfo(req.collection);
+        const info = await tokenInfo(archive, req.collection);
         if ('error' in info) return;
-        const uri = await archive.tokenURI(info, req.tokenId);
+        const uri = await tokenURI(archive, info, req.tokenId);
         return {
           name: `${info.name} #${req.tokenId}`,
           source: typeof uri === 'string' ? uri : undefined,
@@ -644,10 +646,10 @@ describe('ERC-7730 archive callbacks', () => {
         };
       },
       async resolveBlock(req) {
-        return Math.floor((await archive.blockInfo(Number(req.block))).timestamp / 1000);
+        return (await archive.blockInfo(Number(req.block))).timestamp;
       },
       async resolveCalldata(req) {
-        await archive.tokenInfo(req.to);
+        await tokenInfo(archive, req.to);
         return INNER_CLEAR;
       },
     };

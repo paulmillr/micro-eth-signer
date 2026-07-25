@@ -7,14 +7,14 @@ import './tx.test.ts';
 import './abi.test.ts';
 import './clearsig-archive.test.ts';
 import './clearsig.test.ts';
-import './ens.test.ts';
 import './keystore-bls.test.ts';
 import './keystore.test.ts';
 import './kzg.test.ts';
+import './message.test.ts';
 import './net.test.ts';
 import './peerdas.test.ts';
+import './resolver.test.ts';
 import './ssz.test.ts';
-import './typed-data.test.ts';
 import './uniswap.test.ts';
 
 should.runWhen(import.meta.url);
