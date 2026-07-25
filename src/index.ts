@@ -1,20 +1,20 @@
 import { addr as _addr } from './core/address.ts';
+import { authorization as _authorization } from './core/authorization.ts';
 import {
-  authorization as _authorization,
   type AuthorizationItem as _AuthorizationItem,
   type AuthorizationRequest as _AuthorizationRequest,
 } from './core/tx-internal.ts';
 import { Transaction as _Transaction } from './core/tx.ts';
 import {
   eip191Signer as _eip191Signer,
-  recoverPublicKeyTyped as _recoverPublicKeyTyped,
+  recoverAddressTyped as _recoverAddressTyped,
   signTyped as _signTyped,
   verifyTyped as _verifyTyped,
   type EIP712Domain as _EIP712Domain,
   type Hex as _Hex,
   type TypedData as _TypedData,
   type TypedSigner as _TypedSigner,
-} from './core/typed-data.ts';
+} from './core/message.ts';
 import {
   amounts as _amounts,
   ethHex as _ethHex,
@@ -166,14 +166,14 @@ export const signTyped = _signTyped;
  */
 export const verifyTyped = _verifyTyped;
 /**
- * Recovers a public key from an EIP-712 typed-data signature.
+ * Recovers the signer address from an EIP-712 typed-data signature.
  * @param signature - Signature to recover from.
  * @param typed - Typed message with domain, type definitions, and message body.
  * @returns Recovered secp256k1 public key bytes.
  * @example
  * Recover the public key from the typed-data signature bytes.
  * ```ts
- * import { recoverPublicKeyTyped, signTyped } from 'micro-eth-signer';
+ * import { recoverAddressTyped, signTyped } from 'micro-eth-signer';
  * const typed = {
  *   types: {
  *     Person: [
@@ -187,10 +187,10 @@ export const verifyTyped = _verifyTyped;
  *   message: { contents: 'Hello, Bob!' },
  * } as const;
  * const sig = signTyped(typed, '0x4c0883a69102937d6231471b5dbb6204fe512961708279f1d7b1b8e7e8b1b1e1');
- * recoverPublicKeyTyped(sig, typed);
+ * recoverAddressTyped(sig, typed);
  * ```
  */
-export const recoverPublicKeyTyped = _recoverPublicKeyTyped;
+export const recoverAddressTyped = _recoverAddressTyped;
 /**
  * Ethereum unit constants and limits.
  * @example

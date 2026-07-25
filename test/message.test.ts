@@ -2,8 +2,8 @@ import { keccak_256 } from '@noble/hashes/sha3.js';
 import { hexToBytes, utf8ToBytes } from '@noble/hashes/utils.js';
 import { describe, should } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual, throws } from 'node:assert';
-import { eip712 } from '../src/advanced/abi.ts';
-import * as typed from '../src/core/typed-data.ts';
+import { eip712 } from '../src/abi/index.ts';
+import * as typed from '../src/core/message.ts';
 import { addr } from '../src/index.ts';
 import { jsonGZ } from './util.ts';
 
@@ -60,11 +60,11 @@ describe('typedData (EIP-712)', () => {
       (28).toString(16);
     deepStrictEqual(e.sign(typedData.primaryType, typedData.message, privateKey, false), sig);
     deepStrictEqual(e.verify(typedData.primaryType, sig, typedData.message, address), true);
-    deepStrictEqual(e.recoverPublicKey(typedData.primaryType, sig, typedData.message), address);
+    deepStrictEqual(e.recoverAddress(typedData.primaryType, sig, typedData.message), address);
     // Utils
     deepStrictEqual(typed.signTyped(typedData, privateKey, false), sig);
     deepStrictEqual(typed.verifyTyped(sig, typedData, address), true);
-    deepStrictEqual(typed.recoverPublicKeyTyped(sig, typedData), address);
+    deepStrictEqual(typed.recoverAddressTyped(sig, typedData), address);
   });
 
   should('renders ERC-7730 clear signing for typed-data signer input', async () => {
@@ -439,7 +439,7 @@ describe('typedData (EIP-712)', () => {
       );
       throws(
         () =>
-          typed.recoverPublicKeyTyped('0x' + '00'.repeat(65), {
+          typed.recoverAddressTyped('0x' + '00'.repeat(65), {
             types: {},
             primaryType: 'Mail',
             domain: {},
@@ -491,7 +491,7 @@ describe('typedData (EIP-712)', () => {
         '0x90a938f7457df6e8f741264c32697fc52f9a8f867c52dd70713d9d2d472f2e415d9c94148991bbe1f4a1818d1dff09165782749c877f5cf1eff4ef126e55714d1c'
       );
       deepStrictEqual(typed.eip191Signer.verify(sig, message, address), true);
-      deepStrictEqual(typed.eip191Signer.recoverPublicKey(sig, message), address);
+      deepStrictEqual(typed.eip191Signer.recoverAddress(sig, message), address);
     });
     should('more tests (based on @metamask/eth-sig-util)', () => {
       const VECTORS = [
@@ -522,7 +522,7 @@ describe('typedData (EIP-712)', () => {
         deepStrictEqual(sig, t.signature);
         deepStrictEqual(typed.eip191Signer.verify(sig, t.message, t.address), true);
         deepStrictEqual(
-          typed.eip191Signer.recoverPublicKey(sig, t.message).toLowerCase(),
+          typed.eip191Signer.recoverAddress(sig, t.message).toLowerCase(),
           t.address
         );
       }
@@ -686,7 +686,7 @@ describe('typedData (EIP-712)', () => {
       should(k, () => {
         const { t, sig } = VECTORS[k];
         deepStrictEqual(typed.signTyped(t, privateKey, false), sig);
-        deepStrictEqual(typed.recoverPublicKeyTyped(sig, t).toLocaleLowerCase(), address);
+        deepStrictEqual(typed.recoverAddressTyped(sig, t).toLocaleLowerCase(), address);
       });
     }
   });

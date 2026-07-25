@@ -17,13 +17,13 @@ import {
   type TxType,
 } from './tx-internal.ts';
 // prettier-ignore
-import { secp256k1 } from '@noble/curves/secp256k1.js';
 import {
   amounts,
   cloneDeep,
   ethHex,
   ethHexNoLeadingZero,
   initSig,
+  recoverPublicKey,
   isBytes,
   isObject,
   sign,
@@ -244,9 +244,7 @@ export class Transaction<T extends TxType> {
     // this boolean verifier returns false while malformed signature fields still throw above.
     if (sig.hasHighS()) return false;
     const hash = this.calcHash(false);
-    const publicKey = secp256k1.recoverPublicKey(sig.toBytes('recovered'), hash, {
-      prehash: false,
-    });
+    const publicKey = recoverPublicKey(sig, hash);
     return verify(sig.toBytes(), hash, publicKey);
   }
   removeSignature(): Transaction<T> {
@@ -278,10 +276,7 @@ export class Transaction<T extends TxType> {
     const sig = initSig({ r, s }, yParity);
     // Will crash on 'chainstart' hardfork
     if (sig.hasHighS()) throw new Error('invalid s');
-    const publicKey = secp256k1.recoverPublicKey(sig.toBytes('recovered'), this.calcHash(false), {
-      prehash: false,
-    });
-    // const point = sig.recoverPublicKey(this.calcHash(false));
+    const publicKey = recoverPublicKey(sig, this.calcHash(false));
     return { publicKey: bytesToHex(publicKey), address: addr.fromPublicKey(publicKey) };
   }
 }

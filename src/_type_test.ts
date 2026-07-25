@@ -1,8 +1,8 @@
 import * as P from 'micro-packed';
-import * as abic from './advanced/abi-decoder.ts';
-import * as abi from './advanced/abi-mapper.ts';
-import * as ssz from './advanced/ssz.ts';
-import * as typed from './core/typed-data.ts';
+import * as abic from './abi/decoder.ts';
+import * as abi from './abi/mapper.ts';
+import * as ssz from './ssz.ts';
+import * as typed from './core/message.ts';
 // Should not be included in npm package, just for test of typescript compilation
 const assertType = <T>(_value: T) => {};
 const BytesVal = Uint8Array.of();

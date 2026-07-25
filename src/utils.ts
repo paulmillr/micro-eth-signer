@@ -102,7 +102,7 @@ export type Web3CallArgs = {
 
 /**
  * Minimal provider interface required by the network helpers.
- * Implemented by `Web3Provider` and accepted by the higher-level network clients.
+ * Implemented by `RpcClient` and accepted by the higher-level network clients.
  */
 export type IWeb3Provider = {
   /**
@@ -125,6 +125,9 @@ export type IWeb3Provider = {
    */
   call: (method: string, ...args: any[]) => Promise<any>;
 };
+
+/** The zero address: unset registry slots, burns, minting counterparties. */
+export const ADDRESS_ZERO: string = '0x0000000000000000000000000000000000000000';
 
 const ETH_PRECISION = 18;
 const GWEI_PRECISION = 9;
@@ -453,6 +456,30 @@ export function initSig(
     s = new secp256k1.Signature((sig as RawSig).r, (sig as RawSig).s);
   }
   return s.addRecoveryBit(bit);
+}
+/**
+ * Recovers the public key from a recoverable signature and digest.
+ * Centralizes the noble call details ('recovered' encoding, no prehashing);
+ * high-s policy stays with the caller, since it differs per context.
+ * @param sig - Recoverable signature from {@link initSig} or {@link sign}.
+ * @param hash - Message digest that was signed.
+ * @returns Recovered secp256k1 public key bytes.
+ * @example
+ * Recover the signer's key from a keccak digest.
+ * ```ts
+ * import { keccak_256 } from '@noble/hashes/sha3.js';
+ * import { addr, ethHex } from 'micro-eth-signer';
+ * import { recoverPublicKey, sign } from 'micro-eth-signer/utils.js';
+ * const hash = keccak_256(new TextEncoder().encode('hello noble'));
+ * const { privateKey } = addr.random();
+ * recoverPublicKey(sign(hash, ethHex.decode(privateKey)), hash);
+ * ```
+ */
+export function recoverPublicKey(
+  sig: ReturnType<typeof initSig>,
+  hash: TArg<Uint8Array>
+): TRet<Uint8Array> {
+  return secp256k1.recoverPublicKey(sig.toBytes('recovered'), hash, { prehash: false });
 }
 
 /**
