@@ -1,76 +1,11 @@
 import { numberToVarBytesBE } from '@noble/curves/utils.js';
 import * as P from 'micro-packed';
-import { deepFreeze, isBytes, type Bytes, type TArg, type TRet } from '../utils.ts';
+import { deepFreeze, isBytes, type Bytes, type TRet } from '../utils.ts';
 
-// Spec-compliant RLP in 100 lines of code.
+// Spec-compliant RLP. Optimized: the encoder measures the tree first, then writes into a single
+// pre-allocated buffer; the decoder is index-based and returns subarrays of the input.
 /** Public input accepted by the RLP encoder. */
 export type RLPInput = string | number | Bytes | bigint | RLPInput[] | null;
-// length: first 3 bit !== 111 ? 6 bit length : 3bit lenlen
-const RLPLength = P.wrap({
-  encodeStream(w: P.Writer, value: number) {
-    if (value < 56) return w.bits(value, 6);
-    w.bits(0b111, 3);
-    const length = P.U32BE.encode(value);
-    let pos = 0;
-    for (; pos < length.length; pos++) if (length[pos] !== 0) break;
-    w.bits(4 - pos - 1, 3);
-    w.bytes(length.slice(pos));
-  },
-  decodeStream(r: P.Reader): number {
-    const start = r.bits(3);
-    if (start !== 0b111) return (start << 3) | r.bits(3);
-    const len = r.bytes(r.bits(3) + 1);
-    for (let i = 0; i < len.length; i++) {
-      if (len[i]) break;
-      throw new Error('Wrong length encoding with leading zeros');
-    }
-    const res = P.int(len.length).decode(len);
-    if (res <= 55) throw new Error('RLPLength: less than 55, but used multi-byte flag');
-    return res;
-  },
-});
-
-// Recursive struct definition
-/** Internal tagged RLP tree used by the coder implementation. */
-export type InternalRLP =
-  | {
-      /** Single-byte item encoded without an RLP length prefix. */
-      TAG: 'byte';
-      /** Byte value in the `0..127` short-form range. */
-      data: number;
-    }
-  | {
-      /** Multi-byte string or nested list item. */
-      TAG: 'complex';
-      /** Tagged payload for one string or list item. */
-      data:
-        | {
-            /** Byte-string payload. */
-            TAG: 'string';
-            /** Raw string bytes. */
-            data: Uint8Array;
-          }
-        | {
-            /** Nested list payload. */
-            TAG: 'list';
-            /** Nested RLP items. */
-            data: InternalRLP[];
-          };
-    };
-
-const rlpInner = P.tag(P.map(P.bits(1), { byte: 0, complex: 1 }), {
-  byte: P.bits(7),
-  complex: P.tag(P.map(P.bits(1), { string: 0, list: 1 }), {
-    string: P.bytes(RLPLength),
-    list: P.prefix(
-      RLPLength,
-      P.array(
-        null,
-        P.lazy((): TRet<P.CoderType<InternalRLP>> => rlpInner as TRet<P.CoderType<InternalRLP>>)
-      )
-    ),
-  }),
-});
 
 // Ethereum JSON-RPC Data uses 0x-prefixed byte strings; keep that separate from
 // plain UTF-8 strings.
@@ -78,58 +13,199 @@ const phex = P.hex(null, { with0x: true });
 const pstr = P.string(null);
 const empty = Uint8Array.of();
 
+// Number of bytes needed to store a length in the long form of a prefix.
+const lenLen = (n: number): number => {
+  let res = 1;
+  while ((n = Math.floor(n / 256)) > 0) res++;
+  return res;
+};
+
+// Measured tree: leaves hold their bytes, lists cache the payload size.
+// `total` is the full encoded size including the prefix.
+type Measured = {
+  bytes: Bytes | null;
+  items: Measured[] | null;
+  payload: number;
+  total: number;
+};
+
+const leaf = (bytes: Bytes): Measured => {
+  const len = bytes.length;
+  let total;
+  if (len === 1 && bytes[0] < 0x80) total = 1; // single byte, encoded as-is without a prefix
+  else if (len < 56) total = 1 + len;
+  else total = 1 + lenLen(len) + len;
+  return { bytes, items: null, payload: 0, total };
+};
+
+const numberToBytes = (n: number): Bytes => {
+  if (!Number.isSafeInteger(n) || n < 0)
+    throw new Error('RLP.encode: invalid integer as argument, must be unsigned');
+  if (n === 0) return empty;
+  let len = 0;
+  for (let i = n; i >= 1; i /= 256) len++;
+  // Split into two 32-bit halves so writing can use bitwise ops (safe integers are up to 2^53).
+  let hi = Math.floor(n / 0x100000000);
+  let lo = n % 0x100000000;
+  const res = new Uint8Array(len);
+  let i = len - 1;
+  for (; i >= 0 && i >= len - 4; i--) {
+    res[i] = lo & 0xff;
+    lo >>>= 8;
+  }
+  for (; i >= 0; i--) {
+    res[i] = hi & 0xff;
+    hi >>>= 8;
+  }
+  return res;
+};
+const maxSafeInteger = /* @__PURE__ */ BigInt(Number.MAX_SAFE_INTEGER);
+
+const measure = (data: RLPInput): Measured => {
+  if (data == null) return leaf(empty);
+  if (isBytes(data)) return leaf(data);
+  if (Array.isArray(data)) {
+    const items: Measured[] = new Array(data.length);
+    let payload = 0;
+    for (let i = 0; i < data.length; i++) payload += (items[i] = measure(data[i])).total;
+    const total = payload < 56 ? 1 + payload : 1 + lenLen(payload) + payload;
+    return { bytes: null, items, payload, total };
+  }
+  switch (typeof data) {
+    case 'number':
+      return leaf(numberToBytes(data));
+    case 'bigint':
+      if (data < BigInt(0))
+        throw new Error('RLP.encode: invalid integer as argument, must be unsigned');
+      // Small bigints (nonces, gas, chain ids) take the cheaper number path.
+      return leaf(data <= maxSafeInteger ? numberToBytes(Number(data)) : numberToVarBytesBE(data));
+    case 'string':
+      return leaf(data.startsWith('0x') ? phex.encode(data) : pstr.encode(data));
+    default:
+      throw new Error('RLP.encode: unknown type');
+  }
+};
+
+// Short form: single byte `offset + len`. Long form: `offset + 55 + lenLen(len)`, then the
+// big-endian bytes of len itself.
+const writePrefix = (out: Uint8Array, pos: number, offset: number, len: number): number => {
+  if (len < 56) {
+    out[pos++] = offset + len;
+    return pos;
+  }
+  const ll = lenLen(len);
+  out[pos++] = offset + 55 + ll;
+  for (let i = ll - 1, n = len; i >= 0; i--) {
+    out[pos + i] = n % 256;
+    n = Math.floor(n / 256);
+  }
+  return pos + ll;
+};
+
+const writeNode = (node: Measured, out: Uint8Array, pos: number): number => {
+  const bytes = node.bytes;
+  if (bytes !== null) {
+    const len = bytes.length;
+    if (len === 1 && bytes[0] < 0x80) {
+      out[pos] = bytes[0];
+      return pos + 1;
+    }
+    pos = writePrefix(out, pos, 0x80, len);
+    out.set(bytes, pos);
+    return pos + len;
+  }
+  pos = writePrefix(out, pos, 0xc0, node.payload);
+  for (const item of node.items!) pos = writeNode(item, out, pos);
+  return pos;
+};
+
+const rlpEncode = (data: RLPInput): Bytes => {
+  const root = measure(data);
+  const out = new Uint8Array(root.total);
+  writeNode(root, out, 0);
+  return out;
+};
+
+// Decodes a single item spanning exactly [offset, end). Enforces canonical encoding: shortest
+// length form, no leading zeros in lengths, single bytes < 0x80 without a prefix.
+// NOTE: returned Uint8Arrays are subarrays of the input, same as before. Do not modify.
+const rlpDecodeSlice = (d: Bytes, offset: number, end: number): RLPInput => {
+  let pos = offset;
+  const readLength = (lengthLen: number, boundary: number): number => {
+    if (pos + lengthLen > boundary) throw new Error('RLP.decode: out of range');
+    if (d[pos] === 0) throw new Error('RLP.decode: wrong length encoding with leading zeros');
+    let len = 0;
+    for (let i = 0; i < lengthLen; i++) len = len * 256 + d[pos++];
+    if (len < 56) throw new Error('RLP.decode: length less than 56, but used multi-byte flag');
+    return len;
+  };
+  const item = (boundary: number): RLPInput => {
+    if (pos >= boundary) throw new Error('RLP.decode: out of range');
+    const first = d[pos++];
+    if (first < 0x80) return d.subarray(pos - 1, pos); // single byte, no prefix
+    let len: number;
+    let isList = false;
+    if (first < 0xb8) len = first - 0x80;
+    else if (first < 0xc0) len = readLength(first - 0xb7, boundary);
+    else if (first < 0xf8) {
+      len = first - 0xc0;
+      isList = true;
+    } else {
+      len = readLength(first - 0xf7, boundary);
+      isList = true;
+    }
+    const itemEnd = pos + len;
+    if (itemEnd > boundary) throw new Error('RLP.decode: out of range');
+    if (!isList) {
+      if (len === 1 && d[pos] < 0x80)
+        throw new Error('RLP.decode: wrong string length encoding, should use single byte mode');
+      const res = d.subarray(pos, itemEnd);
+      pos = itemEnd;
+      return res;
+    }
+    const items: RLPInput[] = [];
+    while (pos < itemEnd) items.push(item(itemEnd));
+    return items;
+  };
+  const res = item(end);
+  if (pos !== end) throw new Error('RLP.decode: unread bytes left');
+  return res;
+};
+
+const rlpDecode = (data: Bytes): RLPInput => {
+  if (!isBytes(data)) throw new Error('RLP.decode: expected Uint8Array');
+  return rlpDecodeSlice(data, 0, data.length);
+};
+
+// Reads the length bytes of a long-form prefix without advancing the reader.
+const peekLength = (r: P.Reader, lengthLen: number): number => {
+  const header = r.bytes(1 + lengthLen, true);
+  let len = 0;
+  for (let i = 1; i < header.length; i++) len = len * 256 + header[i];
+  return len;
+};
+
 /**
  * RLP parser.
  * Real type of rlp is `Item = Uint8Array | Item[]`.
  * Strings/number encoded to Uint8Array, but not decoded back: type information is lost.
  */
-export const RLP: TRet<P.CoderType<RLPInput>> = /* @__PURE__ */ deepFreeze(
-  P.apply(rlpInner, {
-    encode(from: TArg<InternalRLP>): TRet<RLPInput> {
-      if (from.TAG === 'byte') return new Uint8Array([from.data]) as TRet<RLPInput>;
-      if (from.TAG !== 'complex') throw new Error('RLP.encode: unexpected type');
-      const complex = from.data;
-      if (complex.TAG === 'string') {
-        if (complex.data.length === 1 && complex.data[0] < 128)
-          throw new Error('RLP.encode: wrong string length encoding, should use single byte mode');
-        return complex.data as TRet<RLPInput>;
-      }
-      if (complex.TAG === 'list') return complex.data.map((i) => this.encode(i)) as TRet<RLPInput>;
-      throw new Error('RLP.encode: unknown TAG');
+export const RLP: TRet<P.CoderType<RLPInput>> = /* @__PURE__ */ deepFreeze({
+  ...P.wrap({
+    encodeStream: (w: P.Writer, value: RLPInput): void => w.bytes(rlpEncode(value)),
+    // Consumes exactly one item from the stream: total size is derived from the prefix, then the
+    // item is decoded from the consumed slice (which re-validates the prefix canonically).
+    decodeStream: (r: P.Reader): RLPInput => {
+      const first = r.byte(true);
+      let total: number;
+      if (first < 0x80) total = 1;
+      else if (first < 0xb8) total = 1 + (first - 0x80);
+      else if (first < 0xc0) total = 1 + (first - 0xb7) + peekLength(r, first - 0xb7);
+      else if (first < 0xf8) total = 1 + (first - 0xc0);
+      else total = 1 + (first - 0xf7) + peekLength(r, first - 0xf7);
+      return rlpDecodeSlice(r.bytes(total), 0, total);
     },
-    decode(data: TArg<RLPInput>): TRet<InternalRLP> {
-      if (data == null) return this.decode(empty);
-      switch (typeof data) {
-        case 'object':
-          if (isBytes(data)) {
-            if (data.length === 1) {
-              const head = data[0];
-              if (head < 128) return { TAG: 'byte', data: head } as TRet<InternalRLP>;
-            }
-            return { TAG: 'complex', data: { TAG: 'string', data: data } } as TRet<InternalRLP>;
-          }
-          if (Array.isArray(data)) {
-            return {
-              TAG: 'complex',
-              data: { TAG: 'list', data: data.map((i) => this.decode(i)) },
-            } as TRet<InternalRLP>;
-          }
-          throw new Error('RLP.encode: unknown type');
-        case 'number':
-          if (data < 0)
-            throw new Error('RLP.encode: invalid integer as argument, must be unsigned');
-          if (data === 0) return this.decode(empty);
-          return this.decode(numberToVarBytesBE(data));
-        case 'bigint':
-          if (data < BigInt(0))
-            throw new Error('RLP.encode: invalid integer as argument, must be unsigned');
-          if (data === BigInt(0)) return this.decode(empty);
-          return this.decode(numberToVarBytesBE(data));
-        case 'string':
-          return this.decode(data.startsWith('0x') ? phex.encode(data) : pstr.encode(data));
-        default:
-          throw new Error('RLP.encode: unknown type');
-      }
-    },
-  })
-) as TRet<P.CoderType<RLPInput>>;
+  }),
+  encode: rlpEncode,
+  decode: rlpDecode,
+}) as TRet<P.CoderType<RLPInput>>;

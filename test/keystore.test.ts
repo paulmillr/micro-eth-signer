@@ -48,7 +48,7 @@ describe('keystore', () => {
 
   should('round-trips legacy keystores and validates options', async () => {
     const password = 'test';
-    const salt = '';
+    const salt = 'dc9e4a98886738bd8aae134a1f89aaa5a502c3fbd10e336136d4d5fe47448ad6';
     const iv = 'ffffffffffffffffffffffffffffffff';
     const uuid = 'ffffffffffffffffffffffffffffffff';
     const pbkdf2Store = await privToLegacyKeystore(fixturePrivateKey, password, {
@@ -58,18 +58,18 @@ describe('keystore', () => {
       iv,
       uuid,
     });
-    deepStrictEqual(pbkdf2Store.crypto.kdfparams.salt, '');
+    deepStrictEqual(pbkdf2Store.crypto.kdfparams.salt, salt);
     deepStrictEqual(privateKeyHex(await privFromLegacyKeystore(pbkdf2Store, password)), fixturePrivateKey);
-    const emptySaltBytesStore = await privToLegacyKeystore(fixturePrivateKey, password, {
+    const saltBytesStore = await privToLegacyKeystore(fixturePrivateKey, password, {
       kdf: 'pbkdf2',
       c: 2,
-      salt: hexToBytes(''),
+      salt: hexToBytes(salt),
       iv,
       uuid,
     });
-    deepStrictEqual(emptySaltBytesStore.crypto.kdfparams.salt, '');
+    deepStrictEqual(saltBytesStore.crypto.kdfparams.salt, salt);
     deepStrictEqual(
-      privateKeyHex(await privFromLegacyKeystore(emptySaltBytesStore, password)),
+      privateKeyHex(await privFromLegacyKeystore(saltBytesStore, password)),
       fixturePrivateKey
     );
 
@@ -78,13 +78,28 @@ describe('keystore', () => {
       n: 16,
       r: 1,
       p: 1,
-      salt: '0x',
+      salt: '0x' + salt,
       iv: '0x' + iv,
       uuid: '0x' + uuid,
     });
-    deepStrictEqual(scryptStore.crypto.kdfparams.salt, '');
+    deepStrictEqual(scryptStore.crypto.kdfparams.salt, salt);
     deepStrictEqual(scryptStore.crypto.cipherparams.iv, iv);
     deepStrictEqual(privateKeyHex(await privFromLegacyKeystore(scryptStore, password)), fixturePrivateKey);
+
+    // Empty salt is rejected on creation, but files created with one still decrypt.
+    for (const emptySalt of ['', '0x', hexToBytes('')]) {
+      await rejects(
+        () => privToLegacyKeystore(fixturePrivateKey, password, { salt: emptySalt }),
+        /invalid salt/
+      );
+    }
+    const emptySaltStore = JSON.parse(
+      '{"version":3,"id":"ffffffff-ffff-4fff-bfff-ffffffffffff","address":"b14ab53e38da1c172f877dbc6d65e4a1b0474c3c","crypto":{"ciphertext":"5689d094b93c9f7a88fbc24314dea8746ea4467d3297a2e33de5c0252b105b10","cipherparams":{"iv":"ffffffffffffffffffffffffffffffff"},"cipher":"aes-128-ctr","kdf":"pbkdf2","kdfparams":{"dklen":32,"salt":"","c":2,"prf":"hmac-sha256"},"mac":"4018944dedc8b65bb46695d9f8f887bdf29b093c8a80aa289127cf8f4621dde2"}}'
+    );
+    deepStrictEqual(
+      privateKeyHex(await privFromLegacyKeystore(emptySaltStore, password)),
+      fixturePrivateKey
+    );
 
     await rejects(() => privToLegacyKeystore(hexToBytes('001122'), password), /invalid private key/);
     await rejects(
@@ -93,15 +108,15 @@ describe('keystore', () => {
     );
     await rejects(
       () => privToLegacyKeystore(fixturePrivateKey, password, { salt: 'f' }),
-      /invalid salt: expected string or Uint8Array/
+      /invalid salt: expected non-empty string or Uint8Array/
     );
     await rejects(
       () => privToLegacyKeystore(fixturePrivateKey, password, { iv: 'ff' }),
-      /invalid iv: expected string or Uint8Array of length 32/
+      /invalid iv: expected non-empty string or Uint8Array of length 32/
     );
     await rejects(
       () => privToLegacyKeystore(fixturePrivateKey, password, { uuid: 'ff' }),
-      /invalid uuid: expected string or Uint8Array of length 32/
+      /invalid uuid: expected non-empty string or Uint8Array of length 32/
     );
   });
 

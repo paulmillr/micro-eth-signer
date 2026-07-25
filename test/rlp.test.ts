@@ -135,6 +135,70 @@ describe('RLP', () => {
       }
     });
   });
+  describe('properties (deterministic fuzz)', () => {
+    // mulberry32: deterministic PRNG so failures are reproducible
+    let seed = 0xdeadbeef;
+    const rnd = () => {
+      seed = (seed + 0x6d2b79f5) | 0;
+      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+    const randInt = (n) => Math.floor(rnd() * n);
+    const randBytes = (n) => Uint8Array.from({ length: n }, () => randInt(256));
+    const randTree = (depth) => {
+      if (depth > 3 || rnd() < 0.45) return randBytes(randInt(70)); // covers short & long forms
+      return Array.from({ length: randInt(6) }, () => randTree(depth + 1));
+    };
+    should('roundtrip & canonical bijection', () => {
+      for (let i = 0; i < 2500; i++) {
+        const tree = randTree(0);
+        const encoded = RLP.encode(tree);
+        deepStrictEqual(RLP.decode(encoded), tree, 'roundtrip');
+        // Any accepted input must re-encode to itself byte-for-byte (decode is a bijection on
+        // canonical encodings). This is the anti-junk-data property from audit/zst.md: nothing
+        // can hide inside a decodable payload.
+        deepStrictEqual(RLP.encode(RLP.decode(encoded)), encoded, 'bijection');
+        // strict prefixes and trailing junk are never valid
+        throws(() => RLP.decode(encoded.subarray(0, randInt(encoded.length))));
+        throws(() => RLP.decode(Uint8Array.from([...encoded, ...randBytes(1 + randInt(3))])));
+        // mutated input is either rejected or still canonical, never silently ambiguous
+        const mutated = Uint8Array.from(encoded);
+        mutated[randInt(mutated.length)] ^= 1 << randInt(8);
+        let decoded;
+        try {
+          decoded = RLP.decode(mutated);
+        } catch (e) {
+          continue;
+        }
+        deepStrictEqual(RLP.encode(decoded), mutated, 'bijection after mutation');
+      }
+    });
+    should('number, bigint and hex-string paths agree', () => {
+      const cases = [0n, 1n, 127n, 128n, 255n, 256n, 65535n, 65536n];
+      // 2^53 boundary: numbers and small bigints share a conversion path, big ones don't
+      const max = BigInt(Number.MAX_SAFE_INTEGER);
+      cases.push(max - 1n, max, max + 1n, max * max, (1n << 256n) - 1n);
+      for (let i = 0; i < 500; i++) cases.push(BigInt(randInt(2 ** 31)) * BigInt(randInt(2 ** 31)));
+      for (const n of cases) {
+        const fromBigint = RLP.encode(n);
+        let hex = n.toString(16);
+        if (hex.length % 2) hex = '0' + hex;
+        deepStrictEqual(RLP.encode(n === 0n ? '0x' : '0x' + hex), fromBigint, `hex ${n}`);
+        if (n <= max) deepStrictEqual(RLP.encode(Number(n)), fromBigint, `number ${n}`);
+      }
+    });
+    should('deep nesting fails as catchable error, not a crash', () => {
+      const deep = (n) => {
+        let x = [];
+        for (let i = 0; i < n; i++) x = [x];
+        return x;
+      };
+      const tree = deep(1000);
+      deepStrictEqual(RLP.decode(RLP.encode(tree)), tree);
+      throws(() => RLP.encode(deep(100000)), RangeError);
+    });
+  });
 });
 
 should.runWhen(import.meta.url);
