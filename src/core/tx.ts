@@ -155,6 +155,8 @@ export class Transaction<T extends TxType> {
     const _0n = BigInt(0);
     if (typeof accountBalance !== 'bigint' || accountBalance <= _0n)
       throw new Error('account balance must be bigger than 0');
+    // Changing value/fees would invalidate an existing signature.
+    if (this.isSigned) throw new Error('expected unsigned transaction');
     const fee = this.fee;
     const amountToSend = accountBalance - fee;
     if (amountToSend <= _0n) throw new Error('account balance must be bigger than fee of ' + fee);
@@ -163,7 +165,7 @@ export class Transaction<T extends TxType> {
       const r = raw as SpecifyVersionNeg<['legacy', 'eip2930']>;
       r.maxPriorityFeePerGas = r.maxFeePerGas;
     }
-    return new Transaction(this.type, raw);
+    return new Transaction(this.type, raw, this.strict);
   }
   static fromRawBytes(
     bytes: Uint8Array,

@@ -350,6 +350,7 @@ describe('Transactions', () => {
           return true;
         }
       );
+      // 21000 + 32000 (G_txcreate) + 4 (one zero byte) + 2 (one EIP-3860 initcode word)
       deepStrictEqual(
         Transaction.prepare({
           type: 'eip1559',
@@ -359,7 +360,7 @@ describe('Transactions', () => {
           value: 0n,
           maxFeePerGas: weigwei.decode('2'),
         }).raw.gasLimit,
-        21006n
+        53006n
       );
       throws(
         () =>
@@ -374,7 +375,7 @@ describe('Transactions', () => {
           }),
         (err: any) => {
           deepStrictEqual(err.errors, [
-            { field: 'gasLimit', error: 'intrinsic gas too low: 21004 < 21006' },
+            { field: 'gasLimit', error: 'intrinsic gas too low: 21004 < 53006' },
           ]);
           return true;
         }
@@ -671,6 +672,29 @@ describe('Transactions', () => {
       deepStrictEqual(etx.recoverSender().address, addr_, 'sender is incorrect');
     }
   });
+  should('legacy v getter and pre-EIP155 prepare', () => {
+    const common = {
+      to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
+      value: 1n,
+      gasPrice: 2n,
+      nonce: 0n,
+    };
+    // default legacy chainId=1 -> EIP-155: v = yParity + 2*chainId + 35
+    const eip155tx = Transaction.prepare({ type: 'legacy', ...common }).signBy(priv, false);
+    deepStrictEqual(eip155tx.raw.chainId, 1n);
+    deepStrictEqual(eip155tx.v, BigInt(37 + eip155tx.raw.yParity!));
+    // explicit chainId: undefined -> pre-EIP-155: v = yParity + 27
+    const pre155 = Transaction.prepare({
+      type: 'legacy',
+      chainId: undefined,
+      ...common,
+    }).signBy(priv, false);
+    deepStrictEqual(pre155.v, BigInt(27 + pre155.raw.yParity!));
+    const rt = Transaction.fromHex(pre155.toHex(true));
+    deepStrictEqual(rt.raw.chainId, undefined);
+    deepStrictEqual(rt.sender, addr_);
+    deepStrictEqual(rt.v, pre155.v);
+  });
   should('compare with Transaction.equals()', () => {
     for (const txr of TX_VECTORS) {
       const etx1 = Transaction.fromHex(txr.hex);
@@ -959,6 +983,33 @@ describe('Transactions', () => {
       deepStrictEqual(
         tx3.toHex(true),
         '0xf85f800182520894df90dea0e0bf5ca6d2a7f0cb86874ba6714f463e018026a09082d97700034dff9cfaa0a64136437eb7adf16940d0672491b80cfbc642a78ba04d2fd86634189e1e5e049ce958edb0ccb5dafce25559836346c360772be71a5f'
+      );
+    });
+    should('signature field edge cases', () => {
+      const priv = '6b911fd37cdf5c81d4c0adb1ab7fa822ed253ab0ad9aa18d77257c88b29b718e';
+      const fields = {
+        to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
+        nonce: 0n,
+        value: 1n,
+        maxFeePerGas: weigwei.decode('2'),
+      };
+      const tx = Transaction.prepare(fields).signBy(priv, false);
+      // signing an already signed tx
+      throws(() => tx.signBy(priv), /expected unsigned transaction/);
+      // high-s: verifySignature() returns false (above), sender recovery must throw
+      const secp256k1N = BigInt(
+        '0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141'
+      );
+      const highS = new Transaction(
+        tx.type,
+        { ...tx.raw, s: secp256k1N - tx.raw.s!, yParity: tx.raw.yParity === 0 ? 1 : 0 },
+        false
+      );
+      throws(() => highS.recoverSender(), /invalid s/);
+      // prepare() must reject user-provided signature fields
+      throws(
+        () => Transaction.prepare({ ...fields, r: 1n, s: 1n, yParity: 0 }),
+        (e: any) => e.errors && e.errors.some((i: any) => i.error.includes('sig-related'))
       );
     });
     should('1024 private keys', () => {
