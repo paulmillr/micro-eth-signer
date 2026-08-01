@@ -1,6 +1,8 @@
 import { numberToVarBytesBE } from '@noble/curves/utils.js';
-import * as P from 'micro-packed';
-import { deepFreeze, isBytes, type Bytes, type TRet } from '../utils.ts';
+// Type-only: RLP must stay composable inside micro-packed structures (tx envelopes pass their
+// Reader/Writer into the stream methods below), but needs none of the library at runtime.
+import type * as P from 'micro-packed';
+import { deepFreeze, ethHex, isBytes, type Bytes, type TRet } from '../utils.ts';
 
 // Spec-compliant RLP. Optimized: the encoder measures the tree first, then writes into a single
 // pre-allocated buffer; the decoder is index-based and returns subarrays of the input.
@@ -8,9 +10,13 @@ import { deepFreeze, isBytes, type Bytes, type TRet } from '../utils.ts';
 export type RLPInput = string | number | Bytes | bigint | RLPInput[] | null;
 
 // Ethereum JSON-RPC Data uses 0x-prefixed byte strings; keep that separate from
-// plain UTF-8 strings.
-const phex = P.hex(null, { with0x: true });
-const pstr = P.string(null);
+// plain UTF-8 strings. ethHex.decode pads odd-length hex, which would make distinct
+// inputs encode identically — keep rejecting it.
+const hexToBytes = (s: string): Bytes => {
+  if (s.length % 2) throw new Error(`RLP.encode: hex string with odd length: ${s}`);
+  return ethHex.decode(s);
+};
+const utf8 = /* @__PURE__ */ new TextEncoder();
 const empty = Uint8Array.of();
 
 // Number of bytes needed to store a length in the long form of a prefix.
@@ -81,7 +87,7 @@ const measure = (data: RLPInput): Measured => {
       // Small bigints (nonces, gas, chain ids) take the cheaper number path.
       return leaf(data <= maxSafeInteger ? numberToBytes(Number(data)) : numberToVarBytesBE(data));
     case 'string':
-      return leaf(data.startsWith('0x') ? phex.encode(data) : pstr.encode(data));
+      return leaf(data.startsWith('0x') ? hexToBytes(data) : utf8.encode(data));
     default:
       throw new Error('RLP.encode: unknown type');
   }
@@ -196,22 +202,23 @@ const peekLength = (r: P.Reader, lengthLen: number): number => {
  * Real type of rlp is `Item = Uint8Array | Item[]`.
  * Strings/number encoded to Uint8Array, but not decoded back: type information is lost.
  */
+// Plain object with the CoderType shape (P.wrap would only re-derive encode/decode from the
+// streams, which the flat implementations replace anyway).
 export const RLP: TRet<P.CoderType<RLPInput>> = /* @__PURE__ */ deepFreeze({
-  ...P.wrap({
-    encodeStream: (w: P.Writer, value: RLPInput): void => w.bytes(rlpEncode(value)),
-    // Consumes exactly one item from the stream: total size is derived from the prefix, then the
-    // item is decoded from the consumed slice (which re-validates the prefix canonically).
-    decodeStream: (r: P.Reader): RLPInput => {
-      const first = r.byte(true);
-      let total: number;
-      if (first < 0x80) total = 1;
-      else if (first < 0xb8) total = 1 + (first - 0x80);
-      else if (first < 0xc0) total = 1 + (first - 0xb7) + peekLength(r, first - 0xb7);
-      else if (first < 0xf8) total = 1 + (first - 0xc0);
-      else total = 1 + (first - 0xf7) + peekLength(r, first - 0xf7);
-      return rlpDecodeSlice(r.bytes(total), 0, total);
-    },
-  }),
+  size: undefined,
+  encodeStream: (w: P.Writer, value: RLPInput): void => w.bytes(rlpEncode(value)),
+  // Consumes exactly one item from the stream: total size is derived from the prefix, then the
+  // item is decoded from the consumed slice (which re-validates the prefix canonically).
+  decodeStream: (r: P.Reader): RLPInput => {
+    const first = r.byte(true);
+    let total: number;
+    if (first < 0x80) total = 1;
+    else if (first < 0xb8) total = 1 + (first - 0x80);
+    else if (first < 0xc0) total = 1 + (first - 0xb7) + peekLength(r, first - 0xb7);
+    else if (first < 0xf8) total = 1 + (first - 0xc0);
+    else total = 1 + (first - 0xf7) + peekLength(r, first - 0xf7);
+    return rlpDecodeSlice(r.bytes(total), 0, total);
+  },
   encode: rlpEncode,
   decode: rlpDecode,
 }) as TRet<P.CoderType<RLPInput>>;

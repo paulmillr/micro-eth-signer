@@ -1,6 +1,6 @@
 import {
+  interleavedMSMUnsafe,
   normalizeZ,
-  precomputeMSMUnsafe,
   type AffinePoint,
 } from '@noble/curves/abstract/curve.js';
 import {
@@ -160,8 +160,7 @@ function mulGLV(p: G1Point, k: bigint): G1Point {
   if (points.length === 1) return points[0].multiplyUnsafe(scalars[0]);
   // interleavedMSMUnsafe recodes each scalar to actual-length wNAF digits, so the shared
   // doubling chain walks the split 128-bit halves instead of the full Fr width.
-  // interleavedMSMUnsafe == ex precomputeMSMUnsafe
-  return precomputeMSMUnsafe(G1, points, G1_ENDO_MUL_WINDOW)(scalars);
+  return interleavedMSMUnsafe(G1, points, G1_ENDO_MUL_WINDOW)(scalars);
 }
 
 function pippengerWindowSize(plength: number) {
@@ -741,7 +740,7 @@ export class KZG {
   private _Fk20Msm(): FixedG1Msm[] {
     if (this.fk20Msm) return this.fk20Msm;
     const precomputes = this._Fk20Precomputes();
-    this.fk20Msm = precomputes.map((row) => precomputeMSMUnsafe(G1, row, FK20_MSM_WINDOW));
+    this.fk20Msm = precomputes.map((row) => interleavedMSMUnsafe(G1, row, FK20_MSM_WINDOW));
     return this.fk20Msm;
   }
   private Fk20Proof(poly: Polynomial<bigint>): string[] {
