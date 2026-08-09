@@ -40,9 +40,7 @@
     "check": "jsbt-check",
     "format": "prettier --write src",
     "test": "node test/index.ts",
-    "test:ssz-progressive": "node test/ssz-progressive.test.ts",
-    "test:bun": "bun test/index.ts",
-    "test:deno": "deno --allow-env --allow-read test/index.ts"
+    "test:ssz-progressive": "node test/ssz-progressive.test.ts"
   },
   "exports": {
     ".": "./index.js",
