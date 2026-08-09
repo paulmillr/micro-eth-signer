@@ -53,9 +53,13 @@ const { Fr: blsFr } = bls.fields;
 const TestFr = Field(blsFr.ORDER, { isLE: blsFr.isLE });
 
 const kzgBigint = (name) => {
-  const m = kzgSrc.match(new RegExp(`const ${name} =\\s*(0x[0-9a-f]+n);`));
+  const m = kzgSrc.match(
+    new RegExp(
+      `const ${name} =\\s*(?:/\\* @__PURE__ \\*/\\s*)?(?:BigInt\\(\\s*['"])?(0x[0-9a-f]+)(?:['"]\\s*\\)|n);`
+    )
+  );
   if (!m) throw new Error(`failed to locate ${name}`);
-  return BigInt(m[1].slice(0, -1));
+  return BigInt(m[1]);
 };
 
 const G1_ENDO_BETA = kzgBigint('G1_ENDO_BETA');
@@ -76,8 +80,9 @@ const splitScalarG1 = new Function(
   'G1_ENDO_BASIS',
   'G1_ENDO_SPLIT_MAX',
   'divNearest',
+  '_0n',
   `return function splitScalarG1(k) {${splitScalarG1Body[1]}\n};`
-)(TestFr, G1_ENDO_BASIS, G1_ENDO_SPLIT_MAX, divNearest);
+)(TestFr, G1_ENDO_BASIS, G1_ENDO_SPLIT_MAX, divNearest, 0n);
 
 function run(setup) {
   afterEach(forceGC);

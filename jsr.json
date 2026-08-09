@@ -15,7 +15,7 @@
     "./net/uniswap.js": "./src/net/uniswap.ts",
     "./utils.js": "./src/utils.ts",
     "./abi.js": "./src/abi/index.ts",
-    "./clearsig.js": "./src/clearsig/index.ts",
+    "./clearsig.js": "./src/clearsig.ts",
     "./clearsig/repo-full.js": "./src/clearsig/repo-full.ts",
     "./clearsig/repo.js": "./src/clearsig/repo.ts",
     "./keystore.js": "./src/keystore.ts",

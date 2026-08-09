@@ -148,8 +148,10 @@ export const legacySig = /* @__PURE__ */ (() => ({
 
 type BytesBigintCoder = P.Coder<Bytes, bigint>;
 type BytesNumberCoder = P.Coder<Bytes, number>;
-const U64BE: BytesBigintCoder = P.coders.reverse(P.bigint(8, false, false, false));
-const U256BE: BytesBigintCoder = P.coders.reverse(P.bigint(32, false, false, false));
+const U64BE: BytesBigintCoder = /* @__PURE__ */ (() =>
+  P.coders.reverse(P.bigint(8, false, false, false)))();
+const U256BE: BytesBigintCoder = /* @__PURE__ */ (() =>
+  P.coders.reverse(P.bigint(32, false, false, false)))();
 
 // Small coder utils
 // TODO: seems generic enought for packed? or RLP (seems useful for structured encoding/decoding of RLP stuff)

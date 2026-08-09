@@ -58,7 +58,7 @@
     "./net/uniswap.js": "./net/uniswap.js",
     "./utils.js": "./utils.js",
     "./abi.js": "./abi/index.js",
-    "./clearsig.js": "./clearsig/index.js",
+    "./clearsig.js": "./clearsig.js",
     "./clearsig/repo.js": "./clearsig/repo.js",
     "./clearsig/repo-full.js": "./clearsig/repo-full.js",
     "./keystore.js": "./keystore.js",

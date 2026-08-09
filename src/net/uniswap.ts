@@ -16,7 +16,7 @@ import {
 } from '../utils.ts';
 
 export type SwapOpt = { slippagePercent: number; ttl: number };
-export const DEFAULT_SWAP_OPT: SwapOpt = { slippagePercent: 0.5, ttl: 30 * 60 };
+export const DEFAULT_SWAP_OPT: SwapOpt = { slippagePercent: 0.5, ttl: 1800 }; // ttl: 30 minutes
 
 // [res?.id, res?.payinAddress, res?.amountExpectedTo]
 export type ExchangeTx = {
@@ -120,17 +120,18 @@ const commonBase = (token: { contract: string; symbol: string; decimals: number 
   symbol: token.symbol,
   decimals: token.decimals,
 });
-export const COMMON_BASES: TRet<CommonBase[]> = [
-  TOKENS_BY_SYMBOL.WETH,
-  TOKENS_BY_SYMBOL.DAI,
-  TOKENS_BY_SYMBOL.USDC,
-  TOKENS_BY_SYMBOL.USDT,
-  TOKENS_BY_SYMBOL.COMP,
-  TOKENS_BY_SYMBOL.MKR,
-  TOKENS_BY_SYMBOL.WBTC,
-  TOKENS_BY_SYMBOL.AMPL,
-].map(commonBase);
-export const WETH: string = TOKENS_BY_SYMBOL.WETH.contract;
+export const COMMON_BASES: TRet<CommonBase[]> = /* @__PURE__ */ (() =>
+  [
+    TOKENS_BY_SYMBOL.WETH,
+    TOKENS_BY_SYMBOL.DAI,
+    TOKENS_BY_SYMBOL.USDC,
+    TOKENS_BY_SYMBOL.USDT,
+    TOKENS_BY_SYMBOL.COMP,
+    TOKENS_BY_SYMBOL.MKR,
+    TOKENS_BY_SYMBOL.WBTC,
+    TOKENS_BY_SYMBOL.AMPL,
+  ].map(commonBase))();
+export const WETH: string = /* @__PURE__ */ (() => TOKENS_BY_SYMBOL.WETH.contract)();
 
 export function wrapContract(contract: string): string {
   contract = contract.toLowerCase();
@@ -251,7 +252,7 @@ export abstract class UniswapAbstract {
 }
 
 const FACTORY_ADDRESS = '0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f';
-const INIT_CODE_HASH = hexToBytes(
+const INIT_CODE_HASH = /* @__PURE__ */ hexToBytes(
   '96e8ac4277198ff8b6f785478aa9a39f403cb768dd02cbee326c3e7da348845f'
 );
 const PAIR_CONTRACT = [
@@ -369,13 +370,17 @@ async function bestPathV2(
   return res[0];
 }
 
-const ROUTER_CONTRACT_V2 = createContract(UNISWAP_V2_ROUTER, undefined, UNISWAP_V2_ROUTER_CONTRACT);
+const ROUTER_CONTRACT_V2 = /* @__PURE__ */ createContract(
+  UNISWAP_V2_ROUTER,
+  undefined,
+  UNISWAP_V2_ROUTER_CONTRACT
+);
 
-const TX_DEFAULT_OPT = {
+const TX_DEFAULT_OPT = /* @__PURE__ */ (() => ({
   ...DEFAULT_SWAP_OPT,
   // Use Router02 SupportingFeeOnTransferTokens variants for exact-input swaps on taxed tokens.
   feeOnTransfer: false,
-};
+}))();
 
 export function txDataV2(
   to: string,
@@ -581,7 +586,11 @@ async function bestPathV3(
   return paths[0];
 }
 
-const ROUTER_CONTRACT_V3 = createContract(UNISWAP_V3_ROUTER, undefined, UNISWAP_V3_ROUTER_CONTRACT);
+const ROUTER_CONTRACT_V3 = /* @__PURE__ */ createContract(
+  UNISWAP_V3_ROUTER,
+  undefined,
+  UNISWAP_V3_ROUTER_CONTRACT
+);
 
 export type TxOpt = {
   slippagePercent: number;

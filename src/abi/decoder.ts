@@ -34,7 +34,7 @@ import {
   type ClearSigFactoryEntry,
   type ClearSigOpt,
   type ClearSigRepositoryEntry,
-} from '../clearsig/index.ts';
+} from '../clearsig.ts';
 
 /*
 There is NO network code in the file. However, a user can pass

@@ -26,6 +26,7 @@ const WETH_WITHDRAW = /* @__PURE__ */ (() => events(WETH).Withdrawal)();
 const ERC721_TRANSFER = /* @__PURE__ */ (() => events(ERC721).Transfer)();
 const ERC1155_SINGLE = /* @__PURE__ */ (() => events(ERC1155).TransferSingle)();
 const ERC1155_BATCH = /* @__PURE__ */ (() => events(ERC1155).TransferBatch)();
+const _0n = /* @__PURE__ */ BigInt(0);
 const _1n = /* @__PURE__ */ BigInt(1);
 
 const ERC165 = [
@@ -255,7 +256,7 @@ async function tokenBalanceSingle(
         )
       );
       return new Map(
-        ids.map((i, j) => [i, owners[j]?.toLowerCase() === address.toLowerCase() ? 1n : 0n])
+        ids.map((i, j) => [i, owners[j]?.toLowerCase() === address.toLowerCase() ? _1n : _0n])
       );
     }
     const p = [];
