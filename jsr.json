@@ -1,10 +1,18 @@
 {
   "name": "@paulmillr/micro-eth-signer",
-  "version": "0.19.0",
+  "version": "0.20.0",
   "exports": {
     ".": "./src/index.ts",
     "./core/rlp.js": "./src/core/rlp.ts",
     "./net.js": "./src/net.ts",
+    "./net/clearsig.js": "./src/net/clearsig.ts",
+    "./net/enrich.js": "./src/net/enrich.ts",
+    "./net/history.js": "./src/net/history.ts",
+    "./net/quoter.js": "./src/net/quoter.ts",
+    "./net/resolver.js": "./src/net/resolver.ts",
+    "./net/tokens.js": "./src/net/tokens.ts",
+    "./net/trace.js": "./src/net/trace.ts",
+    "./net/uniswap.js": "./src/net/uniswap.ts",
     "./utils.js": "./src/utils.ts",
     "./abi.js": "./src/abi/index.ts",
     "./clearsig.js": "./src/clearsig/index.ts",
@@ -15,10 +23,10 @@
     "./ssz.js": "./src/ssz.ts"
   },
   "imports": {
-    "@noble/ciphers": "jsr:@noble/ciphers@2.2.0",
-    "@noble/curves": "jsr:@noble/curves@2.2.0",
-    "@noble/hashes": "jsr:@noble/hashes@2.2.0",
-    "micro-packed": "jsr:@paulmillr/micro-packed@0.9.0"
+    "@noble/ciphers": "jsr:@noble/ciphers@~2.3.0",
+    "@noble/curves": "jsr:@noble/curves@~2.3.0",
+    "@noble/hashes": "jsr:@noble/hashes@~2.3.0",
+    "micro-packed": "jsr:@paulmillr/micro-packed@~0.11.0"
   },
   "publish": {
     "include": ["src", "jsr.json", "LICENSE", "README.md"]

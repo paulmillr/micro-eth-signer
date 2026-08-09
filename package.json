@@ -1,6 +1,6 @@
 {
   "name": "micro-eth-signer",
-  "version": "0.19.0",
+  "version": "0.20.0",
   "description": "Minimal privacy-focused Ethereum library",
   "files": [
     "*.js",
@@ -15,16 +15,16 @@
     "!_type_test.*"
   ],
   "dependencies": {
-    "@noble/ciphers": "2.2.0",
-    "@noble/curves": "2.2.0",
-    "@noble/hashes": "2.2.0",
-    "micro-packed": "0.9.0"
+    "@noble/ciphers": "~2.3.0",
+    "@noble/curves": "~2.3.0",
+    "@noble/hashes": "~2.3.0",
+    "micro-packed": "~0.11.0"
   },
   "devDependencies": {
-    "@paulmillr/jsbt": "0.6.0",
+    "@paulmillr/jsbt": "0.6.5",
     "@paulmillr/trusted-setups": "~0.3.0",
     "@types/node": "25.9.0",
-    "micro-ftch": "1.0.0",
+    "micro-ftch": "1.1.0",
     "prettier": "3.8.3",
     "snappyjs": "0.7.0",
     "typescript": "6.0.3",
@@ -33,12 +33,11 @@
   "scripts": {
     "benchmark": "node benchmark/microeth.ts",
     "benchmark:thirdparty": "cd benchmark/thirdparty; npm ci; node *.ts",
+    "benchmark:size": "npx bismar@0.1 -s",
     "build": "tsc",
     "build:clean": "rm -f *.{js,d.ts,js.map,d.ts.map}; rm -rf {abi,clearsig,core,net}",
     "build:clearsig": "node test/misc/build-clearsig.ts test/vectors/clear-signing",
-    "bundle": "npx --no @paulmillr/jsbt bundle",
-    "check": "npx --no @paulmillr/jsbt check",
-    "bench": "cd test/benchmark; npm install; node tx.ts",
+    "check": "jsbt-check",
     "format": "prettier --write src",
     "test": "node test/index.ts",
     "test:ssz-progressive": "node test/ssz-progressive.test.ts",
@@ -56,9 +55,7 @@
     "./net/resolver.js": "./net/resolver.js",
     "./net/tokens.js": "./net/tokens.js",
     "./net/trace.js": "./net/trace.js",
-    "./net/uniswap-common.js": "./net/uniswap-common.js",
-    "./net/uniswap-v2.js": "./net/uniswap-v2.js",
-    "./net/uniswap-v3.js": "./net/uniswap-v3.js",
+    "./net/uniswap.js": "./net/uniswap.js",
     "./utils.js": "./utils.js",
     "./abi.js": "./abi/index.js",
     "./clearsig.js": "./clearsig/index.js",
