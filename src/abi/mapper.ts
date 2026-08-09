@@ -76,6 +76,7 @@ export type GetType<T extends string> =
   T extends 'address' ? string :
   T extends 'string' ? string :
   T extends 'bool' ? boolean :
+  T extends 'function' ? Uint8Array :
   T extends NumberType ? bigint :
   T extends ByteType ? Uint8Array :
   unknown; // default
@@ -216,6 +217,8 @@ export function mapComponent<T extends BaseComponent>(
     return P.pointer(PTR, P.padRight(32, P.string(U256BE_LEN), P.ZeroPad)) as any;
   if (c.type === 'bytes')
     return P.pointer(PTR, P.padRight(32, P.bytes(U256BE_LEN), P.ZeroPad)) as any;
+  // ABI external-function values are address || selector and use bytes24 wire encoding.
+  if (c.type === 'function') return mapComponent({ ...c, type: 'bytes24' }) as any;
   if (c.type === 'address') return EPad(P.hex(20, { isLE: false, with0x: true })) as any;
   if (c.type === 'bool') return EPad(P.bool) as any;
   if ((m = /^(u?)int([0-9]+)?$/.exec(c.type)))

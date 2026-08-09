@@ -5,6 +5,7 @@ import { deepStrictEqual, throws } from 'node:assert';
 import { eip712 } from '../src/abi/index.ts';
 import * as typed from '../src/core/message.ts';
 import { addr } from '../src/index.ts';
+import { ethHex, parseSignature, serializeSignature } from '../src/utils.ts';
 import { jsonGZ } from './util.ts';
 
 const typedData = {
@@ -51,7 +52,7 @@ describe('typedData (EIP-712)', () => {
     );
     const e = typed.encoder(typedData.types, typedData.domain);
     deepStrictEqual(
-      e._getHash(typedData.primaryType, typedData.message),
+      e.getHash(typedData.primaryType, typedData.message),
       '0xbe609aee343fb3c4b28e1df9e632fca64fcfaede20f02e86244efddf30957bd2'
     );
     const sig =
@@ -467,15 +468,15 @@ describe('typedData (EIP-712)', () => {
   describe('eip191Signer', () => {
     should('Basic', () => {
       deepStrictEqual(
-        typed.eip191Signer._getHash('Hello World'),
+        typed.eip191Signer.getHash('Hello World'),
         '0xa1de988600a42c4b4ab089b619297c17d53cffae5d5120d82d8a92d0bb3b78f2'
       );
       deepStrictEqual(
-        typed.eip191Signer._getHash(new Uint8Array([0x42, 0x43])),
+        typed.eip191Signer.getHash(new Uint8Array([0x42, 0x43])),
         '0x0d3abc18ec299cf9b42ba439ac6f7e3e6ec9f5c048943704e30fc2d9c7981438'
       );
       deepStrictEqual(
-        typed.eip191Signer._getHash('0x4243'),
+        typed.eip191Signer.getHash('0x4243'),
         '0x6d91b221f765224b256762dcba32d62209cf78e9bebb0a1b758ca26c76db3af4'
       );
     });
@@ -538,7 +539,7 @@ describe('typedData (EIP-712)', () => {
         t.domain
       );
       deepStrictEqual(e.encodeData(t.primaryType, t.data), t.encoded);
-      deepStrictEqual(e._getHash(t.primaryType, t.data), t.digest);
+      deepStrictEqual(e.getHash(t.primaryType, t.data), t.digest);
     }
   });
   describe('viem', () => {
@@ -1456,6 +1457,43 @@ describe('typedData (EIP-712)', () => {
       };
       for (const k in VECTORS) throws(() => typed.encodeData(VECTORS[k]), k);
     });
+  });
+});
+
+describe('signature utils', () => {
+  const privateKey = '0x4c0883a69102937d6231471b5dbb6204fe512961708279f1d7b1b8e7e8b1b1e1';
+  should('parseSignature/serializeSignature roundtrip', () => {
+    const sig = typed.eip191Signer.sign('Hello, Ethereum!', privateKey, false);
+    const parsed = parseSignature(sig);
+    deepStrictEqual(typeof parsed.r, 'bigint');
+    deepStrictEqual(typeof parsed.s, 'bigint');
+    deepStrictEqual([0, 1].includes(parsed.yParity), true);
+    deepStrictEqual(serializeSignature(parsed), sig);
+    // Accepts bytes and yParity-style v (0/1)
+    const bytes = ethHex.decode(sig);
+    deepStrictEqual(parseSignature(bytes), parsed);
+    const rawV = Uint8Array.from(bytes);
+    rawV[64] -= 27;
+    deepStrictEqual(parseSignature(rawV), parsed);
+    // Signature verifies after re-serialization
+    const address = addr.fromPrivateKey(privateKey);
+    deepStrictEqual(
+      typed.eip191Signer.verify(serializeSignature(parsed), 'Hello, Ethereum!', address),
+      true
+    );
+  });
+  should('parseSignature rejects malformed input', () => {
+    const sig = typed.eip191Signer.sign('x', privateKey, false);
+    const bytes = ethHex.decode(sig);
+    throws(() => parseSignature(sig.slice(0, -2))); // 64 bytes
+    throws(() => parseSignature(sig + '00')); // 66 bytes
+    const wrongV = Uint8Array.from(bytes);
+    wrongV[64] = 2;
+    throws(() => parseSignature(wrongV), /v must be/);
+    const zeroR = Uint8Array.from(bytes);
+    zeroR.fill(0, 0, 32);
+    throws(() => parseSignature(zeroR)); // r out of range
+    throws(() => serializeSignature({ r: 1n, s: 1n, yParity: 2 }));
   });
 });
 

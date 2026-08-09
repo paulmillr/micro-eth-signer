@@ -8,19 +8,22 @@ withRetry) built on it. Higher-level modules ship as their own entry points:
 - micro-eth-signer/net/tokens.js — token metadata, balances, transfers, NFTs
 - micro-eth-signer/net/quoter.js — asset price quoting (Chainlink, Uniswap, ERC-4626)
 - micro-eth-signer/net/resolver.js — ENS + GNS name resolution
-- micro-eth-signer/net/uniswap-v2.js, uniswap-v3.js — swap building
+- micro-eth-signer/net/uniswap.js — Uniswap V2/V3 swap building
 - micro-eth-signer/net/clearsig.js — ERC-7730 resolver callbacks
 - micro-eth-signer/net/trace.js — trace_filter-based scanning (archive nodes)
 */
 import { createContract } from './abi/index.ts';
 import type { ContractType, FnArg } from './abi/decoder.ts';
 import type { ArrLike, Writable } from './abi/mapper.ts';
+import { MULTICALL3, MULTICALL3_ABI } from './abi/multicall.ts';
 import { TxVersions, legacySig, type AccessList } from './core/tx-internal.ts';
 import { Transaction } from './core/tx.ts';
 import {
   ADDRESS_ZERO,
   amounts,
+  ethHex,
   ethHexNum,
+  isObject,
   type IWeb3Provider,
   type TRet,
   type Web3CallArgs,
@@ -87,11 +90,11 @@ export type Log = {
 };
 
 export type TxInfo = {
-  blockHash: string;
-  blockNumber: number;
+  blockHash: string | undefined;
+  blockNumber: number | undefined;
   hash: string;
   accessList?: AccessList;
-  transactionIndex: number;
+  transactionIndex: number | undefined;
   type: number;
   nonce: bigint;
   input: string;
@@ -239,7 +242,11 @@ function fixLog(log: Log) {
 }
 
 function fixTxInfo(info: TxInfo) {
-  for (const i of ['blockNumber', 'type', 'transactionIndex'] as const) info[i] = Number(info[i]);
+  // Pending RPC transactions use null location fields; normalized APIs use undefined.
+  if (info.blockHash === null) info.blockHash = undefined;
+  for (const i of ['blockNumber', 'transactionIndex'] as const)
+    info[i] = info[i] === null || info[i] === undefined ? undefined : Number(info[i]);
+  info.type = Number(info.type);
   for (const i of [
     'nonce',
     'r',
@@ -404,6 +411,8 @@ export async function withRetry<T>(
   signal?: AbortSignal,
   name: string = 'retry'
 ): Promise<T> {
+  // Never start an operation that its caller already canceled.
+  throwIfAborted(signal, name);
   for (let attempt = 0; ; attempt++) {
     try {
       return await fn();
@@ -436,12 +445,20 @@ export async function mapPool<T, R>(
     throw new Error(`${name}: wrong concurrency`);
   const out: R[] = new Array(items.length);
   let cursor = 0;
+  let stopped = false;
   const worker = async () => {
-    for (;;) {
-      throwIfAborted(opts.signal, name);
-      const index = cursor++;
-      if (index >= items.length) return;
-      out[index] = await fn(items[index], index);
+    try {
+      for (;;) {
+        // A rejected pool must not keep starting side-effecting RPC work.
+        if (stopped) return;
+        throwIfAborted(opts.signal, name);
+        const index = cursor++;
+        if (index >= items.length) return;
+        out[index] = await fn(items[index], index);
+      }
+    } catch (error) {
+      stopped = true;
+      throw error;
     }
   };
   await Promise.all(Array.from({ length: Math.min(opts.concurrency ?? 8, items.length) }, worker));
@@ -491,10 +508,17 @@ function txInfoRaw(info: TxInfo, receipt: TxReceipt | undefined, verify: boolean
   // `verify: false` a failed rebuild (e.g. a chain-specific tx type) only
   // leaves `raw` undefined instead of making the tx unfetchable.
   try {
-    const tx = new Transaction(type, rawData as any, false, true);
+    const tx = new Transaction(type, rawData as any, { strict: false });
     if (tx.recoverSender().address.toLowerCase() !== info.from.toLowerCase())
       throw new Error('txInfo: wrong sender');
-    if (info.hash !== `0x${tx.hash}`) throw new Error('txInfo: wrong hash');
+    if (info.hash !== tx.hash) throw new Error('txInfo: wrong hash');
+    // Bind the independently fetched receipt before combining both responses.
+    if (
+      receipt &&
+      (typeof receipt.transactionHash !== 'string' ||
+        receipt.transactionHash.toLowerCase() !== info.hash.toLowerCase())
+    )
+      throw new Error('txInfo: wrong receipt hash');
     raw = tx.toHex();
   } catch (e) {
     if (verify) throw e;
@@ -546,7 +570,8 @@ export class RpcClient implements IWeb3Provider {
       decimals: amounts.ETH_PRECISION,
       balance,
       nonce,
-      active: balance > 0 || nonce !== 0,
+      // RPC quantities are bigint; comparing 0n with numeric zero marks an unused account active.
+      active: balance > _0n || nonce !== _0n,
     };
   }
   async height(): Promise<number> {
@@ -554,11 +579,12 @@ export class RpcClient implements IWeb3Provider {
   }
   async nonce(address: string): Promise<bigint> {
     if (typeof address !== 'string') throw new Error('nonce: wrong address');
+    // Confirmed nonce permits replacing a stuck pending tx; callers can override prepared fields to queue.
     return BigInt(await this.call('eth_getTransactionCount', address, 'latest'));
   }
   /**
-   * Suggested fees for the next block based on eth_feeHistory,
-   * with eth_gasPrice fallback for chains without EIP-1559.
+   * Suggested fees for the next block based on eth_feeHistory, with eth_gasPrice fallback.
+   * Assumes the chain has activated London; pre-London nodes can return zero-base-fee history.
    */
   async fees(): Promise<FeeEstimate> {
     try {
@@ -583,14 +609,58 @@ export class RpcClient implements IWeb3Provider {
   }
   /**
    * Broadcasts a signed transaction.
+   * EIP-4844 requires raw hex containing the pooled wrapper with blobs, commitments and proofs;
+   * its canonical `Transaction.toHex()` payload does not contain that sidecar data.
    * @param tx - signed raw transaction hex, or a signed Transaction (`.toHex()` is used)
    * @returns transaction hash
    */
   async broadcast(tx: string | Transaction<keyof typeof TxVersions>): Promise<string> {
-    const hex = typeof tx === 'string' ? tx : tx.toHex(true);
+    const hex = typeof tx === 'string' ? tx : tx.toHex({ includeSignature: true });
     if (typeof hex !== 'string' || !hex.startsWith('0x'))
       throw new Error('broadcast: wrong transaction');
     return await this.call('eth_sendRawTransaction', hex);
+  }
+  /**
+   * Batches multiple read-only calls into a single Multicall3 `aggregate3` eth_call.
+   * @param calls - list of `{ to, data }` calls; `allowFailure` (default true) lets a
+   * single call revert without failing the whole batch
+   * @param opts.tag - block tag, as in `ethCall`
+   * @param opts.contract - Multicall3 deployment address, defaults to the canonical one
+   * @returns per-call `{ success, data }` with hex-encoded return data
+   * @example
+   * ```ts
+   * const [name, symbol] = await rpc.multicall([
+   *   { to: token, data: nameCalldata },
+   *   { to: token, data: symbolCalldata },
+   * ]);
+   * ```
+   */
+  async multicall(
+    calls: { to: string; data: string; allowFailure?: boolean }[],
+    opts: { tag?: Web3CallArgs['tag']; contract?: string } = {}
+  ): Promise<{ success: boolean; data: string }[]> {
+    if (!Array.isArray(calls)) throw new TypeError('multicall: expected array of calls');
+    const arg = calls.map((call, i) => {
+      if (!isObject(call) || typeof call.to !== 'string' || typeof call.data !== 'string')
+        throw new Error(`multicall: wrong call at index ${i}`);
+      return {
+        target: call.to,
+        // Default only an omitted policy; the ABI coder rejects non-booleans.
+        allowFailure: call.allowFailure === undefined ? true : call.allowFailure,
+        callData: ethHex.decode(call.data),
+      };
+    });
+    const m = createContract(MULTICALL3_ABI).aggregate3;
+    const to = opts.contract === undefined ? MULTICALL3 : opts.contract;
+    const res = await this.ethCall({ to, data: ethHex.encode(m.encodeInput(arg)) }, opts.tag);
+    const decoded = m.decodeOutput(ethHex.decode(res));
+    // aggregate3 returns exactly one positionally aligned result per input call.
+    if (decoded.length !== calls.length)
+      throw new Error(`multicall: expected ${calls.length} results, got ${decoded.length}`);
+    return decoded.map(({ success, returnData }) => ({
+      success,
+      data: ethHex.encode(returnData),
+    }));
   }
   /** Polls until the transaction is included (+ optional confirmations). */
   async waitForReceipt(txHash: string, opts: WaitReceiptOpts = {}): Promise<TxReceipt> {
@@ -607,18 +677,53 @@ export class RpcClient implements IWeb3Provider {
       (!Number.isSafeInteger(opts.timeoutMs) || opts.timeoutMs <= 0)
     )
       throw new Error('waitForReceipt: wrong timeoutMs');
-    const start = Date.now();
-    for (;;) {
-      throwIfAborted(opts.signal, 'waitForReceipt');
-      const receipt = await this.call('eth_getTransactionReceipt', txHash);
-      if (receipt !== null && receipt !== undefined) {
-        const fixed = fixTxReceipt(receipt);
-        if (confirmations <= 1) return fixed;
-        if ((await this.height()) - fixed.blockNumber + 1 >= confirmations) return fixed;
+    throwIfAborted(opts.signal, 'waitForReceipt');
+    const deadline =
+      opts.timeoutMs !== undefined || opts.signal ? new AbortController() : undefined;
+    const stopped = deadline
+      ? new Promise<never>((_, reject) =>
+          deadline.signal.addEventListener('abort', () => reject(deadline.signal.reason), {
+            once: true,
+          })
+        )
+      : undefined;
+    const wait = <T>(promise: Promise<T>) =>
+      stopped ? Promise.race<T>([promise, stopped]) : promise;
+    const onAbort = () =>
+      deadline!.abort(opts.signal!.reason ?? new Error('waitForReceipt: aborted'));
+    if (opts.signal) opts.signal.addEventListener('abort', onAbort, { once: true });
+    const timer =
+      opts.timeoutMs === undefined
+        ? undefined
+        : setTimeout(
+            () =>
+              deadline!.abort(
+                new Web3Error('waitForReceipt: timeout', {
+                  method: 'eth_getTransactionReceipt',
+                })
+              ),
+            opts.timeoutMs
+          );
+    try {
+      for (;;) {
+        throwIfAborted(opts.signal, 'waitForReceipt');
+        const receipt = await wait(this.call('eth_getTransactionReceipt', txHash));
+        if (receipt !== null && receipt !== undefined) {
+          const fixed = fixTxReceipt(receipt);
+          // A hash-keyed receipt lookup must never confirm a different transaction.
+          if (
+            typeof fixed.transactionHash !== 'string' ||
+            fixed.transactionHash.toLowerCase() !== txHash.toLowerCase()
+          )
+            throw new Error('waitForReceipt: wrong receipt hash');
+          if (confirmations <= 1) return fixed;
+          if ((await wait(this.height())) - fixed.blockNumber + 1 >= confirmations) return fixed;
+        }
+        await wait(sleep(pollIntervalMs, deadline?.signal));
       }
-      if (opts.timeoutMs !== undefined && Date.now() - start >= opts.timeoutMs)
-        throw new Web3Error('waitForReceipt: timeout', { method: 'eth_getTransactionReceipt' });
-      await sleep(pollIntervalMs, opts.signal);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+      if (opts.signal) opts.signal.removeEventListener('abort', onAbort);
     }
   }
   /**
@@ -657,6 +762,10 @@ export class RpcClient implements IWeb3Provider {
       maxFeePerGas: fees.maxFeePerGas,
       maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
     };
+  }
+  /** Clears the cached probe; in-flight callers keep their result and the next call re-probes. */
+  clearCapabilities(): void {
+    this.capabilitiesPromise = undefined;
   }
   /**
    * Probes which RPC namespaces the node supports. Probe result is memoized per

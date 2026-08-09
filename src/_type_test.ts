@@ -1,6 +1,7 @@
 import * as P from 'micro-packed';
 import * as abic from './abi/decoder.ts';
 import * as abi from './abi/mapper.ts';
+import { parseAbi, parseAbiItem } from './abi/parse.ts';
 import * as ssz from './ssz.ts';
 import * as typed from './core/message.ts';
 // Should not be included in npm package, just for test of typescript compilation
@@ -12,6 +13,12 @@ const _100n = /* @__PURE__ */ BigInt(100);
 const StringVal = 'string';
 StringVal;
 export type Bytes = Uint8Array;
+assertType<string | undefined>(parseAbiItem('function f() view').stateMutability);
+// Individually parsed items are runtime ABIs too, so assembling them must retain untyped methods.
+abic.createContract([parseAbiItem('function f(uint256 x)')]).f.encodeInput(_1n);
+// A runtime-parsed empty constructor accepts the same omitted argument
+// as deployContract at runtime.
+abic.deployContract(parseAbi(['constructor()']), '0x00');
 
 // as const returns readonly stuff, remove readonly property
 type Writable<T> = T extends {}
@@ -51,6 +58,8 @@ assertType<P.CoderType<string[]>>(abi.mapComponent({ type: 'string[]' } as const
 
 assertType<P.CoderType<Uint8Array>>(abi.mapComponent({ type: 'bytes' } as const));
 assertType<P.CoderType<Uint8Array[]>>(abi.mapComponent({ type: 'bytes[]' } as const));
+assertType<P.CoderType<Uint8Array>>(abi.mapComponent({ type: 'function' } as const));
+assertType<P.CoderType<Uint8Array[]>>(abi.mapComponent({ type: 'function[]' } as const));
 
 assertType<P.CoderType<string>>(abi.mapComponent({ type: 'address' } as const));
 assertType<P.CoderType<string[]>>(abi.mapComponent({ type: 'address[]' } as const));

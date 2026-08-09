@@ -1,6 +1,6 @@
 /*! micro-eth-signer - MIT License (c) 2021 Paul Miller (paulmillr.com) */
 import { keccak_256 } from '@noble/hashes/sha3.js';
-import { bytesToHex, hexToBytes } from '@noble/hashes/utils.js';
+import { hexToBytes } from '@noble/hashes/utils.js';
 import { addr } from './address.ts';
 import {
   RawTx,
@@ -67,6 +67,13 @@ type HumanInputInnerDefault = DefaultsOptional<TxCoder<DefaultType>> & { type?: 
 // Discriminated (type, raw) view of a Transaction: checking `tx.type` narrows `tx.raw`.
 type TxUnion = { [K in TxType]: { type: K; raw: TxCoder<K> } }[TxType];
 
+export type TransactionOpts = {
+  /** Validate fields as human/UI input (sane fee & nonce limits). Default: true. */
+  strict?: boolean;
+  /** Allow signature fields (`r`, `s`, `yParity`, `v`) to be present on input. Default: true. */
+  allowSignatureFields?: boolean;
+};
+
 // Changes:
 // - legacy: instead of hardfork now accepts additional param chainId
 //           if chainId is present, we enable relay protection
@@ -82,12 +89,15 @@ export class Transaction<T extends TxType> {
   private readonly strict: boolean;
 
   // Doesn't force any defaults, catches if fields incompatible with type
-  constructor(type: T, raw: TxCoder<T>, strict = true, allowSignatureFields = true) {
+  constructor(type: T, raw: TxCoder<T>, opts: TransactionOpts = {}) {
+    const { strict = true, allowSignatureFields = true } = opts;
     this.type = type;
     // Preserve whether this was validated as user input or machine/historical data.
     this.strict = strict;
     validateFields(type, raw, strict, allowSignatureFields);
-    this.raw = cloneDeep(raw);
+    // Shallow freeze: reassigning validated top-level fields would bypass validation
+    // and make `isSigned` stale. Nested structures (accessList) stay mutable.
+    this.raw = Object.freeze(cloneDeep(raw)) as TxCoder<T>;
     this.isSigned = typeof this.raw.r === 'bigint' && typeof this.raw.s === 'bigint';
   }
   // Defaults
@@ -119,7 +129,10 @@ export class Transaction<T extends TxType> {
     // Preserve normalized default type when callers pass the supported `{ type: undefined }` shape.
     raw.type = type;
     if (!hasGasLimit && fields.has('gasLimit')) raw.gasLimit = calcIntrinsicGas(type, raw);
-    return new Transaction(type, sortRawData(raw as TxCoder<T>), strict, false);
+    return new Transaction(type, sortRawData(raw as TxCoder<T>), {
+      strict,
+      allowSignatureFields: false,
+    });
   }
   /**
    * Creates transaction which sends whole account balance. Does two things:
@@ -139,10 +152,12 @@ export class Transaction<T extends TxType> {
    * WARNING: using the method would decrease privacy of a transfer, because
    * payments for services have specific amounts, and not *the whole amount*.
    * @param accountBalance - account balance in wei
-   * @param burnRemaining - send unspent fee to miners. When false, some "small amount" would remain
+   * @param opts.burnRemaining - send unspent fee to miners. When false, some "small amount" would
+   * remain. Default: true
    * @returns new transaction with adjusted amounts
    */
-  setWholeAmount(accountBalance: bigint, burnRemaining = true): Transaction<T> {
+  setWholeAmount(accountBalance: bigint, opts: { burnRemaining?: boolean } = {}): Transaction<T> {
+    const { burnRemaining = true } = opts;
     const _0n = BigInt(0);
     if (typeof accountBalance !== 'bigint' || accountBalance <= _0n)
       throw new Error('account balance must be bigger than 0');
@@ -156,14 +171,27 @@ export class Transaction<T extends TxType> {
       const r = raw as TxCoder<'eip1559' | 'eip4844' | 'eip7702'>;
       r.maxPriorityFeePerGas = r.maxFeePerGas;
     }
-    return new Transaction(this.type, raw, this.strict);
+    return new Transaction(this.type, raw, { strict: this.strict });
   }
-  static fromRawBytes(bytes: Uint8Array, strict = false): Transaction<TxType> {
+  /**
+   * Decodes an EIP-2718 serialized transaction.
+   * Unlike `prepare`, `strict` defaults to false: wire data is machine-produced or historical,
+   * so the UI-oriented sanity limits (nonce, fee caps) applied to human input don't belong here.
+   * @param bytes - serialized transaction
+   * @param strict - validate fields as human/UI input. Default: false
+   */
+  static fromBytes(bytes: Uint8Array, strict = false): Transaction<TxType> {
     const raw = RawTx.decode(bytes);
-    return new Transaction(raw.type, raw.data, strict);
+    return new Transaction(raw.type, raw.data, { strict });
   }
+  /**
+   * Decodes an EIP-2718 serialized transaction from hex.
+   * Unlike `prepare`, `strict` defaults to false: see {@link Transaction.fromBytes}.
+   * @param hex - serialized transaction, with or without `0x` prefix
+   * @param strict - validate fields as human/UI input. Default: false
+   */
   static fromHex(hex: string, strict = false): Transaction<TxType> {
-    return Transaction.fromRawBytes(ethHexNoLeadingZero.decode(hex), strict);
+    return Transaction.fromBytes(ethHexNoLeadingZero.decode(hex), strict);
   }
   // Discriminated view of `this`, so methods can narrow `raw` by checking `type`.
   private asUnion(): TxUnion {
@@ -176,9 +204,10 @@ export class Transaction<T extends TxType> {
   }
   /**
    * Converts transaction to RLP.
-   * @param includeSignature whether to include signature
+   * @param opts.includeSignature - whether to include signature. Default: true when signed
    */
-  toBytes(includeSignature: boolean = this.isSigned): Uint8Array {
+  toBytes(opts: { includeSignature?: boolean } = {}): Uint8Array {
+    const includeSignature = opts.includeSignature ?? this.isSigned;
     // cloneDeep is not necessary here
     const data = Object.assign({}, this.raw);
     if (includeSignature) {
@@ -190,15 +219,15 @@ export class Transaction<T extends TxType> {
   }
   /**
    * Converts transaction to hex.
-   * @param includeSignature whether to include signature
+   * @param opts.includeSignature - whether to include signature. Default: true when signed
    */
-  toHex(includeSignature: boolean = this.isSigned): string {
-    return ethHex.encode(this.toBytes(includeSignature));
+  toHex(opts: { includeSignature?: boolean } = {}): string {
+    return ethHex.encode(this.toBytes(opts));
   }
   /** Calculates keccak-256 hash of signed transaction. Used in block explorers. */
   get hash(): string {
     this.assertIsSigned();
-    return bytesToHex(this.calcHash(true));
+    return ethHex.encode(this.calcHash(true));
   }
   /** Returns sender's address. */
   get sender(): string {
@@ -211,7 +240,7 @@ export class Transaction<T extends TxType> {
     return decodeLegacyV(this.raw);
   }
   private calcHash(includeSignature: boolean): Uint8Array {
-    return keccak_256(this.toBytes(includeSignature));
+    return keccak_256(this.toBytes({ includeSignature }));
   }
   /** Calculates MAXIMUM fee in wei that could be spent. */
   get fee(): bigint {
@@ -234,7 +263,7 @@ export class Transaction<T extends TxType> {
     return res;
   }
   clone(): Transaction<T> {
-    return new Transaction(this.type, cloneDeep(this.raw), this.strict);
+    return new Transaction(this.type, cloneDeep(this.raw), { strict: this.strict });
   }
   verifySignature(): boolean {
     this.assertIsSigned();
@@ -248,7 +277,7 @@ export class Transaction<T extends TxType> {
     return verify(sig.toBytes(), hash, publicKey);
   }
   removeSignature(): Transaction<T> {
-    return new Transaction(this.type, removeSig(cloneDeep(this.raw)), this.strict);
+    return new Transaction(this.type, removeSig(cloneDeep(this.raw)), { strict: this.strict });
   }
   /**
    * Signs transaction with a private key.
@@ -267,7 +296,7 @@ export class Transaction<T extends TxType> {
     const { r, s, recovery } = sig;
     const sraw = Object.assign(cloneDeep(this.raw), { r, s, yParity: recovery });
     // The copied result is validated in non-strict way, strict is only for user input.
-    return new Transaction(this.type, sraw, false);
+    return new Transaction(this.type, sraw, { strict: false });
   }
   /** Calculates public key and address from signed transaction's signature. */
   recoverSender(): { publicKey: string; address: string } {
@@ -277,6 +306,6 @@ export class Transaction<T extends TxType> {
     // Will crash on 'chainstart' hardfork
     if (sig.hasHighS()) throw new Error('invalid s');
     const publicKey = recoverPublicKey(sig, this.calcHash(false));
-    return { publicKey: bytesToHex(publicKey), address: addr.fromPublicKey(publicKey) };
+    return { publicKey: ethHex.encode(publicKey), address: addr.fromPublicKey(publicKey) };
   }
 }

@@ -5,23 +5,26 @@ import * as P from 'micro-packed';
 import { deepStrictEqual, throws } from 'node:assert';
 import { addHints } from '../src/abi/common.ts';
 import * as abi from '../src/abi/decoder.ts';
-import { mapArgs, mapComponent } from '../src/abi/mapper.ts';
 import {
-  CONTRACTS,
   CLEARSIG_REPO,
+  CONTRACTS,
   DEFAULT_TOKENS,
   Decoder,
-  TOKENS_BY_SYMBOL,
+  MULTICALL3_ABI,
   TOKENS,
+  TOKENS_BY_SYMBOL,
   decodeData,
+  decodeError,
   decodeEvent,
   decodeTx,
   deployContract,
+  parseAbi, parseAbiItem,
   tokenFromSymbol,
   tokensBySymbol,
 } from '../src/abi/index.ts';
+import { mapArgs, mapComponent } from '../src/abi/mapper.ts';
 import { Transaction } from '../src/index.ts';
-import { strip0x } from '../src/utils.ts';
+import { ethHex, strip0x } from '../src/utils.ts';
 
 import ERC20, { hints as ERC20_HINTS } from '../src/abi/erc20.ts';
 import {
@@ -34,7 +37,7 @@ import {
 } from '../src/abi/uniswap-v2.ts';
 import {
   default as UNISWAP_V3_ROUTER,
-  UNISWAP_V3_ROUTER_CONTRACT,
+  UNISWAP_V3_ROUTER_CONTRACT
 } from '../src/abi/uniswap-v3.ts';
 import { WETH_CONTRACT } from '../src/abi/weth.ts';
 
@@ -2304,6 +2307,11 @@ should('tokensBySymbol derives symbol indexes and rejects duplicates', () => {
   const bySymbol = tokensBySymbol(table);
   deepStrictEqual(Object.getPrototypeOf(bySymbol), null);
   deepStrictEqual(bySymbol.TOKA, { contract: tokenA, ...table[tokenA] });
+  // Indexing may freeze its own result, but must not freeze or retain caller-owned metadata.
+  deepStrictEqual(Object.isFrozen(table[tokenA].feed), false);
+  deepStrictEqual(bySymbol.TOKA.feed === table[tokenA].feed, false);
+  table[tokenA].feed.decimals = 4;
+  deepStrictEqual(bySymbol.TOKA.feed?.decimals, 3);
   throws(() => ((bySymbol.TOKA as any).symbol = 'MUT'), TypeError);
   throws(
     () =>
@@ -2319,6 +2327,10 @@ should('tokenFromSymbol returns undefined and supports custom token tables', () 
   const table = {
     [token]: { symbol: 'CUSTOM', decimals: 5 },
   };
+  deepStrictEqual(
+    tokenFromSymbol('SUSD')?.contract,
+    '0x57ab1ec28d129707052df4df418d58a2d46d5f51'
+  );
   deepStrictEqual(tokenFromSymbol('UNKNOWN'), undefined);
   deepStrictEqual(tokenFromSymbol('CUSTOM', table), { contract: token, ...table[token] });
 });
@@ -3627,9 +3639,12 @@ describe('simple decoder API', () => {
         }),
       /decodeTx: wrong from=0x2222222222222222222222222222222222222222/
     );
-    const bad = Transaction.fromHex(signed);
-    (bad.raw as { s: bigint }).s =
-      0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364140n;
+    const goodTx = Transaction.fromHex(signed);
+    const bad = new Transaction(
+      goodTx.type,
+      { ...goodTx.raw, s: 0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364140n },
+      { strict: false }
+    );
     throws(
       () =>
         decodeTx(bad, {
@@ -4154,6 +4169,192 @@ describe('simple decoder API', () => {
         )
       );
     });
+  });
+});
+
+describe('parseAbi', () => {
+  should('encode external-function values', () => {
+    const method = abi.createContract(parseAbi(['function setCallback(function cb)'])).setCallback;
+    const callback = ethHex.decode(`0x${'11'.repeat(24)}`);
+    deepStrictEqual(
+      ethHex.encode(method.encodeInput(callback)),
+      `0xe81af408${'11'.repeat(24)}${'00'.repeat(8)}`
+    );
+  });
+  should('parse function/event/error shapes', () => {
+    deepStrictEqual(parseAbiItem('function transfer(address to, uint256 amount) returns (bool)'), {
+      type: 'function',
+      name: 'transfer',
+      inputs: [
+        { type: 'address', name: 'to' },
+        { type: 'uint256', name: 'amount' },
+      ],
+      outputs: [{ type: 'bool' }],
+    });
+    deepStrictEqual(
+      parseAbiItem('event Transfer(address indexed from, address indexed to, uint256 value)'),
+      {
+        type: 'event',
+        name: 'Transfer',
+        inputs: [
+          { type: 'address', name: 'from', indexed: true },
+          { type: 'address', name: 'to', indexed: true },
+          { type: 'uint256', name: 'value' },
+        ],
+      }
+    );
+    deepStrictEqual(parseAbiItem('error InsufficientBalance(uint256 available, uint256 required)'), {
+      type: 'error',
+      name: 'InsufficientBalance',
+      inputs: [
+        { type: 'uint256', name: 'available' },
+        { type: 'uint256', name: 'required' },
+      ],
+    });
+    deepStrictEqual(parseAbiItem('constructor(address owner) payable'), {
+      type: 'constructor',
+      stateMutability: 'payable',
+      inputs: [{ type: 'address', name: 'owner' }],
+    });
+    deepStrictEqual(parseAbiItem('fallback() external payable'), {
+      type: 'fallback',
+      stateMutability: 'payable',
+    });
+    deepStrictEqual(parseAbiItem('receive() external payable'), {
+      type: 'receive',
+      stateMutability: 'payable',
+    });
+    deepStrictEqual(parseAbiItem('function deposit() payable'), {
+      type: 'function',
+      name: 'deposit',
+      stateMutability: 'payable',
+    });
+  });
+  should('parse arrays of payable addresses', () => {
+    deepStrictEqual(
+      [
+        parseAbiItem('function pay(address payable[] recipients)'),
+        parseAbiItem('function pay(address payable[2] recipients)'),
+      ],
+      [
+        {
+          type: 'function',
+          name: 'pay',
+          inputs: [{ type: 'address[]', name: 'recipients' }],
+        },
+        {
+          type: 'function',
+          name: 'pay',
+          inputs: [{ type: 'address[2]', name: 'recipients' }],
+        },
+      ]
+    );
+  });
+  should('produce canonical selectors (cross-checked with ethers)', () => {
+    const fnVectors = [
+      ['function transferFrom(address from, address to, uint256 value) returns (bool)', '23b872dd'],
+      ['function balanceOf(address) view returns (uint256)', '70a08231'],
+      ['function deposit() payable', 'd0e30db0'],
+      // uint -> uint256 normalization, fixed arrays, data location keywords
+      ['function submit(uint[] memory ids, bytes32[4] calldata proofs)', '3c3d01bb'],
+      // inline tuple
+      [
+        'function exactInputSingle((address tokenIn, address tokenOut, uint24 fee, address recipient, uint256 deadline, uint256 amountIn, uint256 amountOutMinimum, uint160 sqrtPriceLimitX96) params) payable returns (uint256 amountOut)',
+        '414bf389',
+      ],
+    ];
+    for (const [sig, selector] of fnVectors)
+      deepStrictEqual(abi.fnSigHash(parseAbiItem(sig)), selector, sig);
+    deepStrictEqual(
+      abi.evSigHash(parseAbiItem('event Transfer(address indexed from, address indexed to, uint256 value)')),
+      'ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef'
+    );
+  });
+  should('encode identically to JSON ABI', () => {
+    const parsed = abi.createContract(
+      parseAbi(['function transfer(address to, uint256 value) returns (bool success)'])
+    );
+    const json = abi.createContract(ERC20);
+    const args = { to: '0x6B175474E89094C44Da98b954EedeAC495271d0F', value: 123n };
+    deepStrictEqual(parsed.transfer.encodeInput(args), json.transfer.encodeInput(args));
+    deepStrictEqual(parsed.transfer.decodeOutput(ethHex.decode(`0x${'00'.repeat(31)}01`)), true);
+  });
+  should('reject malformed signatures', () => {
+    throws(() => parseAbiItem('transfer(address,uint256)')); // no keyword
+    throws(() => parseAbiItem('function x(Foo y)'), /struct references/);
+    throws(() => parseAbiItem('function x(uint7 y)'), /unknown type/);
+    throws(() => parseAbiItem('function x(address indexed y)'), /indexed/);
+    throws(() => parseAbiItem('function x((address a,) y)')); // empty tuple member
+    throws(() => parseAbiItem('function x(address y')); // unbalanced parens
+    throws(() => parseAbiItem('function x() wrong')); // unknown modifier
+    throws(() => parseAbiItem('function x() view pure')); // two mutability modifiers
+    throws(() => parseAbiItem('error E(uint256 a) anonymous')); // trailer on error
+    throws(() => parseAbi('function x()')); // not an array
+  });
+});
+
+describe('decodeError', () => {
+  // Vectors generated with ethers AbiCoder/Interface
+  const ERROR_STRING =
+    '0x08c379a00000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000001a4e6f7420656e6f7567682045746865722070726f76696465642e000000000000';
+  const PANIC = '0x4e487b710000000000000000000000000000000000000000000000000000000000000011';
+  const CUSTOM =
+    '0xcf47918100000000000000000000000000000000000000000000000000000000000000070000000000000000000000000000000000000000000000000000000000000009';
+  should('decode Error(string)', () => {
+    deepStrictEqual(decodeError(ERROR_STRING), {
+      name: 'Error',
+      signature: 'Error(string)',
+      args: 'Not enough Ether provided.',
+      message: 'Not enough Ether provided.',
+    });
+    deepStrictEqual(decodeError(ethHex.decode(ERROR_STRING)).name, 'Error');
+  });
+  should('decode Panic(uint256)', () => {
+    deepStrictEqual(decodeError(PANIC), {
+      name: 'Panic',
+      signature: 'Panic(uint256)',
+      args: 0x11n,
+      message: 'panic: arithmetic overflow or underflow (0x11)',
+    });
+  });
+  should('decode custom errors from ABI', () => {
+    const errAbi = parseAbi(['error InsufficientBalance(uint256 available, uint256 required)']);
+    deepStrictEqual(decodeError(CUSTOM, errAbi), {
+      name: 'InsufficientBalance',
+      signature: 'InsufficientBalance(uint256,uint256)',
+      args: { available: 7n, required: 9n },
+      message: 'InsufficientBalance(uint256,uint256)',
+    });
+    // Unknown selector without matching ABI
+    deepStrictEqual(decodeError(CUSTOM), undefined);
+    deepStrictEqual(decodeError(CUSTOM, parseAbi(['error Other(uint256 a)'])), undefined);
+  });
+  should('handle empty and malformed data', () => {
+    deepStrictEqual(decodeError('0x'), undefined); // revert without reason
+    throws(() => decodeError('0x1234')); // shorter than a selector
+  });
+});
+
+describe('multicall3 abi', () => {
+  // Vectors generated with ethers Interface
+  const DAI = '0x6B175474E89094C44Da98b954EedeAC495271d0F';
+  const CALLDATA =
+    '0x82ad56cb00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000e00000000000000000000000006b175474e89094c44da98b954eedeac495271d0f00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000060000000000000000000000000000000000000000000000000000000000000000406fdde03000000000000000000000000000000000000000000000000000000000000000000000000000000006b175474e89094c44da98b954eedeac495271d0f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000060000000000000000000000000000000000000000000000000000000000000000495d89b4100000000000000000000000000000000000000000000000000000000';
+  const RESULT =
+    '0x00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000c00000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000007000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000400000000000000000000000000000000000000000000000000000000000000000';
+  should('encode/decode aggregate3 (cross-checked with ethers)', () => {
+    const m = abi.createContract(MULTICALL3_ABI).aggregate3;
+    const calldata = ethHex.encode(
+      m.encodeInput([
+        { target: DAI, allowFailure: true, callData: ethHex.decode('0x06fdde03') },
+        { target: DAI, allowFailure: false, callData: ethHex.decode('0x95d89b41') },
+      ])
+    );
+    deepStrictEqual(calldata, CALLDATA);
+    deepStrictEqual(m.decodeOutput(ethHex.decode(RESULT)), [
+      { success: true, returnData: ethHex.decode(`0x${'00'.repeat(31)}07`) },
+      { success: false, returnData: Uint8Array.of() },
+    ]);
   });
 });
 

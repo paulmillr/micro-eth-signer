@@ -26,6 +26,12 @@ describe('RLP', () => {
     should('decode invalid', () => {
       for (const t of INVALID) throws(() => RLP.decode(ethHexNoLeadingZero.decode(t)));
     });
+    should('honors allowUnreadBytes on the public RLP decoder', () => {
+      deepStrictEqual(
+        RLP.decode(Uint8Array.of(1, 2), { allowUnreadBytes: true }),
+        Uint8Array.of(1)
+      );
+    });
     should('encode 0x-prefixed byte strings', () => {
       deepStrictEqual(
         [

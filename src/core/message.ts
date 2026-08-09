@@ -20,7 +20,8 @@ import { addr } from './address.ts';
 // EIP-191 signed data (https://eips.ethereum.org/EIPS/eip-191)
 export type Hex = string | Uint8Array;
 export interface TypedSigner<T> {
-  _getHash: (message: TArg<T>) => string;
+  /** Message digest that gets signed (`hashMessage` in other libraries). */
+  getHash: (message: TArg<T>) => string;
   sign(message: TArg<T>, privateKey: TArg<Hex>, extraEntropy?: TArg<boolean | Uint8Array>): string;
   recoverAddress(signature: string, message: TArg<T>): string;
   verify(signature: string, message: TArg<T>, address: string): boolean;
@@ -39,14 +40,14 @@ function getSigner<T>(
   //     bytes32 hash = keccak256(abi.encodePacked(
   //       byte(0x19), byte(0), address(this), msg.value, nonce, payload));
   const fn = msgFn as (message: TArg<T>) => Uint8Array;
-  const getHash = (message: TArg<T>) =>
+  const hashMessage = (message: TArg<T>) =>
     keccak_256(concatBytes(new Uint8Array([0x19, version]), fn(message)));
   // TODO: `v` can contain non-undefined chainId. If it is used, check it with
   // the EIP-712 domain.
   return {
-    _getHash: (message: TArg<T>) => ethHex.encode(getHash(message)),
+    getHash: (message: TArg<T>) => ethHex.encode(hashMessage(message)),
     sign(message: TArg<T>, privateKey: TArg<Hex>, extraEntropy: TArg<boolean | Uint8Array> = true) {
-      const hash = getHash(message);
+      const hash = hashMessage(message);
       if (typeof privateKey === 'string') privateKey = ethHex.decode(privateKey);
       const sig = sign(hash, privateKey, extraEntropy);
       const end = sig.recovery === 0 ? '1b' : '1c';
@@ -54,7 +55,7 @@ function getSigner<T>(
     },
     recoverAddress(signature: string, message: TArg<T>) {
       astring(signature);
-      const hash = getHash(message);
+      const hash = hashMessage(message);
       signature = strip0x(signature);
       if (signature.length !== 65 * 2) throw new Error('invalid signature length');
       const sigh = signature.slice(0, -2);
@@ -303,8 +304,8 @@ export function encoder<T extends EIP712Types>(types: T, domain: TArg<GetType<T,
     structHash: <K extends Key<T>>(type: K, message: TArg<GetType<T, K>>): string =>
       ethHex.encode(structHash(type, message)),
     // Signer
-    _getHash: <K extends Key<T>>(primaryType: K, message: TArg<GetType<T, K>>): string =>
-      signer._getHash({ primaryType, message }),
+    getHash: <K extends Key<T>>(primaryType: K, message: TArg<GetType<T, K>>): string =>
+      signer.getHash({ primaryType, message }),
     sign: <K extends Key<T>>(
       primaryType: K,
       message: TArg<GetType<T, K>>,
@@ -383,7 +384,7 @@ export function sigHash<T extends EIP712Types, K extends Key<T>>(
   typed: TArg<TypedData<T, K>>
 ): string {
   validateTyped(typed);
-  return encoder(getTypedTypes(typed) as T, typed.domain)._getHash(
+  return encoder(getTypedTypes(typed) as T, typed.domain).getHash(
     typed.primaryType as K,
     typed.message
   );

@@ -254,7 +254,7 @@ export const DEFAULT_TOKENS: Record<string, TokenDef> = /* @__PURE__ */ deepFree
     decimals: 18,
     feed: { contract: '0x2885d15b8af22648b98b122b22fdf4d2a56c6023', decimals: 8 },
   },
-  '0x57ab1e02fee23774580c119740129eac7081e9d3': {
+  '0x57ab1ec28d129707052df4df418d58a2d46d5f51': {
     symbol: 'SUSD',
     decimals: 18,
     feed: { contract: '0xad35bd71b9afe6e4bdc266b345c198eadef9ad94', decimals: 8 },
@@ -280,7 +280,10 @@ export function tokensBySymbol<T extends Record<string, TokenDef>>(
     const token = tokens[contract];
     if (res[token.symbol] !== undefined)
       throw new Error(`tokensBySymbol: duplicate token symbol: ${token.symbol}`);
-    res[token.symbol] = { contract, ...token };
+    // Clone the one nested TokenDef field before deep-freezing the derived index.
+    res[token.symbol] = token.feed
+      ? { contract, ...token, feed: { ...token.feed } }
+      : { contract, ...token };
   }
   return deepFreeze(res);
 }

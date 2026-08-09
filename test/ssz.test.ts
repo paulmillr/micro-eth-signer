@@ -487,13 +487,18 @@ describe('SSZ', () => {
       { a: [], b: 0 }
     );
   });
-  should('Coder metadata is frozen', () => {
+  should('Coder metadata and flat state are frozen', () => {
     const fields: any = { a: SSZ.list(4, SSZ.uint8), b: SSZ.bytevector(2) };
     const coder = SSZ.container(fields);
     fields.c = SSZ.uint16;
     deepStrictEqual(Object.keys(coder.info.fields), ['a', 'b']);
     deepStrictEqual(Object.isFrozen(fields), false);
     deepStrictEqual(Object.isFrozen(coder), true);
+    const flat = (coder as any)._flat;
+    deepStrictEqual(Object.isFrozen(flat), true);
+    throws(() => {
+      flat.read = () => ({ a: [99], b: Uint8Array.of(1, 2) });
+    }, TypeError);
     deepStrictEqual(Object.isFrozen(coder.info), true);
     deepStrictEqual(Object.isFrozen(coder.info.fields), true);
     deepStrictEqual(Object.isFrozen(coder.info.fields.a), true);

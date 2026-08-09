@@ -1,21 +1,6 @@
-import { addr } from '../core/address.ts';
-import { Transaction } from '../core/tx.ts';
-import { astring, deepFreeze, ethHex, type TArg, type TRet } from '../utils.ts';
 import {
-  type ContractABI as _ContractABI,
-  type ContractInfo as _ContractInfo,
-  Decoder,
-  type SignatureInfo as _SignatureInfo,
-  createContract as _createContract,
-  deployContract as _deployContract,
-  events as _events,
-} from './decoder.ts';
-import { default as _ERC1155 } from './erc1155.ts';
-import { default as _ERC20 } from './erc20.ts';
-import { default as _ERC721 } from './erc721.ts';
-import {
-  _source as clearSigSource,
   eip712 as clearSigEip712,
+  _source as clearSigSource,
   type ClearSigDef,
   type ClearSigOpt as ClearSigRenderOpt,
   type ClearSigResult,
@@ -23,11 +8,26 @@ import {
   type ClearSigTypedInput,
 } from '../clearsig/index.ts';
 import { ERCS, OURS, addTokens } from '../clearsig/repo.ts';
-export { ERCS, OURS, addTokens } from '../clearsig/repo.ts';
+import { addr } from '../core/address.ts';
+import { Transaction } from '../core/tx.ts';
+import { astring, deepFreeze, ethHex, type TArg, type TRet } from '../utils.ts';
+import {
+  Decoder,
+  createContract as _createContract,
+  deployContract as _deployContract,
+  events as _events,
+  type ContractABI as _ContractABI,
+  type ContractInfo as _ContractInfo,
+  type SignatureInfo as _SignatureInfo,
+} from './decoder.ts';
+import { default as _ERC1155 } from './erc1155.ts';
+import { default as _ERC20 } from './erc20.ts';
+import { default as _ERC721 } from './erc721.ts';
 import {
   default as KYBER_NETWORK_PROXY,
   KYBER_NETWORK_PROXY_CONTRACT as _KYBER_NETWORK_PROXY_CONTRACT,
 } from './kyber.ts';
+import { DEFAULT_TOKENS, TOKENS_BY_SYMBOL, tokensBySymbol, type TokenDef } from './tokens.ts';
 import {
   default as UNISWAP_V2_ROUTER,
   UNISWAP_V2_ROUTER_CONTRACT as _UNISWAP_V2_ROUTER_CONTRACT,
@@ -36,9 +36,34 @@ import {
   default as UNISWAP_V3_ROUTER,
   UNISWAP_V3_ROUTER_CONTRACT as _UNISWAP_V3_ROUTER_CONTRACT,
 } from './uniswap-v3.ts';
-import { DEFAULT_TOKENS, TOKENS_BY_SYMBOL, tokensBySymbol, type TokenDef } from './tokens.ts';
-import { default as _WETH, WETH_CONTRACT } from './weth.ts';
+import { WETH_CONTRACT, default as _WETH } from './weth.ts';
+export { ERCS, OURS, addTokens } from '../clearsig/repo.ts';
 export { DEFAULT_TOKENS, TOKENS_BY_SYMBOL, tokensBySymbol, type TokenDef } from './tokens.ts';
+/**
+ * Decodes revert data of a failed call: solidity `Error(string)` / `Panic(uint256)`
+ * built-ins, plus custom errors matched against `type: 'error'` ABI entries.
+ */
+export { decodeError, type DecodedError } from './decoder.ts';
+export type {
+  ContractMethodNetUntyped,
+  ContractMethodUntyped,
+  EventMethodUntyped,
+  ParsedABI,
+} from './decoder.ts';
+/**
+ * Human-readable ABI parsing: `'function transfer(address to, uint256 amount) returns (bool)'`.
+ * Runtime-only: parsed ABIs get string-indexed untyped methods from createContract/events;
+ * use `as const` JSON ABIs when full type inference is needed.
+ */
+export { parseAbi, parseAbiItem } from './parse.ts';
+/** Multicall3 `aggregate3` ABI and its canonical deployment address. */
+export type {
+  ClearSigDef,
+  ClearSigField,
+  ClearSigResult,
+  ClearSigTypedInput,
+} from '../clearsig/index.ts';
+export { MULTICALL3, MULTICALL3_ABI } from './multicall.ts';
 
 // We need to export raw contracts: CONTRACTS entries include addresses, so the
 // registry shape cannot be reused in createContract with nice types.
@@ -109,12 +134,6 @@ export type ContractABI = _ContractABI;
 export type ContractInfo = _ContractInfo;
 /** Decoded ABI signature information returned by decoder helpers. */
 export type SignatureInfo = _SignatureInfo;
-export type {
-  ClearSigDef,
-  ClearSigField,
-  ClearSigResult,
-  ClearSigTypedInput,
-} from '../clearsig/index.ts';
 /** Clear-signing options for public ABI helpers. */
 export type ClearSigOpt = Omit<ClearSigRenderOpt, 'clearSig'> & {
   /** Clear-signing descriptor files. Omitted means {@link CLEARSIG_REPO}. */

@@ -8,8 +8,17 @@ import {
   createContract,
   events,
 } from '../abi/index.ts';
+import { parseAddress } from '../core/address.ts';
 import { ethHex } from '../utils.ts';
-import { isReverted, mapPool, withRetry, type Log, type Topics, type RpcClient } from '../net.ts';
+import {
+  isReverted,
+  mapPool,
+  throwIfAborted,
+  withRetry,
+  type Log,
+  type Topics,
+  type RpcClient,
+} from '../net.ts';
 
 const ERC_TRANSFER = /* @__PURE__ */ (() => events(ERC20).Transfer)();
 const WETH_DEPOSIT = /* @__PURE__ */ (() => events(WETH).Deposit)();
@@ -176,6 +185,8 @@ export async function tokenInfo(
     decimals: probe(() => c.decimals.call()),
     totalSupply: probe(() => c.totalSupply.call()),
   });
+  // Probe failures are optional metadata, but cancellation must remain observable.
+  throwIfAborted(signal, 'tokenInfo');
   if (t.code === '0x') return { contract, error: 'not contract or destructed' };
   if (t.capabilities && t.capabilities.erc1155) {
     return { contract, abi: 'ERC1155' };
@@ -235,9 +246,16 @@ async function tokenBalanceSingle(
         };
       }
       const ids = Array.from(tokenIds);
-      const owners = await Promise.all(ids.map((i) => c.ownerOf.call(i)));
+      // History includes burned ids; their ownerOf revert must not hide other held candidates.
+      const owners = await Promise.all(
+        ids.map((i) =>
+          c.ownerOf.call(i).catch((error) => {
+            if (!isReverted(error)) throw error;
+          })
+        )
+      );
       return new Map(
-        ids.map((i, j) => [i, owners[j].toLowerCase() === address.toLowerCase() ? 1n : 0n])
+        ids.map((i, j) => [i, owners[j]?.toLowerCase() === address.toLowerCase() ? 1n : 0n])
       );
     }
     const p = [];
@@ -252,6 +270,9 @@ async function tokenBalanceSingle(
     const c = createContract(ERC1155, prov, token.contract);
     const ids = Array.from(tokenIds);
     const balances = await c.balanceOfBatch.call({ accounts: ids.map((_) => address), ids });
+    // balanceOfBatch must return one balance for every requested account/id pair.
+    if (balances.length !== ids.length)
+      throw new Error(`balanceOfBatch: expected ${ids.length} balances, got ${balances.length}`);
     const res = new Map(ids.map((i, j) => [i, balances[j]]));
     return res;
   }
@@ -275,7 +296,7 @@ export async function tokenURI(
     const uri = await c.uri.call(tokenId);
     // ERC-1155 metadata spec: clients MUST substitute '{id}' with the token id
     // as 64 hex chars, zero-padded, lowercase, without 0x
-    return uri.replace('{id}', tokenId.toString(16).padStart(64, '0'));
+    return uri.replaceAll('{id}', tokenId.toString(16).padStart(64, '0'));
   }
   return { contract: token.contract, error: 'not supported token type' };
 }
@@ -515,9 +536,13 @@ export function detectTokenContracts(
   logs: Log[] | { logs: Log[] } | undefined,
   address?: string
 ): Map<string, 'ERC20' | 'ERC721' | 'ERC1155'> {
-  if (address !== undefined && typeof address !== 'string')
+  let account;
+  try {
+    // Topic suffix matching is exact only after normalizing a complete 20-byte address.
+    account = address === undefined ? undefined : parseAddress(address).data.toLowerCase();
+  } catch {
     throw new Error('detectTokenContracts: wrong address');
-  const account = address?.toLowerCase().slice(2);
+  }
   const out = new Map<string, 'ERC20' | 'ERC721' | 'ERC1155'>();
   const items = Array.isArray(logs) ? logs : logs?.logs || [];
   for (const log of items) {

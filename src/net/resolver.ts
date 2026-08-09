@@ -311,7 +311,10 @@ export class NameResolver {
     this.gweiOnly(name, 'expiresAt');
     const ts = await this.gns().expiresAt.call(gnsTokenId(name));
     if (ts === _0n) return;
-    return Number(ts);
+    const res = Number(ts);
+    // ABI uint256 may exceed JavaScript's exact integer range.
+    if (!Number.isSafeInteger(res)) throw new Error(`expiresAt: expected safe integer, got ${ts}`);
+    return res;
   }
 
   /**

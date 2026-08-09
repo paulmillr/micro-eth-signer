@@ -3,7 +3,7 @@ import { add0x, deepFreeze, type TArg } from '../utils.ts';
 import { addHook } from './common.ts';
 import { type Decoder, type HintOpt, type SignatureInfo } from './decoder.ts';
 
-// Raw SwapRouter ABI: net/uniswap-v3.ts, multicall decoding, and clear signing
+// Raw SwapRouter ABI: net/uniswap.ts, multicall decoding, and clear signing
 // depend on these exact method and tuple field names.
 // prettier-ignore
 const _ABI = /* @__PURE__ */ deepFreeze([
