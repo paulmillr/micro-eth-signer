@@ -14,10 +14,14 @@ import {
   type Web3CallArgs,
 } from '../utils.ts';
 
+const _0n = /* @__PURE__ */ BigInt(0);
+const _1n = /* @__PURE__ */ BigInt(1);
+const _10n = /* @__PURE__ */ BigInt(10);
+const _192n = /* @__PURE__ */ BigInt(192);
 const UNISWAP_V2_FACTORY = '0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f';
 const UNISWAP_V3_FACTORY = '0x1F98431c8aD98523631AE4a59f267346ea31F984';
 const DEFAULT_V3_FEES = [100, 500, 3000, 10000];
-const Q192 = 1n << 192n;
+const Q192 = /* @__PURE__ */ (() => _1n << _192n)();
 
 const CHAINLINK_COINS: Record<string, { decimals: number; contract: string }> = {
   BCH: { decimals: 8, contract: '0x9f0f69428f923d6c95b781f89e165c9b2df9789d' },
@@ -84,7 +88,7 @@ async function chainlinkPrice(
 ): Promise<number> {
   const prices = createContract(CHAINLINK_ABI, net, contract);
   const res = await (prices.latestRoundData.call as any)(undefined, callOpt(opt));
-  if (res.answer <= 0n || res.updatedAt === 0n || res.answeredInRound < res.roundId)
+  if (res.answer <= _0n || res.updatedAt === _0n || res.answeredInRound < res.roundId)
     throw new Error('micro-web3/chainlink: invalid price data');
   const num = Number.parseFloat(createDecimal(decimals).encode(res.answer));
   if (!Number.isFinite(num)) throw new Error('invalid data received');
@@ -300,7 +304,7 @@ function assertAddress(address: string, name: string): string {
 }
 
 function assertAmount(amount: bigint): bigint {
-  if (typeof amount !== 'bigint' || amount < 0n) throw new Error('quoter: invalid amount');
+  if (typeof amount !== 'bigint' || amount < _0n) throw new Error('quoter: invalid amount');
   return amount;
 }
 
@@ -325,7 +329,7 @@ function autoOpt(opt?: QuoterOpt, call?: QuoterOpt): QuoterOpt {
 }
 
 function minLiquidity(min?: bigint): bigint {
-  if (min === undefined) return 1n;
+  if (min === undefined) return _1n;
   return assertAmount(min);
 }
 
@@ -486,7 +490,7 @@ async function tokenPriceIn(
   quote: SymbolToken,
   opt?: QuoterOpt
 ): Promise<number> {
-  const amountIn = 10n ** BigInt(token.decimals);
+  const amountIn = _10n ** BigInt(token.decimals);
   return decimalNumber(await tokenRateIn(quoter, token, quote, amountIn, opt), quote.decimals);
 }
 
@@ -509,7 +513,7 @@ async function tokenRateIn(
 
 export function quoteReserves(amountIn: bigint, reserveIn: bigint, reserveOut: bigint): bigint {
   amountIn = assertAmount(amountIn);
-  if (reserveIn <= 0n || reserveOut <= 0n) throw new Error('quoter: insufficient reserves');
+  if (reserveIn <= _0n || reserveOut <= _0n) throw new Error('quoter: insufficient reserves');
   return (amountIn * reserveOut) / reserveIn;
 }
 
@@ -519,7 +523,7 @@ export function quoteSqrtPriceX96(
   direction: RateDirection = 'forward'
 ): bigint {
   amountIn = assertAmount(amountIn);
-  if (sqrtPriceX96 <= 0n) throw new Error('quoter: invalid sqrt price');
+  if (sqrtPriceX96 <= _0n) throw new Error('quoter: invalid sqrt price');
   const priceX192 = sqrtPriceX96 * sqrtPriceX96;
   return isForward(direction) ? (amountIn * priceX192) / Q192 : (amountIn * Q192) / priceX192;
 }
@@ -649,7 +653,7 @@ async function tokenPriceInPath<O extends QuoterOpt, P extends O & UniswapPriceI
   routeCache?: RouteCache
 ): Promise<number> {
   if (token.contract === quote.contract) return 1;
-  let amount = 10n ** BigInt(token.decimals);
+  let amount = _10n ** BigInt(token.decimals);
   const path = [token, ...(config.bridgeTokens?.(token, quote, registry) || []), quote];
   for (let i = 0; i < path.length - 1; i++) {
     const from = path[i];

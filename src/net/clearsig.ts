@@ -6,7 +6,7 @@ import {
   type ClearSigOpt,
   type TxDecodeOpt,
 } from '../abi/index.ts';
-import type { ClearSigTokens } from '../clearsig/index.ts';
+import type { ClearSigTokens } from '../clearsig.ts';
 import { Transaction } from '../core/tx.ts';
 import type { TArg, TRet } from '../utils.ts';
 import type { RpcClient } from '../net.ts';

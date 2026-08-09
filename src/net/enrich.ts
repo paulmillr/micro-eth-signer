@@ -1,5 +1,5 @@
 import { CLEARSIG_REPO, TOKENS, addTokens, decodeData } from '../abi/index.ts';
-import type { ClearSigResult, ClearSigTokens } from '../clearsig/index.ts';
+import type { ClearSigResult, ClearSigTokens } from '../clearsig.ts';
 import { clearSigCallbacks } from './clearsig.ts';
 import { throwIfAborted, type RpcClient, type TxInfo, type TxReceipt } from '../net.ts';
 import {

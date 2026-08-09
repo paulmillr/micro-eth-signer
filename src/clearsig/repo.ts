@@ -1,5 +1,5 @@
 import { deepFreeze, type TArg } from '../utils.ts';
-import type { ClearSigDef, ClearSigTokens } from './index.ts';
+import type { ClearSigDef, ClearSigTokens } from '../clearsig.ts';
 
 type Any = Record<string, any>;
 

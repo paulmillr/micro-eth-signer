@@ -39,10 +39,13 @@ TODO(high-level):
   - this means there are two eip4844 txs: with sidecars and without
 */
 const { Fr: blsFr, Fp, Fp12 } = bls.fields;
+const _0n = /* @__PURE__ */ BigInt(0);
+const _1n = /* @__PURE__ */ BigInt(1);
 const _2n = /* @__PURE__ */ BigInt(2);
 const _3n = /* @__PURE__ */ BigInt(3);
 const _7n = /* @__PURE__ */ BigInt(7);
 const _128n = /* @__PURE__ */ BigInt(128);
+const _m1n = /* @__PURE__ */ BigInt(-1);
 
 // EIP-4844 field elements are 32-byte big-endian values strictly less than BLS_MODULUS, so use
 // a fresh Field wrapper here instead of bls.fields.Fr, whose fromBytes() reduces mod N.
@@ -66,20 +69,21 @@ type ScalarEndoParts = {
 // field elements for scalar parsing.
 const BLOB_REGEX = /.{1,64}/g;
 // BLS parameter z. Fr.ORDER = z^4 - z^2 + 1.
-const BLS_X = -0xd201000000010000n;
+const BLS_X = /* @__PURE__ */ -BigInt('0xd201000000010000');
 const BLS_X_SQUARED = BLS_X * BLS_X;
 // Lambda = z^2 - 1 satisfies lambda^2 + lambda + 1 = 0 in Fr.
-const G1_ENDO_LAMBDA = 0xac45a4010001a40200000000ffffffffn;
+const G1_ENDO_LAMBDA = /* @__PURE__ */ BigInt('0xac45a4010001a40200000000ffffffff');
 // Beta is the Fp cube root for which phi(x, y) = (beta*x, y) acts as lambda on G1.
-const G1_ENDO_BETA =
-  0x1a0111ea397fe699ec02408663d4de85aa0d857d89759ad4897d29650fb85f9b409427eb4f49fffd8bfd00000000aaacn;
+const G1_ENDO_BETA = /* @__PURE__ */ BigInt(
+  '0x1a0111ea397fe699ec02408663d4de85aa0d857d89759ad4897d29650fb85f9b409427eb4f49fffd8bfd00000000aaac'
+);
 const G1_ENDO_BASIS: [[bigint, bigint], [bigint, bigint]] = [
-  [G1_ENDO_LAMBDA, -1n],
-  [1n, BLS_X_SQUARED],
+  [G1_ENDO_LAMBDA, _m1n],
+  [_1n, BLS_X_SQUARED],
 ];
 const G1_ENDO_SPLIT_BITS = 128;
 const G1_ENDO_SPLIT_LAST_BITS = G1_ENDO_SPLIT_BITS - 1;
-const G1_ENDO_SPLIT_MAX = 1n << _128n;
+const G1_ENDO_SPLIT_MAX = _1n << _128n;
 const G1_ENDO_MUL_WINDOW = 4;
 // The projective Point constructor is available at runtime but is not exposed by the public
 // G1 constructor type in all noble versions. Verify it once before using it for phi(P).
@@ -103,7 +107,7 @@ function formatScalar(n: bigint) {
   return add0x(bytesToHex(Fr.toBytes(n)));
 }
 
-const divNearest = (num: bigint, den: bigint) => (num + (num >= 0n ? den : -den) / _2n) / den;
+const divNearest = (num: bigint, den: bigint) => (num + (num >= _0n ? den : -den) / _2n) / den;
 
 function splitScalarG1(k: bigint): ScalarEndoParts {
   if (!Fr.isValid(k)) throw new RangeError('splitScalarG1: invalid scalar');
@@ -112,8 +116,8 @@ function splitScalarG1(k: bigint): ScalarEndoParts {
   const c2 = divNearest(-b1 * k, Fr.ORDER);
   let k1 = k - c1 * a1 - c2 * a2;
   let k2 = -c1 * b1 - c2 * b2;
-  const k1neg = k1 < 0n;
-  const k2neg = k2 < 0n;
+  const k1neg = k1 < _0n;
+  const k2neg = k2 < _0n;
   if (k1neg) k1 = -k1;
   if (k2neg) k2 = -k2;
   if (k1 >= G1_ENDO_SPLIT_MAX || k2 >= G1_ENDO_SPLIT_MAX)
@@ -141,17 +145,17 @@ function assertG1Ctor() {
 
 function mulGLV(p: G1Point, k: bigint): G1Point {
   if (!Fr.isValid(k)) throw new RangeError('mulGLV: invalid scalar');
-  if (k === 0n || p.is0()) return G1.ZERO;
-  if (k === 1n) return p;
+  if (k === _0n || p.is0()) return G1.ZERO;
+  if (k === _1n) return p;
   assertG1Ctor();
   const { k1neg, k1, k2neg, k2 } = splitScalarG1(k);
   const points: G1Point[] = [];
   const scalars: bigint[] = [];
-  if (k1 !== 0n) {
+  if (k1 !== _0n) {
     points.push(k1neg ? p.negate() : p);
     scalars.push(k1);
   }
-  if (k2 !== 0n) {
+  if (k2 !== _0n) {
     const phi = endoG1Projective(p);
     points.push(k2neg ? phi.negate() : phi);
     scalars.push(k2);
@@ -267,11 +271,11 @@ function pippengerBatchAffineG1(points: G1Point[], scalars: bigint[]) {
   for (let i = 0; i < affinePoints.length; i++) {
     const p = affinePoints[i];
     const { k1neg, k1, k2neg, k2 } = splitScalarG1(activeScalars[i]);
-    if (k1 !== 0n) {
+    if (k1 !== _0n) {
       splitPoints.push(k1neg ? { x: p.x, y: Fp.neg(p.y) } : p);
       splitScalars.push(k1);
     }
-    if (k2 !== 0n) {
+    if (k2 !== _0n) {
       const phi = endoG1Affine(p);
       splitPoints.push(k2neg ? { x: phi.x, y: Fp.neg(phi.y) } : phi);
       splitScalars.push(k2);

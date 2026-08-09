@@ -15,7 +15,7 @@ import {
   decodeTx,
 } from '../src/abi/index.ts';
 import { CLEARSIG_REPO_FULL } from '../src/clearsig/repo-full.ts';
-import { eip712 } from '../src/clearsig/index.ts';
+import { eip712 } from '../src/clearsig.ts';
 import { Transaction } from '../src/core/tx.ts';
 import { encoder, getDomainType } from '../src/core/message.ts';
 import { cloneDeep, ethHex } from '../src/utils.ts';
@@ -718,7 +718,7 @@ describe('ERC-7730 clear signing', () => {
   should('keeps the generated full-repository import aligned with its output directory', () => {
     const builder = readFileSync(new URL('./misc/build-clearsig.ts', import.meta.url), 'utf8');
     const generatedImport = builder.match(/import type \{ ClearSigDef \} from '[^']+';/)?.[0];
-    deepStrictEqual(generatedImport, "import type { ClearSigDef } from './index.ts';");
+    deepStrictEqual(generatedImport, "import type { ClearSigDef } from '../clearsig.ts';");
   });
 
   should('renders ERC-20 calldata with registry-style spaced ABI key', async () => {

@@ -1,7 +1,7 @@
 import { bytesToNumberBE, equalBytes, numberToBytesBE } from '@noble/curves/utils.js';
 import { keccak_256 } from '@noble/hashes/sha3.js';
 import { bytesToHex, concatBytes, utf8ToBytes } from '@noble/hashes/utils.js';
-import { addr } from '../core/address.ts';
+import { addr } from './core/address.ts';
 import {
   encodeType,
   encoder as typedEncoder,
@@ -9,7 +9,7 @@ import {
   getDomainType,
   type EIP712Types,
   type TypedData,
-} from '../core/message.ts';
+} from './core/message.ts';
 import {
   add0x,
   cloneDeep,
@@ -22,9 +22,9 @@ import {
   weieth,
   type TArg,
   type TRet,
-} from '../utils.ts';
-import type { ContractInfo, FnArg } from '../abi/decoder.ts';
-import { ARRAY_RE, mapArgs, mapComponent, type Component } from '../abi/mapper.ts';
+} from './utils.ts';
+import type { ContractInfo, FnArg } from './abi/decoder.ts';
+import { ARRAY_RE, mapArgs, mapComponent, type Component } from './abi/mapper.ts';
 
 type Any = Record<string, any>;
 /** ERC-7730 descriptor JSON. Loose: descriptors are schema-driven and wider than local typing. */
@@ -208,7 +208,7 @@ const _1n = /* @__PURE__ */ BigInt(1);
  * ERC-7730 descriptor chain ids are JSON numbers; runtime bigint ids stay in
  * that safe integer range so number-keyed repository and metadata lookups agree.
  */
-const MAX_CHAIN = /* @__PURE__ */ BigInt(Number.MAX_SAFE_INTEGER);
+const MAX_CHAIN = /* @__PURE__ */ (() => BigInt(Number.MAX_SAFE_INTEGER))();
 type TupleArg = Component<string> & { components: Component<string>[] };
 // Private nested rendering/tests may use inline descriptors, but Decoder.addClearSig()
 // indexes descriptor files. Keep that shape conversion here so abi.ts does not
@@ -232,8 +232,8 @@ export const _source = (
 // ERC-7730 calldata format keys are human-readable ABI signatures; this parser
 // accepts the subset present in descriptors, not full Solidity grammar.
 const NAME = '[A-Za-z_$][A-Za-z0-9_$]*';
-const ARG = new RegExp(`^(${NAME}(?:\\[[0-9]*\\])*)\\s*(${NAME})?$`);
-const SUFFIX = new RegExp(`^((?:\\[[0-9]*\\])*)\\s*(${NAME})?$`);
+const ARG = /* @__PURE__ */ (() => new RegExp(`^(${NAME}(?:\\[[0-9]*\\])*)\\s*(${NAME})?$`))();
+const SUFFIX = /* @__PURE__ */ (() => new RegExp(`^((?:\\[[0-9]*\\])*)\\s*(${NAME})?$`))();
 // ERC-7730 EIP-712 format keys are encodeType(primaryType) strings; wallets MUST
 // compare their keccak type hash, so the repository indexes by that hash.
 const eip712Key = (key: string) => ethHex.encode(keccak_256(utf8ToBytes(key)));

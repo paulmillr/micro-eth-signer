@@ -6,7 +6,7 @@ import {
   type ClearSigResult,
   type ClearSigSource,
   type ClearSigTypedInput,
-} from '../clearsig/index.ts';
+} from '../clearsig.ts';
 import { ERCS, OURS, addTokens } from '../clearsig/repo.ts';
 import { addr } from '../core/address.ts';
 import { Transaction } from '../core/tx.ts';
@@ -62,7 +62,7 @@ export type {
   ClearSigField,
   ClearSigResult,
   ClearSigTypedInput,
-} from '../clearsig/index.ts';
+} from '../clearsig.ts';
 export { MULTICALL3, MULTICALL3_ABI } from './multicall.ts';
 
 // We need to export raw contracts: CONTRACTS entries include addresses, so the
