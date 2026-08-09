@@ -33,7 +33,7 @@
   "scripts": {
     "benchmark": "node benchmark/microeth.ts",
     "benchmark:thirdparty": "cd benchmark/thirdparty; npm ci; node *.ts",
-    "benchmark:size": "npx bismar@0.1 -s",
+    "benchmark:size": "npx bismar@0.1 -bs",
     "build": "tsc",
     "build:clean": "rm -f *.{js,d.ts,js.map,d.ts.map}; rm -rf {abi,clearsig,core,net}",
     "build:clearsig": "node test/misc/build-clearsig.ts test/vectors/clear-signing",
