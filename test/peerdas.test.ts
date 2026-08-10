@@ -1,7 +1,7 @@
-import { afterEach, describe, should } from '@paulmillr/jsbt/test.js';
 import { Field } from '@noble/curves/abstract/modular.js';
 import { bls12_381 as bls } from '@noble/curves/bls12-381.js';
 import { bytesToHex, concatBytes } from '@noble/hashes/utils.js';
+import { afterEach, describe, it } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual, throws } from 'node:assert';
 import { readdirSync, readFileSync } from 'node:fs';
 import * as yaml from 'yaml';
@@ -71,7 +71,7 @@ const getKzg = async (setup) => {
   }
   return KZG_CACHE;
 };
-should('Cell.encode rejects non-canonical field elements', () => {
+it('Cell.encode rejects non-canonical field elements', () => {
   const src = readFileSync(`${__dirname}/../src/kzg.ts`, 'utf8');
   const m = src.match(/encode\(fields: bigint\[\]\): string \{([\s\S]*?)\n  \},/);
   if (!m) throw new Error('failed to locate Cell.encode body');
@@ -98,7 +98,7 @@ should('Cell.encode rejects non-canonical field elements', () => {
 function run(setup) {
   afterEach(forceGC);
 
-  should('computeCells', async () => {
+  it('computeCells', async () => {
     const kzg = await getKzg(setup);
     for (const t of readFunctionVectorCases('compute_cells', false)) {
       deepStrictEqual(kzg.computeCells(t.input.blob), t.output);
@@ -107,7 +107,7 @@ function run(setup) {
       throws(() => kzg.computeCells(t.input.blob));
     }
   });
-  should('computeCellsAndKzgProofs', async () => {
+  it('computeCellsAndKzgProofs', async () => {
     const kzg = await getKzg(setup);
     for (const t of readFunctionVectorCases('compute_cells_and_kzg_proofs', false)) {
       const res = kzg.computeCellsAndProofs(t.input.blob);
@@ -119,7 +119,7 @@ function run(setup) {
     }
   });
 
-  should('recoverCellsAndProofs', async () => {
+  it('recoverCellsAndProofs', async () => {
     const kzg = await getKzg(setup);
     for (const t of readFunctionVectorCases('recover_cells_and_kzg_proofs', false)) {
       const res = kzg.recoverCellsAndProofs(t.input.cell_indices, t.input.cells);
@@ -131,7 +131,7 @@ function run(setup) {
       throws(() => kzg.recoverCellsAndProofs(t.input.cell_indices, t.input.cells));
     }
   });
-  should('recoverCellsAndProofs rejects invalid cell indices', async () => {
+  it('recoverCellsAndProofs rejects invalid cell indices', async () => {
     const kzg = await getKzg(setup);
     const t = firstValidFunctionVector('recover_cells_and_kzg_proofs');
     for (const idx of [1.5, -1, NaN]) {
@@ -142,7 +142,7 @@ function run(setup) {
       );
     }
   });
-  should('verifyCellKzgProofBatch', async () => {
+  it('verifyCellKzgProofBatch', async () => {
     const kzg = await getKzg(setup);
     for (const t of readFunctionVectorCases('verify_cell_kzg_proof_batch', false)) {
       deepStrictEqual(
@@ -171,7 +171,7 @@ function run(setup) {
       deepStrictEqual(valid, false);
     }
   });
-  should('verifyCellKzgProofBatch rejects invalid cell indices', async () => {
+  it('verifyCellKzgProofBatch rejects invalid cell indices', async () => {
     const kzg = await getKzg(setup);
     const t = firstValidFunctionVector('verify_cell_kzg_proof_batch');
     for (const idx of [-1, 1.5, NaN]) {
@@ -198,4 +198,4 @@ describe('PeerDAS', () => {
   });
 });
 
-should.runWhen(import.meta.url);
+it.runWhen(import.meta.url);

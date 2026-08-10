@@ -1,11 +1,11 @@
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils.js';
-import { describe, should } from '@paulmillr/jsbt/test.js';
+import { describe, it } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual, notStrictEqual, throws } from 'node:assert';
 import { readdirSync, readFileSync } from 'node:fs';
 import * as snappy from 'snappyjs';
 import * as yaml from 'yaml';
 import * as SSZ from '../src/ssz.ts';
-import { __dirname, forceGC, getVectorsPath } from './util.ts';
+import { forceGC, getVectorsPath } from './util.ts';
 
 const vectorPaths = (path) => [getVectorsPath(path)];
 
@@ -217,7 +217,7 @@ const checkStructVector = (TYPES, t, electra, label) => {
 };
 
 describe('SSZ', () => {
-  should('ForkSlots', () => {
+  it('ForkSlots', () => {
     deepStrictEqual(SSZ.ForkSlots, {
       Phase0: 0,
       Altair: 74240 * 32,
@@ -228,7 +228,7 @@ describe('SSZ', () => {
       Fulu: 411392 * 32,
     });
   });
-  should('Electra request limits', () => {
+  it('Electra request limits', () => {
     deepStrictEqual(
       {
         progressiveExecutionRequests:
@@ -243,7 +243,7 @@ describe('SSZ', () => {
       }
     );
   });
-  should('Execution payload keeps execution requests separate', () => {
+  it('Execution payload keeps execution requests separate', () => {
     const fields = [
       'parent_hash',
       'fee_recipient',
@@ -278,7 +278,7 @@ describe('SSZ', () => {
       }
     );
   });
-  should('Execution payload header keeps execution requests separate', () => {
+  it('Execution payload header keeps execution requests separate', () => {
     const fields = [
       'parent_hash',
       'fee_recipient',
@@ -315,7 +315,7 @@ describe('SSZ', () => {
       }
     );
   });
-  should('Capella beacon block body carries full execution payload', () => {
+  it('Capella beacon block body carries full execution payload', () => {
     deepStrictEqual(
       Object.keys(
         SSZ.CapellaBeaconBlock.info.fields.body.info.fields.execution_payload.info.fields
@@ -339,7 +339,7 @@ describe('SSZ', () => {
       ]
     );
   });
-  should('Bellatrix beacon block body carries full execution payload', () => {
+  it('Bellatrix beacon block body carries full execution payload', () => {
     deepStrictEqual(
       Object.keys(
         SSZ.BellatrixBeaconBlock.info.fields.body.info.fields.execution_payload.info.fields
@@ -362,7 +362,7 @@ describe('SSZ', () => {
       ]
     );
   });
-  should('Phase0 beacon state carries pending attestation queues', () => {
+  it('Phase0 beacon state carries pending attestation queues', () => {
     const fields = SSZ.Phase0BeaconState.info.fields;
     deepStrictEqual(
       {
@@ -405,7 +405,7 @@ describe('SSZ', () => {
       }
     );
   });
-  should('Default values are fresh', () => {
+  it('Default values are fresh', () => {
     const checkFresh = (coder, mutate, expected) => {
       const a = coder.default;
       const b = coder.default;
@@ -487,7 +487,7 @@ describe('SSZ', () => {
       { a: [], b: 0 }
     );
   });
-  should('Coder metadata and flat state are frozen', () => {
+  it('Coder metadata and flat state are frozen', () => {
     const fields: any = { a: SSZ.list(4, SSZ.uint8), b: SSZ.bytevector(2) };
     const coder = SSZ.container(fields);
     fields.c = SSZ.uint16;
@@ -511,7 +511,7 @@ describe('SSZ', () => {
     deepStrictEqual(Object.isFrozen(SSZ.ETH2_PROFILES), true);
     deepStrictEqual(Object.isFrozen(SSZ.ETH2_PROFILES.electra), true);
   });
-  should('ETH2_PROFILES expose fork-specific coders', () => {
+  it('ETH2_PROFILES expose fork-specific coders', () => {
     deepStrictEqual(
       {
         forks: Object.keys(SSZ.ETH2_PROFILES),
@@ -572,7 +572,7 @@ describe('SSZ', () => {
     BitsStruct,
   };
 
-  should('basic', () => {
+  it('basic', () => {
     const isSmall = (type) => ['uint8', 'uint16', 'uint32'].includes(type);
 
     for (const t of readGenericVectorCases(vectorPaths(PATH))) {
@@ -715,7 +715,7 @@ describe('SSZ', () => {
     }
   });
 
-  should('Bitvector', () => {
+  it('Bitvector', () => {
     const coder4 = SSZ.bitvector(4);
     deepStrictEqual(coder4.decode(new Uint8Array([12])), [false, false, true, true]);
     deepStrictEqual(coder4.encode([false, false, true, true]), new Uint8Array([12]));
@@ -751,7 +751,7 @@ describe('SSZ', () => {
     }
   });
 
-  should('Bitlist', () => {
+  it('Bitlist', () => {
     const bl256 = SSZ.bitlist(256);
     // encode
     deepStrictEqual(bl256.encode([]), Uint8Array.of(1));
@@ -810,7 +810,7 @@ describe('SSZ', () => {
     throws(() => SSZ.bytelist(Number.NaN));
   });
 
-  should('List', () => {
+  it('List', () => {
     const emptyRoot = Array.from(SSZ.list(1, SSZ.uint8).merkleRoot([]));
     deepStrictEqual(Array.from(SSZ.list(0, SSZ.uint8).merkleRoot([])), emptyRoot);
     const lst = SSZ.list(32, SSZ.uint16);
@@ -897,7 +897,7 @@ describe('SSZ', () => {
     const llist = SSZ.list(2 ** 32, SSZ.list(2 ** 32, SSZ.uint8));
     throws(() => llist.decode(hexToBytes('0001')));
   });
-  should('Container', () => {
+  it('Container', () => {
     const basicVectors = [
       [SSZ.container({ a: SSZ.uint8 }), { a: 0xaa }, 'aa'],
       [
@@ -972,7 +972,7 @@ describe('SSZ', () => {
       `d8c8acf330f9ce3fe6303a49481f2950c9bc897ac8da7be983bd9bf3c681f6fb`
     );
   });
-  should('Union', () => {
+  it('Union', () => {
     const vectors = [
       [
         SSZ.union(SSZ.uint16),
@@ -1048,7 +1048,7 @@ describe('SSZ', () => {
     deepStrictEqual(Array.from(nullUnion.merkleRoot(nullValue)), nullRoot);
   });
   describe('ssz_static', () => {
-    should('vectors', () => {
+    it('vectors', () => {
       for (const fork of Object.keys(PROFILE_PATHS)) {
         for (const path of vectorPaths(PROFILE_PATHS[fork])) {
           const TYPES = { ...SSZ.ETH2_TYPES, ...SSZ.ETH2_PROFILES[fork] };
@@ -1063,4 +1063,4 @@ describe('SSZ', () => {
   });
 });
 
-should.runWhen(import.meta.url);
+it.runWhen(import.meta.url);

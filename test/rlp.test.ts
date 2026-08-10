@@ -1,5 +1,5 @@
 import { hexToBytes } from '@noble/hashes/utils.js';
-import { describe, should } from '@paulmillr/jsbt/test.js';
+import { describe, it } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual, throws } from 'node:assert';
 import { RLP } from '../src/core/rlp.ts';
 import { ethHex, ethHexNoLeadingZero } from '../src/utils.ts';
@@ -12,27 +12,27 @@ import { DECODE_TESTS, ENCODE_TESTS, INVALID } from './vectors/monorepo/rlp.js';
 
 describe('RLP', () => {
   describe('@ethereumjs/rlp', () => {
-    should('encode basic', () => {
+    it('encode basic', () => {
       for (const [k, v] of Object.entries(ENCODE_TESTS))
         for (const inp of v)
           deepStrictEqual(ethHexNoLeadingZero.encode(RLP.encode(inp)), `0x${k}`, 'encode');
     });
-    should('decode basic', () => {
+    it('decode basic', () => {
       const toArr = (elm) =>
         Array.isArray(elm) ? elm.map(toArr) : ethHexNoLeadingZero.encode(elm);
       for (const k in DECODE_TESTS)
         deepStrictEqual(toArr(RLP.decode(ethHexNoLeadingZero.decode(k))), DECODE_TESTS[k]);
     });
-    should('decode invalid', () => {
+    it('decode invalid', () => {
       for (const t of INVALID) throws(() => RLP.decode(ethHexNoLeadingZero.decode(t)));
     });
-    should('honors allowUnreadBytes on the public RLP decoder', () => {
+    it('honors allowUnreadBytes on the public RLP decoder', () => {
       deepStrictEqual(
         RLP.decode(Uint8Array.of(1, 2), { allowUnreadBytes: true }),
         Uint8Array.of(1)
       );
     });
-    should('encode 0x-prefixed byte strings', () => {
+    it('encode 0x-prefixed byte strings', () => {
       deepStrictEqual(
         [
           ethHex.encode(RLP.encode('0x')),
@@ -46,7 +46,7 @@ describe('RLP', () => {
       throws(() => RLP.encode('0x0'));
       throws(() => RLP.encode('0xzz'));
     });
-    should('encode integer zero consistently', () => {
+    it('encode integer zero consistently', () => {
       deepStrictEqual(
         [ethHex.encode(RLP.encode(0)), ethHex.encode(RLP.encode(0n))],
         ['0x80', '0x80']
@@ -55,7 +55,7 @@ describe('RLP', () => {
     describe('ethereum-tests', () => {
       describe('RLP test', () => {
         for (const [k, v] of Object.entries(RLP_TEST)) {
-          should(`${k}`, () => {
+          it(`${k}`, () => {
             let { in: inp, out } = v;
             if (typeof inp === 'string' && inp.startsWith('#')) inp = BigInt(inp.slice(1));
             deepStrictEqual(ethHex.encode(RLP.encode(inp)), out, 'encode');
@@ -64,20 +64,20 @@ describe('RLP', () => {
       });
       describe('invalid RLP', () => {
         for (const [k, v] of Object.entries(INVALID_RLP)) {
-          should(k, () => {
+          it(k, () => {
             throws(() => RLP.decode(hexToBytes(v.out)));
           });
         }
       });
       describe('random RLP', () => {
         for (const [k, v] of Object.entries(RANDOM_RLP)) {
-          should(k, () => {
+          it(k, () => {
             RLP.decode(hexToBytes(v.out.replace('0x', '')));
           });
         }
       });
     });
-    should('eip2930blockRLP', () => {
+    it('eip2930blockRLP', () => {
       deepStrictEqual(RLP.decode(hexToBytes(EIP2930.rlp)), [
         [
           '0000000000000000000000000000000000000000000000000000000000000000',
@@ -118,9 +118,9 @@ describe('RLP', () => {
     describe('ethers', () => {
       const mapEthers = (t) => (Array.isArray(t) ? t.map(mapEthers) : ethHex.decode(t));
 
-      should('all vectors', () => {
+      it('all vectors', () => {
         for (const i of getEthersVectors('rlp.json.gz')) {
-          // should(i.name, () => {
+          // it(i.name, () => {
           const encoded = ethHex.decode(i.encoded);
           const decoded = mapEthers(i.decoded);
           deepStrictEqual(RLP.encode(i.decoded), encoded, 'encode');
@@ -130,7 +130,7 @@ describe('RLP', () => {
       });
     });
     // 60 MB of gzipped json
-    should('viem rlp tests', async () => {
+    it('viem rlp tests', async () => {
       const mapViem = (t) => (Array.isArray(t) ? t.map(mapViem) : hexToBytes(t.replace('0x', '')));
       for await (const t of getViemVectorItems('rlp.json.gz')) {
         let { encoded, decoded } = t;
@@ -156,7 +156,7 @@ describe('RLP', () => {
       if (depth > 3 || rnd() < 0.45) return randBytes(randInt(70)); // covers short & long forms
       return Array.from({ length: randInt(6) }, () => randTree(depth + 1));
     };
-    should('roundtrip & canonical bijection', () => {
+    it('roundtrip & canonical bijection', () => {
       for (let i = 0; i < 2500; i++) {
         const tree = randTree(0);
         const encoded = RLP.encode(tree);
@@ -180,7 +180,7 @@ describe('RLP', () => {
         deepStrictEqual(RLP.encode(decoded), mutated, 'bijection after mutation');
       }
     });
-    should('number, bigint and hex-string paths agree', () => {
+    it('number, bigint and hex-string paths agree', () => {
       const cases = [0n, 1n, 127n, 128n, 255n, 256n, 65535n, 65536n];
       // 2^53 boundary: numbers and small bigints share a conversion path, big ones don't
       const max = BigInt(Number.MAX_SAFE_INTEGER);
@@ -194,7 +194,7 @@ describe('RLP', () => {
         if (n <= max) deepStrictEqual(RLP.encode(Number(n)), fromBigint, `number ${n}`);
       }
     });
-    should('deep nesting fails as catchable error, not a crash', () => {
+    it('deep nesting fails as catchable error, not a crash', () => {
       const deep = (n) => {
         let x = [];
         for (let i = 0; i < n; i++) x = [x];
@@ -207,4 +207,4 @@ describe('RLP', () => {
   });
 });
 
-should.runWhen(import.meta.url);
+it.runWhen(import.meta.url);

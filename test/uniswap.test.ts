@@ -1,5 +1,5 @@
 import { bytesToHex, concatBytes, hexToBytes } from '@noble/hashes/utils.js';
-import { describe, should } from '@paulmillr/jsbt/test.js';
+import { describe, it } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual, throws } from 'node:assert';
 import * as u2 from '../src/net/uniswap.ts';
 import * as u3 from '../src/net/uniswap.ts';
@@ -13,7 +13,7 @@ const vitalik = '0xd8da6bf26964af9d7eed9e03e53415d37aa96045';
 const TS = 1876543210;
 
 describe('uniswap', () => {
-  should('pair', () => {
+  it('pair', () => {
     deepStrictEqual(
       uniswap2.pairAddress(
         '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
@@ -59,7 +59,7 @@ describe('uniswap', () => {
       '0xB4e16d0168e52d35CaCD2c6185b44281Ec28C9Dc'.toLowerCase()
     );
   });
-  should('amount', () => {
+  it('amount', () => {
     const dec = (n) => weieth.encode(n);
     const [rA, rB] = [296640198432632702024n, 365918988101684615226n];
     deepStrictEqual(dec(uniswap2.amount(rA, rB, 1000000000000000000n)), '1.225724583682887052');
@@ -83,7 +83,7 @@ describe('uniswap', () => {
       '186.64548305577605772'
     );
   });
-  should('txData', () => {
+  it('txData', () => {
     const LABRA = '0x106d3c66d22d2dd0446df23d7f5960752994d600';
     const WETH = '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2';
     const tx0 = uniswap2.txData(
@@ -190,7 +190,7 @@ describe('uniswap', () => {
     deepStrictEqual(tx3.value, 108641975320864197533n);
   });
 
-  should('UniswapV3: txData', () => {
+  it('UniswapV3: txData', () => {
     const WETH = '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2';
     const USDT = '0xdac17f958d2ee523a2206206994597c13d831ec7';
     const USDC = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48';
@@ -350,4 +350,4 @@ describe('uniswap', () => {
   });
 });
 
-should.runWhen(import.meta.url);
+it.runWhen(import.meta.url);

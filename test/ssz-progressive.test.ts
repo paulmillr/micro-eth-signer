@@ -1,5 +1,5 @@
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils.js';
-import { describe, should } from '@paulmillr/jsbt/test.js';
+import { describe, it } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual, throws } from 'node:assert';
 import { readdirSync, readFileSync } from 'node:fs';
 import * as snappy from 'snappyjs';
@@ -113,7 +113,7 @@ describe('SSZ progressive', () => {
     return v;
   };
 
-  should('builders', () => {
+  it('builders', () => {
     throws(() => SSZ.progressiveContainer([], { A: SSZ.byte }));
     throws(() => SSZ.progressiveContainer([1, 0], { A: SSZ.byte }));
     throws(() => SSZ.progressiveContainer(new Array(257).fill(1), { A: SSZ.byte }));
@@ -144,7 +144,7 @@ describe('SSZ progressive', () => {
     deepStrictEqual(CompatibleUnionA._isProgressiveCompat(CompatibleUnionABCA), true);
   });
 
-  should('vectors', () => {
+  it('vectors', () => {
     const isSmall = (type) => ['uint8', 'uint16', 'uint32'].includes(type);
     const getCoder = (name) => {
       if (name.startsWith('basic_progressive_list/')) {
@@ -229,4 +229,4 @@ describe('SSZ progressive', () => {
   });
 });
 
-should.runWhen(import.meta.url);
+it.runWhen(import.meta.url);

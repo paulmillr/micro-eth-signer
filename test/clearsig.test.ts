@@ -1,4 +1,4 @@
-import { describe, should } from '@paulmillr/jsbt/test.js';
+import { describe, it } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual, rejects } from 'node:assert';
 import { readFileSync } from 'node:fs';
 import { dirname, normalize } from 'node:path';
@@ -14,10 +14,10 @@ import {
   decodeData,
   decodeTx,
 } from '../src/abi/index.ts';
-import { CLEARSIG_REPO_FULL } from '../src/clearsig/repo-full.ts';
 import { eip712 } from '../src/clearsig.ts';
-import { Transaction } from '../src/core/tx.ts';
+import { CLEARSIG_REPO_FULL } from '../src/clearsig/repo-full.ts';
 import { encoder, getDomainType } from '../src/core/message.ts';
+import { Transaction } from '../src/core/tx.ts';
 import { cloneDeep, ethHex } from '../src/utils.ts';
 import { getVectorsPath } from './util.ts';
 
@@ -715,13 +715,13 @@ const FACTORY_MISS_CLEAR = {
 };
 
 describe('ERC-7730 clear signing', () => {
-  should('keeps the generated full-repository import aligned with its output directory', () => {
+  it('keeps the generated full-repository import aligned with its output directory', () => {
     const builder = readFileSync(new URL('./misc/build-clearsig.ts', import.meta.url), 'utf8');
     const generatedImport = builder.match(/import type \{ ClearSigDef \} from '[^']+';/)?.[0];
     deepStrictEqual(generatedImport, "import type { ClearSigDef } from '../clearsig.ts';");
   });
 
-  should('renders ERC-20 calldata with registry-style spaced ABI key', async () => {
+  it('renders ERC-20 calldata with registry-style spaced ABI key', async () => {
     const data = ethHex.encode(
       createContract(ERC20).transfer.encodeInput({
         to: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
@@ -752,7 +752,7 @@ describe('ERC-7730 clear signing', () => {
     });
   });
 
-  should('uses descriptor files and attaches decoder clearSig promises', async () => {
+  it('uses descriptor files and attaches decoder clearSig promises', async () => {
     const to = '0xd8da6bf26964af9d7eed9e03e53415d37aa96045';
     const data = ethHex.encode(createContract(ERC20).transfer.encodeInput({ to, value: 2500000n }));
     const from = '0x000000000000000000000000000000000000000f';
@@ -996,7 +996,7 @@ describe('ERC-7730 clear signing', () => {
     deepStrictEqual(await calldata(files, { to: USDC, data, chainId: 56 }), undefined);
   });
 
-  should('synthesizes decodeTx info from a descriptor the ABI registry misses', async () => {
+  it('synthesizes decodeTx info from a descriptor the ABI registry misses', async () => {
     // ERC-7730 format keys carry the ABI: matched descriptor files must yield
     // both signature info and clearSig even when no registry knows the selector.
     const files = addTokens(
@@ -1044,7 +1044,7 @@ describe('ERC-7730 clear signing', () => {
     });
   });
 
-  should('does not use local address names when sources exclude local', async () => {
+  it('does not use local address names when sources exclude local', async () => {
     const to = '0xd8da6bf26964af9d7eed9e03e53415d37aa96045';
     const data = ethHex.encode(createContract(ERC20).transfer.encodeInput({ to, value: 1n }));
     deepStrictEqual(
@@ -1096,7 +1096,7 @@ describe('ERC-7730 clear signing', () => {
     );
   });
 
-  should('selects EIP-712 format by encodeType and renders local token metadata', async () => {
+  it('selects EIP-712 format by encodeType and renders local token metadata', async () => {
     const files = addTokens(
       { 'permit2.json': PERMIT2_CLEAR },
       { [USDC]: { abi: 'ERC20', symbol: 'USDC', decimals: 6 } }
@@ -1145,7 +1145,7 @@ describe('ERC-7730 clear signing', () => {
     });
   });
 
-  should('checks EIP-712 domainSeparator context offline', async () => {
+  it('checks EIP-712 domainSeparator context offline', async () => {
     const typed = vectors.permit2Single.data;
     const domainSeparator = encoder(
       { EIP712Domain: getDomainType(typed.domain), ...typed.types },
@@ -1217,7 +1217,7 @@ describe('ERC-7730 clear signing', () => {
     );
   });
 
-  should('matches EIP-712 domain constraints with bigint chainId', async () => {
+  it('matches EIP-712 domain constraints with bigint chainId', async () => {
     // EIP-712 domain chainId is uint256, so callers naturally pass bigint while
     // descriptor JSON stores a number; constraint matching must not strict-compare them.
     const desc = {
@@ -1245,7 +1245,7 @@ describe('ERC-7730 clear signing', () => {
     );
   });
 
-  should('lets resolveToken override the native token sentinel', async () => {
+  it('lets resolveToken override the native token sentinel', async () => {
     // The 0xeeee... sentinel is a convention, not chain truth: on Polygon the native
     // token is POL, so a caller-provided resolver must win over the bundled fallback.
     const EEE = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
@@ -1291,7 +1291,7 @@ describe('ERC-7730 clear signing', () => {
     });
   });
 
-  should('matches EIP-712 domain verifyingContract constraints case-insensitively', async () => {
+  it('matches EIP-712 domain verifyingContract constraints case-insensitively', async () => {
     // verifyingContract is an address: every other address comparison in clear
     // signing (deployments, repository index) is case-insensitive, so descriptor
     // domain constraints must not depend on checksum casing either.
@@ -1327,7 +1327,7 @@ describe('ERC-7730 clear signing', () => {
     );
   });
 
-  should('matches non-standard EIP-712 types that back-reference the primary type', async () => {
+  it('matches non-standard EIP-712 types that back-reference the primary type', async () => {
     // encodeType rejects `:` identifiers, so matching uses the registry-compatibility
     // fallback; canonical EIP-712 encodeType never repeats the primary type in its
     // sorted dependency list, even when a nested type references it back.
@@ -1361,7 +1361,7 @@ describe('ERC-7730 clear signing', () => {
     );
   });
 
-  should('renders the local MetaMask swap router descriptor', async () => {
+  it('renders the local MetaMask swap router descriptor', async () => {
     // Real mainnet calldata (tx 0xef99b8f4...): the router appends ONE non-ABI
     // referral byte after the encoded args, so the render needs
     // allowUnreadBytes - same story as the copied 1inch registry vectors.
@@ -1409,7 +1409,7 @@ describe('ERC-7730 clear signing', () => {
     // Strict decode (the default) refuses the trailing referral byte outright.
     await rejects(() => calldata(desc, { to, chainId: 1, data }, opt));
   });
-  should(
+  it(
     'renders decoded transaction context and supports bytes slices in token paths',
     async () => {
       deepStrictEqual(
@@ -1471,7 +1471,7 @@ describe('ERC-7730 clear signing', () => {
     }
   );
 
-  should('resolves ERC-7730 JSONPath subset and rejects unsupported selectors', async () => {
+  it('resolves ERC-7730 JSONPath subset and rejects unsupported selectors', async () => {
     const data = ethHex.encode(
       createContract(PATH_ABI).paths.encodeInput({
         text: 'abcdef',
@@ -1507,7 +1507,7 @@ describe('ERC-7730 clear signing', () => {
     );
   });
 
-  should('clamps out-of-range ERC-7730 path slice bounds like RFC 9535', async () => {
+  it('clamps out-of-range ERC-7730 path slice bounds like RFC 9535', async () => {
     const data = ethHex.encode(
       createContract(PATH_ABI).paths.encodeInput({
         text: 'abcdef',
@@ -1548,7 +1548,7 @@ describe('ERC-7730 clear signing', () => {
     );
   });
 
-  should('recursively renders nested calldata fields', async () => {
+  it('recursively renders nested calldata fields', async () => {
     const to = '0xd8da6bf26964af9d7eed9e03e53415d37aa96045';
     const erc20 = createContract(ERC20);
     const batch = createContract(BATCH_ABI).batchExecute;
@@ -1590,7 +1590,7 @@ describe('ERC-7730 clear signing', () => {
     );
   });
 
-  should('uses explicit selector for embedded calldata without selector bytes', async () => {
+  it('uses explicit selector for embedded calldata without selector bytes', async () => {
     const to = '0xd8da6bf26964af9d7eed9e03e53415d37aa96045';
     const transfer = createContract(ERC20).transfer.encodeInput({ to, value: 1000000n }).slice(4);
     deepStrictEqual(
@@ -1626,7 +1626,7 @@ describe('ERC-7730 clear signing', () => {
     );
   });
 
-  should('renders bundled array groups with separators and array interpolation', async () => {
+  it('renders bundled array groups with separators and array interpolation', async () => {
     const recipients = [
       '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
       '0x1111111111111111111111111111111111111111',
@@ -1687,7 +1687,7 @@ describe('ERC-7730 clear signing', () => {
     );
   });
 
-  should('renders unit formatter SI prefixes', async () => {
+  it('renders unit formatter SI prefixes', async () => {
     const data = ethHex.encode(
       createContract(ERC20).transfer.encodeInput({
         to: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
@@ -1722,7 +1722,7 @@ describe('ERC-7730 clear signing', () => {
     );
   });
 
-  should('uses tokenAmount chainId for native currency metadata', async () => {
+  it('uses tokenAmount chainId for native currency metadata', async () => {
     const data = ethHex.encode(
       createContract(ERC20).transfer.encodeInput({
         to: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
@@ -1769,7 +1769,7 @@ describe('ERC-7730 clear signing', () => {
     );
   });
 
-  should('rejects mutually exclusive formatter parameters', async () => {
+  it('rejects mutually exclusive formatter parameters', async () => {
     const data = ethHex.encode(
       createContract(ERC20).transfer.encodeInput({
         to: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
@@ -1801,7 +1801,7 @@ describe('ERC-7730 clear signing', () => {
     );
   });
 
-  should('rejects mutually exclusive field and visibility keys', async () => {
+  it('rejects mutually exclusive field and visibility keys', async () => {
     const data = ethHex.encode(
       createContract(ERC20).transfer.encodeInput({
         to: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
@@ -1849,7 +1849,7 @@ describe('ERC-7730 clear signing', () => {
     );
   });
 
-  should('rejects numeric values formatted as addresses', async () => {
+  it('rejects numeric values formatted as addresses', async () => {
     const data = ethHex.encode(
       createContract([{ name: 'set', type: 'function', inputs: [] }]).set.encodeInput(undefined)
     );
@@ -1871,7 +1871,7 @@ describe('ERC-7730 clear signing', () => {
     );
   });
 
-  should('formats packed uint256 token identifiers only as tokenAmount tokens', async () => {
+  it('formats packed uint256 token identifiers only as tokenAmount tokens', async () => {
     const data = ethHex.encode(
       createContract([
         {
@@ -1926,7 +1926,7 @@ describe('ERC-7730 clear signing', () => {
     );
   });
 
-  should('uses ABI scalar words for ERC-7730 integer path slices', async () => {
+  it('uses ABI scalar words for ERC-7730 integer path slices', async () => {
     const ok = ethHex.encode(
       createContract([
         { name: 'set160', type: 'function', inputs: [{ name: 'token', type: 'uint160' }] },
@@ -2002,7 +2002,7 @@ describe('ERC-7730 clear signing', () => {
     );
   });
 
-  should('uses ABI path lookup for tuple-array scalar slices', async () => {
+  it('uses ABI path lookup for tuple-array scalar slices', async () => {
     const data = ethHex.encode(
       createContract([
         {
@@ -2058,7 +2058,7 @@ describe('ERC-7730 clear signing', () => {
     );
   });
 
-  should('rejects descriptors with duplicate calldata selectors up front', async () => {
+  it('rejects descriptors with duplicate calldata selectors up front', async () => {
     await rejects(
       calldata(
         {
@@ -2076,7 +2076,7 @@ describe('ERC-7730 clear signing', () => {
     );
   });
 
-  should('rejects deployed descriptors without a chain id', async () => {
+  it('rejects deployed descriptors without a chain id', async () => {
     await rejects(
       calldata(
         {
@@ -2089,7 +2089,7 @@ describe('ERC-7730 clear signing', () => {
     );
   });
 
-  should('rejects unsafe clear-signing chain ids', async () => {
+  it('rejects unsafe clear-signing chain ids', async () => {
     await rejects(
       calldata(
         {
@@ -2102,7 +2102,7 @@ describe('ERC-7730 clear signing', () => {
     );
   });
 
-  should('merges static includes and renders descriptor value paths', async () => {
+  it('merges static includes and renders descriptor value paths', async () => {
     const data = ethHex.encode(
       createContract(ERC20).transfer.encodeInput({
         to: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
@@ -2142,7 +2142,7 @@ describe('ERC-7730 clear signing', () => {
     );
   });
 
-  should('merges include fields by falsy descriptor values', async () => {
+  it('merges include fields by falsy descriptor values', async () => {
     const data = ethHex.encode(
       createContract(ERC20).transfer.encodeInput({
         to: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
@@ -2180,7 +2180,7 @@ describe('ERC-7730 clear signing', () => {
     );
   });
 
-  should('does not merge include fields only by label', async () => {
+  it('does not merge include fields only by label', async () => {
     const to = '0xd8da6bf26964af9d7eed9e03e53415d37aa96045';
     const data = ethHex.encode(createContract(ERC20).transfer.encodeInput({ to, value: 1n }));
     deepStrictEqual(
@@ -2221,7 +2221,7 @@ describe('ERC-7730 clear signing', () => {
     );
   });
 
-  should('applies mustMatch and ifNotIn visibility rules', async () => {
+  it('applies mustMatch and ifNotIn visibility rules', async () => {
     const pay = createContract(VISIBILITY_ABI).pay;
     const to = '0xd8da6bf26964af9d7eed9e03e53415d37aa96045';
     deepStrictEqual(
@@ -2293,7 +2293,7 @@ describe('ERC-7730 clear signing', () => {
     );
   });
 
-  should('renders duration formatter and includes optional fields', async () => {
+  it('renders duration formatter and includes optional fields', async () => {
     deepStrictEqual(
       await calldata(DURATION_CLEAR, {
         to: USDC,
@@ -2314,7 +2314,7 @@ describe('ERC-7730 clear signing', () => {
     );
   });
 
-  should(
+  it(
     'falls back to raw date value for blockheight encoding without chain timing data',
     async () => {
       const data = ethHex.encode(
@@ -2352,7 +2352,7 @@ describe('ERC-7730 clear signing', () => {
     }
   );
 
-  should('resolves chain-keyed token maps and interpolates formatted values', async () => {
+  it('resolves chain-keyed token maps and interpolates formatted values', async () => {
     deepStrictEqual(
       await calldata(
         MAP_CLEAR,
@@ -2400,7 +2400,7 @@ describe('ERC-7730 clear signing', () => {
     );
   });
 
-  should('falls back when interpolated intent references a missing field', async () => {
+  it('falls back when interpolated intent references a missing field', async () => {
     const data = ethHex.encode(
       createContract(MAP_ABI).deposit.encodeInput({ amount: 123n, minShares: 0n })
     );
@@ -2421,7 +2421,7 @@ describe('ERC-7730 clear signing', () => {
     });
   });
 
-  should('uses encrypted field fallback without attempting decryption', async () => {
+  it('uses encrypted field fallback without attempting decryption', async () => {
     const payload = new Uint8Array(32).fill(7);
     deepStrictEqual(
       await calldata(ENCRYPTED_CLEAR, {
@@ -2457,7 +2457,7 @@ describe('ERC-7730 clear signing', () => {
     );
   });
 
-  should('uses renderer callbacks for external metadata formats', async () => {
+  it('uses renderer callbacks for external metadata formats', async () => {
     const calls: string[] = [];
     const data = ethHex.encode(
       createContract(RESOLVER_ABI).resolve.encodeInput({
@@ -2572,7 +2572,7 @@ describe('ERC-7730 clear signing', () => {
     ]);
   });
 
-  should('uses renderer callbacks for factory context checks', async () => {
+  it('uses renderer callbacks for factory context checks', async () => {
     const calls: string[] = [];
     const data = ethHex.encode(
       createContract(RESOLVER_ABI).resolve.encodeInput({
@@ -2679,7 +2679,7 @@ describe('ERC-7730 clear signing', () => {
     ]);
   });
 
-  should(
+  it(
     'uses renderer callbacks for embedded calldata descriptors and encrypted values',
     async () => {
       const to = '0xd8da6bf26964af9d7eed9e03e53415d37aa96045';
@@ -2784,7 +2784,7 @@ describe('ERC-7730 clear signing', () => {
     }
   );
 
-  should('rejects unread calldata bytes unless explicitly allowed', async () => {
+  it('rejects unread calldata bytes unless explicitly allowed', async () => {
     const item = {
       file: 'registry/1inch/tests/calldata-AggregationRouterV3.tests.json',
       index: 1,
@@ -2818,7 +2818,7 @@ describe('ERC-7730 clear signing', () => {
     );
   });
 
-  should('matches copied ERC-7730 registry display vectors', async () => {
+  it('matches copied ERC-7730 registry display vectors', async () => {
     deepStrictEqual(registry.testCount, registry.tests.length);
     for (const item of registry.tests) {
       if (STRICT_CONTEXT_VECTORS.has(`${item.file}#${item.index}`)) continue;
@@ -2863,4 +2863,4 @@ describe('ERC-7730 clear signing', () => {
   });
 });
 
-should.runWhen(import.meta.url);
+it.runWhen(import.meta.url);

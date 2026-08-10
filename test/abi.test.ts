@@ -1,6 +1,6 @@
 import { keccak_256 } from '@noble/hashes/sha3.js';
 import { bytesToHex, concatBytes, hexToBytes, utf8ToBytes } from '@noble/hashes/utils.js';
-import { describe, should } from '@paulmillr/jsbt/test.js';
+import { describe, it } from '@paulmillr/jsbt/test.js';
 import * as P from 'micro-packed';
 import { deepStrictEqual, throws } from 'node:assert';
 import { addHints } from '../src/abi/common.ts';
@@ -849,11 +849,11 @@ const SPEC_CONTRACT = [
   },
 ];
 
-should('fnSigHash', () => {
+it('fnSigHash', () => {
   deepStrictEqual(abi.fnSigHash(tupleABI[0]), '6f2be728');
   for (let [exp, fn] of fnSigHashTests) deepStrictEqual(abi.fnSigHash(fn), exp);
 });
-should('evSigHash', () => {
+it('evSigHash', () => {
   for (let [exp, fn] of evSigHashTests) deepStrictEqual(abi.evSigHash(fn), exp);
 });
 
@@ -886,7 +886,7 @@ function unwrapTestType(s) {
   return stack[0];
 }
 
-should('unwrapTestType', () => {
+it('unwrapTestType', () => {
   deepStrictEqual(unwrapTestType('string'), { type: 'string' });
   deepStrictEqual(unwrapTestType('((uint8,uint8), uint8)'), {
     type: 'tuple',
@@ -917,7 +917,7 @@ should('unwrapTestType', () => {
 });
 
 function t(type, value, exp) {
-  should(`mapType(${type}, ${value}, ${exp})`, () => {
+  it(`mapType(${type}, ${value}, ${exp})`, () => {
     const p = mapComponent(unwrapTestType(type));
     deepStrictEqual(hex.encode(p.encode(value)), exp);
     deepStrictEqual(p.decode(hex.decode(strip0x(exp))), value);
@@ -1306,7 +1306,7 @@ describe('Type mapping', () => {
       '74657374696e672074657374696e670000000000000000000000000000000000'
   );
 });
-should('ABI named tuple fields can shadow object prototype names', () => {
+it('ABI named tuple fields can shadow object prototype names', () => {
   const component = {
     type: 'tuple',
     components: [
@@ -1330,7 +1330,7 @@ should('ABI named tuple fields can shadow object prototype names', () => {
     })
   );
 });
-should('mapArgs', () => {
+it('mapArgs', () => {
   function t(contract, fn, args, exp) {
     let m = mapArgs(contract.find((i) => i.name == fn).inputs, true);
     deepStrictEqual(hex.encode(m.encode(args)), exp);
@@ -1403,7 +1403,7 @@ should('mapArgs', () => {
     ] as const)
   );
 });
-should('Decoder', async () => {
+it('Decoder', async () => {
   const USDT = '0xdac17f958d2ee523a2206206994597c13d831ec7';
   const WETH = '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2';
   let d = new abi.Decoder();
@@ -2114,7 +2114,7 @@ should('Decoder', async () => {
     },
   });
 });
-should('Decoder rejects trailing calldata for zero-arg functions', () => {
+it('Decoder rejects trailing calldata for zero-arg functions', () => {
   const contract = '0x1111111111111111111111111111111111111111';
   const unknown = '0x2222222222222222222222222222222222222222';
   const ping = [{ type: 'function', name: 'ping', inputs: [], outputs: [] }] as const;
@@ -2138,7 +2138,7 @@ should('Decoder rejects trailing calldata for zero-arg functions', () => {
   throws(() => d.decode(contract, trailing), /Unexpected trailing calldata/);
   deepStrictEqual(d.decode(unknown, trailing), undefined);
 });
-should('addHints only annotates events from own hint-map properties', () => {
+it('addHints only annotates events from own hint-map properties', () => {
   const hint = () => 'hint';
   const a = [
     { type: 'function', name: 'transfer' },
@@ -2155,7 +2155,7 @@ should('addHints only annotates events from own hint-map properties', () => {
     { type: 'constructor', name: 'transfer' },
   ]);
 });
-should('ERC20 event hints accept zero-decimal token metadata', () => {
+it('ERC20 event hints accept zero-decimal token metadata', () => {
   const opt = { contractInfo: { decimals: 0, symbol: 'ZERO' } };
   const owner = '0x1111111111111111111111111111111111111111';
   const spender = '0x2222222222222222222222222222222222222222';
@@ -2170,7 +2170,7 @@ should('ERC20 event hints accept zero-decimal token metadata', () => {
     `Transfer 7 ZERO from ${from} to ${to}`
   );
 });
-should('WETH clearSig maps legacy field names', async () => {
+it('WETH clearSig maps legacy field names', async () => {
   const weth = abi.createContract(CONTRACTS[WETH_CONTRACT].abi as any);
   const guy = '0xd8da6bf26964af9d7eed9e03e53415d37aa96045';
   const src = '0x000000000000000000000000000000000000000f';
@@ -2246,7 +2246,7 @@ should('WETH clearSig maps legacy field names', async () => {
     }
   );
 });
-should('built-in registries deep-freeze metadata and ABIs', () => {
+it('built-in registries deep-freeze metadata and ABIs', () => {
   const usdt = '0xdac17f958d2ee523a2206206994597c13d831ec7';
   const weth = '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2';
   const routerABI = CONTRACTS[UNISWAP_V2_ROUTER_CONTRACT].abi as any;
@@ -2294,7 +2294,7 @@ should('built-in registries deep-freeze metadata and ABIs', () => {
   deepStrictEqual(CONTRACTS[UNISWAP_V2_ROUTER_CONTRACT].name, 'UNISWAP V2 ROUTER');
   deepStrictEqual(CONTRACTS[weth].symbol, 'WETH');
 });
-should('tokensBySymbol derives symbol indexes and rejects duplicates', () => {
+it('tokensBySymbol derives symbol indexes and rejects duplicates', () => {
   const tokenA = '0x00000000000000000000000000000000000000a1';
   const tokenB = '0x00000000000000000000000000000000000000b1';
   const table = {
@@ -2322,7 +2322,7 @@ should('tokensBySymbol derives symbol indexes and rejects duplicates', () => {
     /duplicate token symbol: DUP/
   );
 });
-should('tokenFromSymbol returns undefined and supports custom token tables', () => {
+it('tokenFromSymbol returns undefined and supports custom token tables', () => {
   const token = '0x00000000000000000000000000000000000000c1';
   const table = {
     [token]: { symbol: 'CUSTOM', decimals: 5 },
@@ -2334,7 +2334,7 @@ should('tokenFromSymbol returns undefined and supports custom token tables', () 
   deepStrictEqual(tokenFromSymbol('UNKNOWN'), undefined);
   deepStrictEqual(tokenFromSymbol('CUSTOM', table), { contract: token, ...table[token] });
 });
-should('token symbol indexes ignore inherited token registry entries', () => {
+it('token symbol indexes ignore inherited token registry entries', () => {
   const key = 'evilToken';
   const prev = Object.getOwnPropertyDescriptor(Object.prototype, key);
   const token = '0x00000000000000000000000000000000000000d1';
@@ -2356,7 +2356,7 @@ should('token symbol indexes ignore inherited token registry entries', () => {
     else delete (Object.prototype as Record<string, unknown>)[key];
   }
 });
-should('Uniswap V2 clearSig preserves zero-value hint regressions', async () => {
+it('Uniswap V2 clearSig preserves zero-value hint regressions', async () => {
   const uniswap = abi.createContract(UNISWAP_V2_ROUTER);
   const zeroIn = '0x1111111111111111111111111111111111111111';
   const zeroOut = '0x2222222222222222222222222222222222222222';
@@ -2555,7 +2555,7 @@ should('Uniswap V2 clearSig preserves zero-value hint regressions', async () => 
     }
   );
 });
-should('Uniswap V3 clearSig preserves zero-decimal hint regressions', async () => {
+it('Uniswap V3 clearSig preserves zero-decimal hint regressions', async () => {
   const uniswap = abi.createContract(UNISWAP_V3_ROUTER);
   const zeroIn = '0x1111111111111111111111111111111111111111';
   const zeroOut = '0x2222222222222222222222222222222222222222';
@@ -2651,7 +2651,7 @@ should('Uniswap V3 clearSig preserves zero-decimal hint regressions', async () =
     }
   );
 });
-should('Kyber clearSig preserves zero-decimal token metadata', async () => {
+it('Kyber clearSig preserves zero-decimal token metadata', async () => {
   const kyber = abi.createContract(KYBER_NETWORK_PROXY);
   const zeroSrc = '0x1111111111111111111111111111111111111111';
   const zeroDest = '0x2222222222222222222222222222222222222222';
@@ -2723,7 +2723,7 @@ should('Kyber clearSig preserves zero-decimal token metadata', async () => {
 });
 describe('ABI events', () => {
   for (let k in abiTestEvents) {
-    should(k, () => {
+    it(k, () => {
       const t = abiTestEvents[k];
       const events = abi.events(JSON.parse(t.abi));
       const ev = events[t.fn || 'testEvent'];
@@ -2732,7 +2732,7 @@ describe('ABI events', () => {
     });
   }
 });
-should('ABI Events: null values', () => {
+it('ABI Events: null values', () => {
   const events = abi.events(JSON.parse(abiTestEvents.transfer.abi));
   const ev = events.Transfer;
   deepStrictEqual(
@@ -2752,7 +2752,7 @@ should('ABI Events: null values', () => {
     ]
   );
 });
-should('ABI Events: indexed tuples with unnamed components', () => {
+it('ABI Events: indexed tuples with unnamed components', () => {
   const event = {
     type: 'event',
     name: 'TupleEvent',
@@ -2780,7 +2780,7 @@ should('ABI Events: indexed tuples with unnamed components', () => {
     `0x${encoded}`,
   ]);
 });
-should('ABI Events: indexed arrays of tuples', () => {
+it('ABI Events: indexed arrays of tuples', () => {
   const components = [
     { name: 'amount', type: 'uint256' },
     { name: 'account', type: 'address' },
@@ -2820,7 +2820,7 @@ should('ABI Events: indexed arrays of tuples', () => {
     abi.events([staticEvent]).TupleStaticArrayEvent.topics({ values: [...values, values[0]] })
   );
 });
-should('ABI Events: Decoder', () => {
+it('ABI Events: Decoder', () => {
   const BAT = '0x0d8775f648430679a709e98d2b0cb6250d2887ef';
   let d = new abi.Decoder();
   d.add(BAT, ERC20);
@@ -2852,7 +2852,7 @@ should('ABI Events: Decoder', () => {
     }
   );
 });
-should('ABI Events: Decoder keeps overloaded events distinct', () => {
+it('ABI Events: Decoder keeps overloaded events distinct', () => {
   const contract = '0x1111111111111111111111111111111111111111';
   const overloads = [
     {
@@ -2897,7 +2897,7 @@ should('ABI Events: Decoder keeps overloaded events distinct', () => {
   );
 });
 
-should('example/libra', async () => {
+it('example/libra', async () => {
   let d = new abi.Decoder();
   const UNISWAP = UNISWAP_V2_ROUTER_CONTRACT;
   d.add(UNISWAP, UNISWAP_V2_ROUTER);
@@ -2953,7 +2953,7 @@ should('example/libra', async () => {
   // console.log(d.decode(UNISWAP, tx0, Object.assign(uniOpt, { amount: 100000000000000000n })));
 });
 
-should('ABI integer inputs reject unsafe numbers', () => {
+it('ABI integer inputs reject unsafe numbers', () => {
   const unsafe = Number.MAX_SAFE_INTEGER + 1;
   const uint = mapComponent(unwrapTestType('uint256'));
   const int = mapComponent(unwrapTestType('int256'));
@@ -2963,7 +2963,7 @@ should('ABI integer inputs reject unsafe numbers', () => {
   throws(() => int.encode(-unsafe as unknown as bigint));
 });
 
-should('ZST', () => {
+it('ZST', () => {
   const payload = hex.decode(
     '000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000FFFFFFFF'
   );
@@ -3006,7 +3006,7 @@ should('ZST', () => {
   );
 });
 
-should('Recursive ptrs', () => {
+it('Recursive ptrs', () => {
   //const EPad = (p) => P.padLeft(32, p, P.ZeroPad);
   //const PTR = EPad(P.U32BE);
   const arr2 = mapComponent(unwrapTestType('uint256[][]'));
@@ -3061,7 +3061,7 @@ should('Recursive ptrs', () => {
   throws(() => arr2.decode(hex.decode(p2)));
 });
 
-should('Recursive ptrs2', () => {
+it('Recursive ptrs2', () => {
   const arr10 = mapComponent(unwrapTestType('uint256[][][][][][][][][][]'));
   const a = [[], [], [], [], [], [], [], [], [], []];
   const ptrArr = mapComponent(unwrapTestType('uint256[]'));
@@ -3069,7 +3069,7 @@ should('Recursive ptrs2', () => {
   throws(() => arr10.decode(hex.decode(mainPtr.repeat(10 + 1))));
 });
 
-should('ABI dynamic words reject high bits', () => {
+it('ABI dynamic words reject high bits', () => {
   const str = mapComponent(unwrapTestType('string'));
   const arr = mapComponent(unwrapTestType('uint256[]'));
   const high = '0000000000000000000000000000000000000000000000010000000000000020';
@@ -3079,7 +3079,7 @@ should('ABI dynamic words reject high bits', () => {
   throws(() => arr.decode(hex.decode(high + tail)));
 });
 
-should('Interleave ptrs', () => {
+it('Interleave ptrs', () => {
   const ptrArr = mapComponent(unwrapTestType('uint256[]'));
   const raw = P.array(null, P.U256BE);
   const arr2 = mapComponent(unwrapTestType('uint256[][]'));
@@ -3135,7 +3135,7 @@ should('Interleave ptrs', () => {
   }
 });
 
-should('Junk data', () => {
+it('Junk data', () => {
   const t = mapComponent(unwrapTestType('uint256[]'));
   const DATA = [1n, 2n, 3n, 4n];
   const encoded = hex.encode(t.encode(DATA));
@@ -3147,7 +3147,7 @@ should('Junk data', () => {
   deepStrictEqual(decoded, DATA);
 });
 
-should('Junk data from real tx', () => {
+it('Junk data from real tx', () => {
   // https://etherscan.io/tx/0x62d0afd1d7815ee9b2da236ddc6af07386072acea20eef27497ad29e37533fdd
   const tx =
     '7ff36ab50000000000000000000000000000000000000000000000164054d8356b4f5c2800000000000000000000000000000000000000000000000000000000000000800000000000000000000000006994ece772cc4abb5c9993c065a34c94544a40870000000000000000000000000000000000000000000000000000000062b348620000000000000000000000000000000000000000000000000000000000000002000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc2000000000000000000000000106d3c66d22d2dd0446df23d7f5960752994d6007a6572696f6e';
@@ -3216,7 +3216,7 @@ should('Junk data from real tx', () => {
 });
 
 describe('simple decoder API', () => {
-  should('decodeData', async () => {
+  it('decodeData', async () => {
     // tx hash: 0x6fd66d7b306f77fc01a397f55d4efe19256458badd8782d523d06ed450851d0a
     const to0 = '0xdac17f958d2ee523a2206206994597c13d831ec7'; // USDT, but we don't know that. It is part of tx
     const data =
@@ -3256,7 +3256,7 @@ describe('simple decoder API', () => {
       },
     });
   });
-  should('decodeData with custom tokens', async () => {
+  it('decodeData with custom tokens', async () => {
     // User defines other tokens
     const customContracts = {
       '0x106d3c66d22d2dd0446df23d7f5960752994d600': { abi: 'ERC20', symbol: 'LABRA', decimals: 9 },
@@ -3372,7 +3372,7 @@ describe('simple decoder API', () => {
       },
     });
   });
-  should('decodeData ignores inherited custom contract entries', () => {
+  it('decodeData ignores inherited custom contract entries', () => {
     const to = '0x1111111111111111111111111111111111111111';
     const data =
       '0xa9059cbb0000000000000000000000002222222222222222222222222222222222222222' +
@@ -3385,7 +3385,7 @@ describe('simple decoder API', () => {
       undefined
     );
   });
-  should('decodeTx', async () => {
+  it('decodeTx', async () => {
     // tx hash 0x6fd66d7b306f77fc01a397f55d4efe19256458badd8782d523d06ed450851d0a
     const tx =
       '0xf8a901851d1a94a20082c12a94dac17f958d2ee523a2206206994597c13d831ec780b844a9059cbb000000000000000000000000dac17f958d2ee523a2206206994597c13d831ec7000000000000000000000000000000000000000000000000000000054259870025a066fcb560b50e577f6dc8c8b2e3019f760da78b4c04021382ba490c572a303a42a0078f5af8ac7e11caba9b7dc7a64f7bdc3b4ce1a6ab0a1246771d7cc3524a7200';
@@ -3426,7 +3426,7 @@ describe('simple decoder API', () => {
       },
     });
   });
-  should('decodeData and decodeTx attach clearSig from descriptor files', async () => {
+  it('decodeData and decodeTx attach clearSig from descriptor files', async () => {
     const tx =
       '0xf8a901851d1a94a20082c12a94dac17f958d2ee523a2206206994597c13d831ec780b844a9059cbb000000000000000000000000dac17f958d2ee523a2206206994597c13d831ec7000000000000000000000000000000000000000000000000000000054259870025a066fcb560b50e577f6dc8c8b2e3019f760da78b4c04021382ba490c572a303a42a0078f5af8ac7e11caba9b7dc7a64f7bdc3b4ce1a6ab0a1246771d7cc3524a7200';
     const data =
@@ -3504,7 +3504,7 @@ describe('simple decoder API', () => {
       },
     });
   });
-  should('decodeData and decodeTx pass from into clearSig context', async () => {
+  it('decodeData and decodeTx pass from into clearSig context', async () => {
     const target = '0x0000000000000000000000000000000000001200';
     const mark = [
       { type: 'function', name: 'mark', inputs: [{ name: 'value', type: 'uint256' }] },
@@ -3655,7 +3655,7 @@ describe('simple decoder API', () => {
       /invalid s/
     );
   });
-  should('decodeData handles public clearSig no-match boundaries', async () => {
+  it('decodeData handles public clearSig no-match boundaries', async () => {
     const target = '0x0000000000000000000000000000000000001300';
     const known = '0x0000000000000000000000000000000000001301';
     const mark = [
@@ -3727,7 +3727,7 @@ describe('simple decoder API', () => {
       fields: { Value: { value: '7', format: 'raw', rawValue: 7n } },
     });
   });
-  should('Decoder.addClearSig keeps generic descriptors for later bind', async () => {
+  it('Decoder.addClearSig keeps generic descriptors for later bind', async () => {
     const target = '0x0000000000000000000000000000000000000104';
     const data = hex.encode(
       abi
@@ -3800,7 +3800,7 @@ describe('simple decoder API', () => {
       },
     });
   });
-  should('Decoder.resolve binds factory-backed clearSig descriptors', async () => {
+  it('Decoder.resolve binds factory-backed clearSig descriptors', async () => {
     const target = '0x0000000000000000000000000000000000000102';
     const factory = '0x0000000000000000000000000000000000000103';
     const files = {
@@ -3913,12 +3913,12 @@ describe('simple decoder API', () => {
       true
     );
   });
-  should('decodeTx ignores contract creation transactions', () => {
+  it('decodeTx ignores contract creation transactions', () => {
     const tx =
       '0x02f8500180010182cf0880808260ffc080a0eb34cd1e43ec7a160d1e830eb7252370ef598c904131473d3720bb909b0c14b9a05d626dccdae1507c37adeaf0d3356e5f1831b5a86b445ebdf2c313951fb1b43e';
     deepStrictEqual(decodeTx(tx), undefined);
   });
-  should('decodeEvent', () => {
+  it('decodeEvent', () => {
     const to = '0x0d8775f648430679a709e98d2b0cb6250d2887ef'; // BAT, but user doesn't know that!
     const topics = [
       '0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925',
@@ -3937,7 +3937,7 @@ describe('simple decoder API', () => {
       hint: 'Allow 0xe592427a0aece92de3edee1f18e0157c05861564 spending up to 1000 BAT from 0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
     });
   });
-  should('decodeEvent with WETH event hint', () => {
+  it('decodeEvent with WETH event hint', () => {
     const transferTopics = [
       '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef',
       '0x0000000000000000000000001111111111111111111111111111111111111111',
@@ -3970,7 +3970,7 @@ describe('simple decoder API', () => {
       hint: 'Allow 0x2222222222222222222222222222222222222222 spending up to 1 WETH from 0x1111111111111111111111111111111111111111',
     });
   });
-  should('decodeEvent with custom ERC20 event hint', () => {
+  it('decodeEvent with custom ERC20 event hint', () => {
     const to = '0x1111111111111111111111111111111111111111';
     const from = '0x3333333333333333333333333333333333333333';
     const dst = '0x4444444444444444444444444444444444444444';
@@ -3993,7 +3993,7 @@ describe('simple decoder API', () => {
       }
     );
   });
-  should('decodeEvent with custom ERC1155 tag', () => {
+  it('decodeEvent with custom ERC1155 tag', () => {
     const to = '0x1111111111111111111111111111111111111111';
     const topics = [
       '0xc3d58168c5ae7397731d063d5bbf3d657854427343f4c083240f7aacaa2d0f62',
@@ -4022,7 +4022,7 @@ describe('simple decoder API', () => {
       }
     );
   });
-  should('decoding receipts', () => {
+  it('decoding receipts', () => {
     // Random example from 'https://docs.alchemy.com/reference/eth-gettransactionreceipt'
     const result = {
       transactionHash: '0x8fc90a6c3ee3001cdcbbb685b4fbe67b1fa2bec575b15b0395fea5540d0901ae',
@@ -4095,7 +4095,7 @@ describe('simple decoder API', () => {
     ]);
   });
   describe('contract create', () => {
-    should('accepts omitted or undefined args for constructors without inputs', () => {
+    it('accepts omitted or undefined args for constructors without inputs', () => {
       const bytecode = '0x00';
       const empty = [{ type: 'constructor', stateMutability: 'nonpayable' }] as const;
       deepStrictEqual(
@@ -4108,14 +4108,14 @@ describe('simple decoder API', () => {
       deepStrictEqual(deployContract(empty, bytecode), bytecode);
       deepStrictEqual(deployContract(empty, bytecode, undefined), bytecode);
     });
-    should('rejects concrete args for constructors without inputs', () => {
+    it('rejects concrete args for constructors without inputs', () => {
       const bytecode = '0x00';
       const empty = [{ type: 'constructor', stateMutability: 'nonpayable' }] as const;
       throws(() => deployContract(empty, bytecode, 0n));
       throws(() => deployContract(empty, bytecode, {}));
       throws(() => deployContract(empty, bytecode, []));
     });
-    should('basic', () => {
+    it('basic', () => {
       // Empty constructor
       deepStrictEqual(
         deployContract(
@@ -4173,7 +4173,7 @@ describe('simple decoder API', () => {
 });
 
 describe('parseAbi', () => {
-  should('encode external-function values', () => {
+  it('encode external-function values', () => {
     const method = abi.createContract(parseAbi(['function setCallback(function cb)'])).setCallback;
     const callback = ethHex.decode(`0x${'11'.repeat(24)}`);
     deepStrictEqual(
@@ -4181,7 +4181,7 @@ describe('parseAbi', () => {
       `0xe81af408${'11'.repeat(24)}${'00'.repeat(8)}`
     );
   });
-  should('parse function/event/error shapes', () => {
+  it('parse function/event/error shapes', () => {
     deepStrictEqual(parseAbiItem('function transfer(address to, uint256 amount) returns (bool)'), {
       type: 'function',
       name: 'transfer',
@@ -4230,7 +4230,7 @@ describe('parseAbi', () => {
       stateMutability: 'payable',
     });
   });
-  should('parse arrays of payable addresses', () => {
+  it('parse arrays of payable addresses', () => {
     deepStrictEqual(
       [
         parseAbiItem('function pay(address payable[] recipients)'),
@@ -4250,7 +4250,7 @@ describe('parseAbi', () => {
       ]
     );
   });
-  should('produce canonical selectors (cross-checked with ethers)', () => {
+  it('produce canonical selectors (cross-checked with ethers)', () => {
     const fnVectors = [
       ['function transferFrom(address from, address to, uint256 value) returns (bool)', '23b872dd'],
       ['function balanceOf(address) view returns (uint256)', '70a08231'],
@@ -4270,7 +4270,7 @@ describe('parseAbi', () => {
       'ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef'
     );
   });
-  should('encode identically to JSON ABI', () => {
+  it('encode identically to JSON ABI', () => {
     const parsed = abi.createContract(
       parseAbi(['function transfer(address to, uint256 value) returns (bool success)'])
     );
@@ -4279,7 +4279,7 @@ describe('parseAbi', () => {
     deepStrictEqual(parsed.transfer.encodeInput(args), json.transfer.encodeInput(args));
     deepStrictEqual(parsed.transfer.decodeOutput(ethHex.decode(`0x${'00'.repeat(31)}01`)), true);
   });
-  should('reject malformed signatures', () => {
+  it('reject malformed signatures', () => {
     throws(() => parseAbiItem('transfer(address,uint256)')); // no keyword
     throws(() => parseAbiItem('function x(Foo y)'), /struct references/);
     throws(() => parseAbiItem('function x(uint7 y)'), /unknown type/);
@@ -4300,7 +4300,7 @@ describe('decodeError', () => {
   const PANIC = '0x4e487b710000000000000000000000000000000000000000000000000000000000000011';
   const CUSTOM =
     '0xcf47918100000000000000000000000000000000000000000000000000000000000000070000000000000000000000000000000000000000000000000000000000000009';
-  should('decode Error(string)', () => {
+  it('decode Error(string)', () => {
     deepStrictEqual(decodeError(ERROR_STRING), {
       name: 'Error',
       signature: 'Error(string)',
@@ -4309,7 +4309,7 @@ describe('decodeError', () => {
     });
     deepStrictEqual(decodeError(ethHex.decode(ERROR_STRING)).name, 'Error');
   });
-  should('decode Panic(uint256)', () => {
+  it('decode Panic(uint256)', () => {
     deepStrictEqual(decodeError(PANIC), {
       name: 'Panic',
       signature: 'Panic(uint256)',
@@ -4317,7 +4317,7 @@ describe('decodeError', () => {
       message: 'panic: arithmetic overflow or underflow (0x11)',
     });
   });
-  should('decode custom errors from ABI', () => {
+  it('decode custom errors from ABI', () => {
     const errAbi = parseAbi(['error InsufficientBalance(uint256 available, uint256 required)']);
     deepStrictEqual(decodeError(CUSTOM, errAbi), {
       name: 'InsufficientBalance',
@@ -4329,7 +4329,7 @@ describe('decodeError', () => {
     deepStrictEqual(decodeError(CUSTOM), undefined);
     deepStrictEqual(decodeError(CUSTOM, parseAbi(['error Other(uint256 a)'])), undefined);
   });
-  should('handle empty and malformed data', () => {
+  it('handle empty and malformed data', () => {
     deepStrictEqual(decodeError('0x'), undefined); // revert without reason
     throws(() => decodeError('0x1234')); // shorter than a selector
   });
@@ -4342,7 +4342,7 @@ describe('multicall3 abi', () => {
     '0x82ad56cb00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000e00000000000000000000000006b175474e89094c44da98b954eedeac495271d0f00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000060000000000000000000000000000000000000000000000000000000000000000406fdde03000000000000000000000000000000000000000000000000000000000000000000000000000000006b175474e89094c44da98b954eedeac495271d0f00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000060000000000000000000000000000000000000000000000000000000000000000495d89b4100000000000000000000000000000000000000000000000000000000';
   const RESULT =
     '0x00000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000c00000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000007000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000400000000000000000000000000000000000000000000000000000000000000000';
-  should('encode/decode aggregate3 (cross-checked with ethers)', () => {
+  it('encode/decode aggregate3 (cross-checked with ethers)', () => {
     const m = abi.createContract(MULTICALL3_ABI).aggregate3;
     const calldata = ethHex.encode(
       m.encodeInput([
@@ -4358,4 +4358,4 @@ describe('multicall3 abi', () => {
   });
 });
 
-should.runWhen(import.meta.url);
+it.runWhen(import.meta.url);

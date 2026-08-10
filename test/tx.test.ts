@@ -1,5 +1,5 @@
 import { bytesToHex } from '@noble/hashes/utils.js';
-import { describe, should } from '@paulmillr/jsbt/test.js';
+import { describe, it } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual, throws } from 'node:assert';
 import { inspect } from 'node:util';
 import { deployContract } from '../src/abi/decoder.ts';
@@ -210,7 +210,7 @@ const randPrivs = () => new Array(1024).fill(0).map((a) => addr.random().private
 
 describe('Transactions', () => {
   describe('EIP7702', () => {
-    should('basic', () => {
+    it('basic', () => {
       const tx = `0x04f8e3018203118080809470997970c51812dc3a010c7d01b50e0d17dc79c8880de0b6b3a764000080c0f8baf85c0194fba3912ca04dd458c843e2ee08967fc04f3579c28201a480a060fdd29ff912ce880cd3edaf9f932dc61d3dae823ea77e0323f94adb9f6a72fea060fdd29ff912ce880cd3edaf9f932dc61d3dae823ea77e0323f94adb9f6a72fef85a0a9400000000000000000000000000000000000000004501a060fdd29ff912ce880cd3edaf9f932dc61d3dae823ea77e0323f94adb9f6a72fea060fdd29ff912ce880cd3edaf9f932dc61d3dae823ea77e0323f94adb9f6a72fe`;
       const authList = [
         {
@@ -276,7 +276,7 @@ describe('Transactions', () => {
         `0x04f90126018203118080809470997970c51812dc3a010c7d01b50e0d17dc79c8880de0b6b3a764000080c0f8baf85c0194fba3912ca04dd458c843e2ee08967fc04f3579c28201a480a060fdd29ff912ce880cd3edaf9f932dc61d3dae823ea77e0323f94adb9f6a72fea060fdd29ff912ce880cd3edaf9f932dc61d3dae823ea77e0323f94adb9f6a72fef85a0a9400000000000000000000000000000000000000004501a060fdd29ff912ce880cd3edaf9f932dc61d3dae823ea77e0323f94adb9f6a72fea060fdd29ff912ce880cd3edaf9f932dc61d3dae823ea77e0323f94adb9f6a72fe80a060fdd29ff912ce880cd3edaf9f932dc61d3dae823ea77e0323f94adb9f6a72fea060fdd29ff912ce880cd3edaf9f932dc61d3dae823ea77e0323f94adb9f6a72fe`
       );
     });
-    should('sign authorization', () => {
+    it('sign authorization', () => {
       const privateKey = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80';
       const auth = {
         address: '0xFBA3912Ca04dd458c843e2EE08967fC04f3579c2',
@@ -292,7 +292,7 @@ describe('Transactions', () => {
       const malleated = { ...signed, s: N - signed.s, yParity: signed.yParity ^ 1 };
       throws(() => authorization.getAuthority(malleated), /invalid s/);
     });
-    should('validate authorization address', () => {
+    it('validate authorization address', () => {
       const invalid = ['0x01', `0x${'1'.repeat(39)}`, '0x8ba1f109551bD432803012645Ac136ddd64DBA73'];
       for (const address of invalid)
         throws(
@@ -300,7 +300,7 @@ describe('Transactions', () => {
           /address|checksum|20 bytes/i
         );
     });
-    should('reject invalid set-code tx shape', () => {
+    it('reject invalid set-code tx shape', () => {
       const tx = {
         type: 'eip7702' as const,
         to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
@@ -408,7 +408,7 @@ describe('Transactions', () => {
     });
   });
   describe('Utils', () => {
-    should('legacySig', () => {
+    it('legacySig', () => {
       // DECODE
       throws(() => legacySig.decode([] as any), 'legacySig array');
       throws(() => legacySig.decode(new Uint8Array([]) as any), 'legacySig u8a');
@@ -470,13 +470,13 @@ describe('Transactions', () => {
       });
     });
 
-    should('utils: initSig rejects non-Ethereum recovery bits', () => {
+    it('utils: initSig rejects non-Ethereum recovery bits', () => {
       const sig = { r: 1n, s: 1n };
       deepStrictEqual([initSig(sig, 0).recovery, initSig(sig, 1).recovery], [0, 1]);
       throws(() => initSig(sig, 2), /recovery bit/);
       throws(() => initSig(sig, 3), /recovery bit/);
     });
-    should('utils: recoverPublicKey round-trips sign/initSig', () => {
+    it('utils: recoverPublicKey round-trips sign/initSig', () => {
       const { privateKey, address } = addr.random();
       const hash = new Uint8Array(32).fill(7);
       const sig = sign(hash, ethHex.decode(privateKey));
@@ -488,7 +488,7 @@ describe('Transactions', () => {
       const other = new Uint8Array(32).fill(8);
       deepStrictEqual(addr.fromPublicKey(recoverPublicKey(sig, other)) === address, false);
     });
-    should('utils: cloneDeep preserves null and own keys', () => {
+    it('utils: cloneDeep preserves null and own keys', () => {
       const value = Object.assign(Object.create({ inherited: { value: 1 } }), {
         own: { value: 2 },
         nil: null,
@@ -498,13 +498,13 @@ describe('Transactions', () => {
       deepStrictEqual(Object.hasOwn(cloned, 'inherited'), false);
       deepStrictEqual(cloned.own === value.own, false);
     });
-    should('utils: omit rejects non-plain object carriers', () => {
+    it('utils: omit rejects non-plain object carriers', () => {
       deepStrictEqual(omit({ a: 1, b: 2 }, 'b'), { a: 1 });
       throws(() => omit(null as any, 'x'), /plain object/);
       throws(() => omit([1, 2] as any, '1'), /plain object/);
       throws(() => omit(new Uint8Array([1, 2]) as any, '0'), /plain object/);
     });
-    should('utils: zip rejects length mismatches', () => {
+    it('utils: zip rejects length mismatches', () => {
       deepStrictEqual(zip([1, 2], ['a', 'b']), [
         [1, 'a'],
         [2, 'b'],
@@ -512,7 +512,7 @@ describe('Transactions', () => {
       throws(() => zip([1, 2], ['a']), /zip: length mismatch/);
       throws(() => zip([1], ['a', 'b']), /zip: length mismatch/);
     });
-    should('utils: perCentDecimal', () => {
+    it('utils: perCentDecimal', () => {
       const { perCentDecimal } = formatters;
 
       const formatDecimal = (val, prec) => createDecimal(prec).encode(val);
@@ -533,15 +533,15 @@ describe('Transactions', () => {
       throws(() => perCentDecimal(18, 0), /perCentDecimal: wrong price/);
       throws(() => perCentDecimal(18, -1), /perCentDecimal: wrong price/);
     });
-    should('utils: formatBigint omits decimal point when precision is zero', () => {
+    it('utils: formatBigint omits decimal point when precision is zero', () => {
       deepStrictEqual(formatters.formatBigint(1_000_000_000n, 1_000_000_000n, 0, true), '1');
       deepStrictEqual(formatters.formatBigint(123_456_789n, 1_000_000_000n, 0, true), '~0');
     });
-    should('utils: fromWei labels gwei-scaled values as gwei', () => {
+    it('utils: fromWei labels gwei-scaled values as gwei', () => {
       deepStrictEqual(formatters.fromWei(1_000_000_000n), '1gwei');
       deepStrictEqual(formatters.fromWei(1_500_000_000n), '1.5gwei');
     });
-    should('utils: deepFreeze', () => {
+    it('utils: deepFreeze', () => {
       const value: any = { a: { b: [1, { c: 2 }] } };
       value.self = value;
       deepStrictEqual(deepFreeze(value), value);
@@ -568,7 +568,7 @@ describe('Transactions', () => {
       const encoded = ethHex.encode(RawTx.encode(decoded));
       deepStrictEqual(encoded, hex, 'RawTx.encoded');
     };
-    should('encodes validated null-prototype data', () => {
+    it('encodes validated null-prototype data', () => {
       const data = Object.assign(Object.create(null), {
         chainId: 1n,
         nonce: 1n,
@@ -596,13 +596,13 @@ describe('Transactions', () => {
         },
       });
     });
-    should('vectors', () => {
+    it('vectors', () => {
       for (const i of TX_VECTORS) t(i.hex);
     });
-    should('eip155', () => {
+    it('eip155', () => {
       for (const i of EIP155_VECTORS) t(i.rlp);
     });
-    should('ethereum-tests', () => {
+    it('ethereum-tests', () => {
       const skip = SKIPPED_ERRORS.ethereum_tests_raw_tx;
       for (const cat in ethTests) {
         for (const k in ethTests[cat]) {
@@ -625,7 +625,7 @@ describe('Transactions', () => {
         }
       }
     });
-    should(`viem tests`, async () => {
+    it(`viem tests`, async () => {
       let skipped = 0;
       let passed = 0;
       try {
@@ -648,7 +648,7 @@ describe('Transactions', () => {
       }
       if (skipped > 0) console.log(`skipped: ${skipped} ${passed}`);
     });
-    should('EIP-4844', () => {
+    it('EIP-4844', () => {
       // FROM https://github.com/ethereumjs/ethereumjs-monorepo/blob/master/packages/tx/test/eip4844.spec.ts
       const vectors = [
         {
@@ -686,13 +686,13 @@ describe('Transactions', () => {
   const addr_ = '0xD4fE407789e11a27b7888A324eC597435353dC35';
 
   describe('Address', () => {
-    should('generate correct address with Address.fromPrivateKey()', () => {
+    it('generate correct address with Address.fromPrivateKey()', () => {
       deepStrictEqual(addr.fromPrivateKey(priv), addr_);
     });
-    should('generate correct address with Address.fromPublicKey()', () => {
+    it('generate correct address with Address.fromPublicKey()', () => {
       deepStrictEqual(addr.fromPublicKey(pub), addr_);
     });
-    should('getCreateAddress', () => {
+    it('getCreateAddress', () => {
       // Cross-checked with ethers getCreateAddress
       const from = '0x8ba1f109551bD432803012645Ac136ddd64DBA72';
       const vectors = [
@@ -717,7 +717,7 @@ describe('Transactions', () => {
         /checksum/
       );
     });
-    should('getCreate2Address (EIP-1014 examples)', () => {
+    it('getCreate2Address (EIP-1014 examples)', () => {
       const keccakOf00 = '0xbc36789e7a1e281436464229828f817d6612f7b477d66591ff96a9e064bcc98a'; // keccak(0x00)
       const keccakOfDeadbeef = '0xd4fd4e189132273036449fc9e11198c739161b4c0116a9a2dccdfa1c492006f1'; // keccak(0xdeadbeef)
       const keccakOfEmpty = '0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470'; // keccak(0x)
@@ -757,19 +757,19 @@ describe('Transactions', () => {
   });
   const eip155 = EIP155_VECTORS.slice(1);
 
-  should('generate correct Transaction.hash', () => {
+  it('generate correct Transaction.hash', () => {
     for (const txr of TX_VECTORS) {
       const etx = Transaction.fromHex(txr.hex);
       deepStrictEqual(bytesToHex(etx.calcHash(true)), txr.hash.slice(2));
     }
   });
-  should('parse tx sender correctly', () => {
+  it('parse tx sender correctly', () => {
     for (const txr of TX_VECTORS) {
       const etx = Transaction.fromHex(txr.hex);
       deepStrictEqual(etx.recoverSender().address, addr_, 'sender is incorrect');
     }
   });
-  should('legacy v getter and pre-EIP155 prepare', () => {
+  it('legacy v getter and pre-EIP155 prepare', () => {
     const common = {
       to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
       value: 1n,
@@ -792,14 +792,14 @@ describe('Transactions', () => {
     deepStrictEqual(rt.sender, addr_);
     deepStrictEqual(rt.v, pre155.v);
   });
-  should('compare with Transaction.equals()', () => {
+  it('compare with Transaction.equals()', () => {
     for (const txr of TX_VECTORS) {
       const etx1 = Transaction.fromHex(txr.hex);
       const etx2 = Transaction.fromHex(txr.hex);
       deepStrictEqual(etx1, etx2);
     }
   });
-  should('construct Transaction properly', async () => {
+  it('construct Transaction properly', async () => {
     for (const txr of TX_VECTORS) {
       const etx = Transaction.fromHex(txr.hex);
       const tx = new Transaction('legacy', {
@@ -813,7 +813,7 @@ describe('Transactions', () => {
     }
   });
 
-  should('handle EIP155 test vectors (raw)', () => {
+  it('handle EIP155 test vectors (raw)', () => {
     for (const vector of eip155) {
       const a = new Transaction('legacy', convertTx(vector.transaction));
       const b = Transaction.fromHex(vector.rlp);
@@ -821,28 +821,28 @@ describe('Transactions', () => {
     }
   });
 
-  should('handle EIP155 test vectors (recursive)', () => {
+  it('handle EIP155 test vectors (recursive)', () => {
     for (const vector of eip155) {
       const ours = Transaction.fromHex(vector.rlp);
       deepStrictEqual(ours.raw, Transaction.fromHex(ours.toHex({ includeSignature: true })).raw);
     }
   });
 
-  should('handle EIP155 test vectors (hash)', () => {
+  it('handle EIP155 test vectors (hash)', () => {
     for (const vector of eip155) {
       const ours = new Transaction('legacy', convertTx(vector.transaction));
       deepStrictEqual(bytesToHex(ours.calcHash(false)), vector.hash);
     }
   });
 
-  should('handle EIP155 test vectors (sender)', () => {
+  it('handle EIP155 test vectors (sender)', () => {
     for (const vector of eip155) {
       const ours = Transaction.fromHex(vector.rlp);
       deepStrictEqual(ours.recoverSender().address.toLowerCase().slice(2), vector.sender);
     }
   });
 
-  should('getMessageToSign data should equal in signed/unsigned', async () => {
+  it('getMessageToSign data should equal in signed/unsigned', async () => {
     const tx = Transaction.prepare({
       type: 'legacy',
       to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
@@ -861,7 +861,7 @@ describe('Transactions', () => {
     deepStrictEqual(signedTxD.sender, address);
   });
 
-  should('ethers.js/transactions.json', () => {
+  it('ethers.js/transactions.json', () => {
     // Awesome tests, there is even eip4844
     for (const tx of getEthersVectors('transactions.json.gz')) {
       const data = tx.transaction;
@@ -924,7 +924,7 @@ describe('Transactions', () => {
       }
     }
   });
-  should(`viem transactions`, async () => {
+  it(`viem transactions`, async () => {
     try {
       for await (const vtx of getViemVectorItems('transaction.json.gz')) {
         const data = vtx.transaction;
@@ -979,7 +979,7 @@ describe('Transactions', () => {
       forceGC();
     }
   });
-  should('ethereum-tests', () => {
+  it('ethereum-tests', () => {
     const skip = SKIPPED_ERRORS.ethereum_tests;
     for (const cat in ethTests) {
       for (const k in ethTests[cat]) {
@@ -1003,7 +1003,7 @@ describe('Transactions', () => {
     }
   });
   describe('validations', () => {
-    should('basic', () => {
+    it('basic', () => {
       // Minimal fields with different types. Other stuff is default.
       const raw = Transaction.prepare({
         to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
@@ -1082,7 +1082,7 @@ describe('Transactions', () => {
         '0xf85f800182520894df90dea0e0bf5ca6d2a7f0cb86874ba6714f463e018026a09082d97700034dff9cfaa0a64136437eb7adf16940d0672491b80cfbc642a78ba04d2fd86634189e1e5e049ce958edb0ccb5dafce25559836346c360772be71a5f'
       );
     });
-    should('signature field edge cases', () => {
+    it('signature field edge cases', () => {
       const priv = '6b911fd37cdf5c81d4c0adb1ab7fa822ed253ab0ad9aa18d77257c88b29b718e';
       const fields = {
         to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
@@ -1109,7 +1109,7 @@ describe('Transactions', () => {
         (e: any) => e.errors && e.errors.some((i: any) => i.error.includes('sig-related'))
       );
     });
-    should('1024 private keys', () => {
+    it('1024 private keys', () => {
       for (const priv of randPrivs()) {
         const address = addr.fromPrivateKey(priv);
         const raw = Transaction.prepare({
@@ -1126,7 +1126,7 @@ describe('Transactions', () => {
         deepStrictEqual(txH.sender, address);
       }
     });
-    should('all fields', () => {
+    it('all fields', () => {
       // Default API:
       // - requires all fields set manually (check if fields not set)
       // - type specified manually
@@ -1226,7 +1226,7 @@ describe('Transactions', () => {
           })
       );
     });
-    should('wrong version fields', () => {
+    it('wrong version fields', () => {
       // Prepare:
       // - disallow signature related methods
       // - apply defaults
@@ -1283,7 +1283,7 @@ describe('Transactions', () => {
         })
       );
     });
-    should('wrong field types', () => {
+    it('wrong field types', () => {
       const tx = {
         to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
         nonce: 0n,
@@ -1575,7 +1575,7 @@ describe('Transactions', () => {
       );
     });
   });
-  should('create contract', () => {
+  it('create contract', () => {
     /*
     Design rationale:
     - 0x addresses allowed only for 'to' field, not for blobs/accessList.
@@ -1679,7 +1679,7 @@ describe('Transactions', () => {
     deepStrictEqual(RawTx.decode(signedNew.toBytes()), RawTx.decode(ethHex.decode(txHex)));
     deepStrictEqual(signedNew.toHex(), txHex);
   });
-  should('parse weird TXs without to or data', () => {
+  it('parse weird TXs without to or data', () => {
     const h =
       '0x02f8540a22830f4240830f453882d221808080c080a0c1bbbdf2a0949ca12d902d41b21cc7ba773ed40b8d1234ee3fbbfb6b8859b3dba064856c2d547c3ef008a0b030d10a5e68afe87f2729dd5677c64b52433be89dd8';
     const tx = Transaction.fromHex(h);
@@ -1689,4 +1689,4 @@ describe('Transactions', () => {
   });
 });
 
-should.runWhen(import.meta.url);
+it.runWhen(import.meta.url);

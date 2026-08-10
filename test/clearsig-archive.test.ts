@@ -1,18 +1,17 @@
-import { describe, should } from '@paulmillr/jsbt/test.js';
-import { deepStrictEqual, rejects } from 'node:assert';
-import { RpcClient } from '../src/net.ts';
-import { clearSigCallbacks, discoverTx } from '../src/net/clearsig.ts';
-import { tokenInfo, tokenURI } from '../src/net/tokens.ts';
+import { describe, it } from '@paulmillr/jsbt/test.js';
+import { deepStrictEqual } from 'node:assert';
 import {
   CLEARSIG_REPO,
   Decoder,
   OURS,
-  TOKENS,
   createContract,
   decodeData,
-  decodeTx,
+  decodeTx
 } from '../src/abi/index.ts';
 import { Transaction } from '../src/index.ts';
+import { RpcClient } from '../src/net.ts';
+import { clearSigCallbacks, discoverTx } from '../src/net/clearsig.ts';
+import { tokenInfo, tokenURI } from '../src/net/tokens.ts';
 import { ethHex } from '../src/utils.ts';
 
 const TARGET = '0x0000000000000000000000000000000000001001';
@@ -277,7 +276,7 @@ const rpc = () => {
 };
 
 describe('ERC-7730 archive callbacks', () => {
-  should('renders through archive-backed resolver callbacks', async () => {
+  it('renders through archive-backed resolver callbacks', async () => {
     const { archive, calls } = rpc();
     const inner = createContract(ERC20_ABI).transfer.encodeInput({ to: ACCOUNT, value: 1000000n });
     const data = ethHex.encode(
@@ -393,7 +392,7 @@ describe('ERC-7730 archive callbacks', () => {
     deepStrictEqual(calls.includes('eth_getLogs'), true);
     deepStrictEqual(calls.includes('eth_getBlockByNumber'), true);
   });
-  should('clearSigCallbacks supplies the standard archive resolvers', async () => {
+  it('clearSigCallbacks supplies the standard archive resolvers', async () => {
     const { archive, calls } = rpc();
     const opts = clearSigCallbacks(archive);
     const token = ethHex.encode(
@@ -466,7 +465,7 @@ describe('ERC-7730 archive callbacks', () => {
     deepStrictEqual(calls.includes('eth_getBlockByNumber'), true);
   });
 
-  should('discoverTx binds generic descriptors for a probed unknown token', async () => {
+  it('discoverTx binds generic descriptors for a probed unknown token', async () => {
     // The mock TOKEN contract is in no registry and no repository: online probing
     // detects ERC-20 metadata, binds ercs/calldata-erc20-tokens.json through the
     // token map, and the descriptor's format-key ABI supplies the signature info.
@@ -511,7 +510,7 @@ describe('ERC-7730 archive callbacks', () => {
     deepStrictEqual(calls.includes('eth_call'), true);
   });
 
-  should('decodes raw transaction hex before rendering clear signing', async () => {
+  it('decodes raw transaction hex before rendering clear signing', async () => {
     const { archive } = rpc();
     const inner = createContract(ERC20_ABI).transfer.encodeInput({ to: ACCOUNT, value: 1000000n });
     const data = ethHex.encode(
@@ -609,7 +608,7 @@ describe('ERC-7730 archive callbacks', () => {
       Array.from(inner)
     );
   });
-  should('renders split resolver transaction types from raw tx hex', async () => {
+  it('renders split resolver transaction types from raw tx hex', async () => {
     const { archive } = rpc();
     const sign = (data: string) =>
       Transaction.prepare({
@@ -731,7 +730,7 @@ describe('ERC-7730 archive callbacks', () => {
       fields: { Call: { value: 'Send 1 MTK to vitalik.eth', format: 'calldata', rawValue: inner } },
     });
   });
-  should('encodes real demo NFT preset address as raw tx hex', async () => {
+  it('encodes real demo NFT preset address as raw tx hex', async () => {
     const data = ethHex.encode(
       createContract(ABI).nftResolve.encodeInput({ collection: BAYC, tokenId: 1n })
     );
@@ -765,7 +764,7 @@ describe('ERC-7730 archive callbacks', () => {
       fields: { NFT: { value: '1', format: 'nftName', rawValue: 1n } },
     });
   });
-  should('renders a real mainnet raw tx with built-in clear-signing metadata', async () => {
+  it('renders a real mainnet raw tx with built-in clear-signing metadata', async () => {
     const decoded = decodeTx(USDT_TX, { clearSig: CLEARSIG_REPO });
     if (!decoded || Array.isArray(decoded) || !decoded.clearSig)
       throw new Error('missing decoded clearSig');
@@ -803,4 +802,4 @@ describe('ERC-7730 archive callbacks', () => {
   });
 });
 
-should.runWhen(import.meta.url);
+it.runWhen(import.meta.url);

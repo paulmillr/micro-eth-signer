@@ -1,6 +1,6 @@
 import { keccak_256 } from '@noble/hashes/sha3.js';
 import { hexToBytes, utf8ToBytes } from '@noble/hashes/utils.js';
-import { describe, should } from '@paulmillr/jsbt/test.js';
+import { describe, it } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual, throws } from 'node:assert';
 import { eip712 } from '../src/abi/index.ts';
 import * as typed from '../src/core/message.ts';
@@ -42,7 +42,7 @@ const typedData = {
 
 describe('typedData (EIP-712)', () => {
   // Stolen from EIP itself
-  should('Basic', () => {
+  it('Basic', () => {
     const privateKey = keccak_256(utf8ToBytes('cow'));
     const address = addr.fromPrivateKey(privateKey);
     deepStrictEqual(address, '0xCD2a3d9F938E13CD947Ec05AbC7FE734Df8DD826');
@@ -68,7 +68,7 @@ describe('typedData (EIP-712)', () => {
     deepStrictEqual(typed.recoverAddressTyped(sig, typedData), address);
   });
 
-  should('renders ERC-7730 clear signing for typed-data signer input', async () => {
+  it('renders ERC-7730 clear signing for typed-data signer input', async () => {
     const descriptors = {
       'mail.json': {
         context: {
@@ -129,7 +129,7 @@ describe('typedData (EIP-712)', () => {
 
   describe('Utils', () => {
     const { parseType, getDependencies, getTypes, encoder } = typed._TEST;
-    should('parseType', () => {
+    it('parseType', () => {
       deepStrictEqual(parseType('string'), {
         base: 'string',
         item: 'string',
@@ -232,7 +232,7 @@ describe('typedData (EIP-712)', () => {
         })
       );
     });
-    should('getDependencies', () => {
+    it('getDependencies', () => {
       deepStrictEqual(
         getDependencies({
           Person: [
@@ -368,7 +368,7 @@ describe('typedData (EIP-712)', () => {
         }
       );
     });
-    should('getTypes', () => {
+    it('getTypes', () => {
       deepStrictEqual(
         typed.encodeType(
           {
@@ -418,13 +418,13 @@ describe('typedData (EIP-712)', () => {
         }
       );
     });
-    should('getDomainType', () => {
+    it('getDomainType', () => {
       const domain = Object.assign(Object.create({ chainId: 1n }), {
         name: 'Ether Mail',
       });
       deepStrictEqual(typed.getDomainType(domain), [{ name: 'name', type: 'string' }]);
     });
-    should('validateTyped', () => {
+    it('validateTyped', () => {
       const types = Object.create({
         Mail: [{ name: 'contents', type: 'string' }],
       });
@@ -449,7 +449,7 @@ describe('typedData (EIP-712)', () => {
         /wrong primaryType/
       );
     });
-    should('encoder', () => {
+    it('encoder', () => {
       const e = encoder(typedData.types, typedData.domain);
       deepStrictEqual(
         e.encodeData('Mail', typedData.message),
@@ -466,7 +466,7 @@ describe('typedData (EIP-712)', () => {
     });
   });
   describe('eip191Signer', () => {
-    should('Basic', () => {
+    it('Basic', () => {
       deepStrictEqual(
         typed.eip191Signer.getHash('Hello World'),
         '0xa1de988600a42c4b4ab089b619297c17d53cffae5d5120d82d8a92d0bb3b78f2'
@@ -480,7 +480,7 @@ describe('typedData (EIP-712)', () => {
         '0x6d91b221f765224b256762dcba32d62209cf78e9bebb0a1b758ca26c76db3af4'
       );
     });
-    should('Sign', () => {
+    it('Sign', () => {
       const privateKey = hexToBytes(
         '4af1bceebf7f3634ec3cff8a2c38e51178d5d4ce585c52d6043e5e2cc3418bb0'
       );
@@ -494,7 +494,7 @@ describe('typedData (EIP-712)', () => {
       deepStrictEqual(typed.eip191Signer.verify(sig, message, address), true);
       deepStrictEqual(typed.eip191Signer.recoverAddress(sig, message), address);
     });
-    should('more tests (based on @metamask/eth-sig-util)', () => {
+    it('more tests (based on @metamask/eth-sig-util)', () => {
       const VECTORS = [
         {
           message: utf8ToBytes('hello world'),
@@ -531,7 +531,7 @@ describe('typedData (EIP-712)', () => {
   });
 
   // Stolen from other libraries
-  should('ethers', () => {
+  it('ethers', () => {
     const ETHERS_TYPED = jsonGZ('./vectors/ethers/testcases/typed-data.json.gz');
     for (const t of ETHERS_TYPED) {
       const e = typed.encoder(
@@ -684,7 +684,7 @@ describe('typedData (EIP-712)', () => {
       // },
     };
     for (const k in VECTORS) {
-      should(k, () => {
+      it(k, () => {
         const { t, sig } = VECTORS[k];
         deepStrictEqual(typed.signTyped(t, privateKey, false), sig);
         deepStrictEqual(typed.recoverAddressTyped(sig, t).toLocaleLowerCase(), address);
@@ -693,7 +693,7 @@ describe('typedData (EIP-712)', () => {
   });
   describe('eth-sig-util', () => {
     const privateKey = '4af1bceebf7f3634ec3cff8a2c38e51178d5d4ce585c52d6043e5e2cc3418bb0';
-    should('recursive', () => {
+    it('recursive', () => {
       // This is pretty complex, since it depeneds on ignoring not present fields, which
       // won't allow us to catch these error by types. There is no optional fields in EIP712,
       // but you can use different types for this.
@@ -731,7 +731,7 @@ describe('typedData (EIP-712)', () => {
     });
   });
   describe('geth', () => {
-    should('gnosis', () => {
+    it('gnosis', () => {
       const t = {
         types: {
           EIP712Domain: [{ type: 'address', name: 'verifyingContract' }],
@@ -770,7 +770,7 @@ describe('typedData (EIP-712)', () => {
         '0x28bae2bd58d894a1d9b69e5e9fde3570c4b98a6fc5499aefb54fb830137e831f'
       );
     });
-    should('arrays', () => {
+    it('arrays', () => {
       const t = {
         types: {
           EIP712Domain: [
@@ -828,7 +828,7 @@ describe('typedData (EIP-712)', () => {
         '0x20259eda63cf4f1c8c331d57d8e044683c26c3bb1c97b25c56f0c2ff963f3f9d6e0c627900b24bd432fe7b1f713f1b0744091a646a9fe4a65a18dfed21f2949cfdd277c623d919b59ae5ce87e31a89f081611b0036f04a506517bb1b2b17747caba7d5d4fe9af307550a2b994140e4d4aec2a2dc7c3a38ffb88b0c020c377417'
       );
     });
-    should('custom_arraytype', () => {
+    it('custom_arraytype', () => {
       const t = {
         types: {
           EIP712Domain: [
@@ -888,7 +888,7 @@ describe('typedData (EIP-712)', () => {
         '0xef61350d5e86546c92ecd89ebd469611ddf0af2e7e89a0b20aa97f91bff967b2bfb54ec5e6bf391ea339a110356cb0fd003296b0dabe4b0b2e51d0e50c815c8a44470a26ef91e1456b46eab63fd9c426f81bfd7869b3c51f1e33aff56cede602b5aadf3154a261abdd9086fc627b61efca26ae5702701d05cd2305f7c52a2fc8'
       );
     });
-    should('fail', () => {
+    it('fail', () => {
       const VECTORS = {
         arraytype_overload: {
           types: {
@@ -1462,7 +1462,7 @@ describe('typedData (EIP-712)', () => {
 
 describe('signature utils', () => {
   const privateKey = '0x4c0883a69102937d6231471b5dbb6204fe512961708279f1d7b1b8e7e8b1b1e1';
-  should('parseSignature/serializeSignature roundtrip', () => {
+  it('parseSignature/serializeSignature roundtrip', () => {
     const sig = typed.eip191Signer.sign('Hello, Ethereum!', privateKey, false);
     const parsed = parseSignature(sig);
     deepStrictEqual(typeof parsed.r, 'bigint');
@@ -1482,7 +1482,7 @@ describe('signature utils', () => {
       true
     );
   });
-  should('parseSignature rejects malformed input', () => {
+  it('parseSignature rejects malformed input', () => {
     const sig = typed.eip191Signer.sign('x', privateKey, false);
     const bytes = ethHex.decode(sig);
     throws(() => parseSignature(sig.slice(0, -2))); // 64 bytes
@@ -1497,4 +1497,4 @@ describe('signature utils', () => {
   });
 });
 
-should.runWhen(import.meta.url);
+it.runWhen(import.meta.url);

@@ -2,7 +2,7 @@ import { ctr } from '@noble/ciphers/aes.js';
 import { pbkdf2 } from '@noble/hashes/pbkdf2.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex, concatBytes, hexToBytes, utf8ToBytes } from '@noble/hashes/utils.js';
-import { describe, should } from '@paulmillr/jsbt/test.js';
+import { describe, it } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual, throws } from 'node:assert';
 // Public subpath is named by Ethereum validator-key purpose, not the underlying BLS curve.
 import * as bls from '../src/keystore.ts';
@@ -38,7 +38,7 @@ function bytesToNumberBE(item) {
 }
 
 describe('Validator keys', () => {
-  should('derivation validators', () => {
+  it('derivation validators', () => {
     const seed = hexToBytes(vectors[0][0]);
     throws(() => bls.deriveSeedTree(seed, 1 as never), TypeError);
     throws(() => bls.deriveSeedTree(seed, 'x/12381/3600/0/0'), RangeError);
@@ -55,25 +55,25 @@ describe('Validator keys', () => {
     throws(() => bls.deriveEIP2334Key(new Uint8Array(31), 'signing', 0), RangeError);
   });
   describe('EIP2333', () => {
-    should('hkdfModR rejects ikm shorter than 32 bytes', () => {
+    it('hkdfModR rejects ikm shorter than 32 bytes', () => {
       throws(() => bls.hkdfModR(new Uint8Array(31)), RangeError);
     });
-    should('deriveMaster rejects seeds shorter than 32 bytes', () => {
+    it('deriveMaster rejects seeds shorter than 32 bytes', () => {
       throws(() => bls.deriveMaster(new Uint8Array(31)), RangeError);
     });
-    should('deriveChild rejects parent keys that are not 32 bytes', () => {
+    it('deriveChild rejects parent keys that are not 32 bytes', () => {
       throws(() => bls.deriveChild(Uint8Array.of(1, 2, 3), 0), RangeError);
       throws(() => bls.deriveChild(new Uint8Array(33), 0), RangeError);
     });
     vectors.forEach((vector, i) => {
-      should(`run vector ${i}`, () => {
+      it(`run vector ${i}`, () => {
         const [seed, expMaster, childIndex, expChild] = vector;
         const master = bls.deriveMaster(hexToBytes(seed));
         const child = bls.deriveChild(master, childIndex);
         deepStrictEqual(bytesToNumberBE(master), BigInt(expMaster), 'master key is not equal');
         deepStrictEqual(bytesToNumberBE(child), BigInt(expChild), 'child key is not equal');
       });
-      should('deriveEIP2334SigningKey', () => {
+      it('deriveEIP2334SigningKey', () => {
         const seed = hexToBytes(
           'cbd1178c008ca4ee38654d6584f753e7f6c42b258ae0efd5a99d1c69e293f8488ce4e994c9ce06ae8b284a1b3a07a41059782e72036378427277d988fdd61c83'
         );
@@ -98,13 +98,13 @@ describe('Validator keys', () => {
       };
       return new bls.EIP2335Keystore('password', 'pbkdf2', randomBytes);
     };
-    should('create rejects non-string paths', () => {
+    it('create rejects non-string paths', () => {
       throws(() => ctx().create(new Uint8Array(32).fill(9), 123 as never), TypeError);
     });
-    should('createDerivedEIP2334 rejects seeds shorter than 32 bytes', () => {
+    it('createDerivedEIP2334 rejects seeds shorter than 32 bytes', () => {
       throws(() => ctx().createDerivedEIP2334(new Uint8Array(31), 'signing', 0), RangeError);
     });
-    should('normalize keystore passwords', () => {
+    it('normalize keystore passwords', () => {
       const TESTS = [
         ['', ''],
         ['passphrase', 'passphrase'],
@@ -169,7 +169,7 @@ describe('Validator keys', () => {
       badPath.path = 123;
       throws(() => decryptInvalid(badPath));
     };
-    should('decrypt PBKDF2', () => {
+    it('decrypt PBKDF2', () => {
       const vector = {
         crypto: {
           kdf: {
@@ -212,7 +212,7 @@ describe('Validator keys', () => {
         hexToBytes('000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f')
       );
     });
-    should('decrypt PBKDF2 with stored module params', () => {
+    it('decrypt PBKDF2 with stored module params', () => {
       const password = 'password';
       const salt = new Uint8Array(32).fill(4);
       const iv = new Uint8Array(16).fill(5);
@@ -247,7 +247,7 @@ describe('Validator keys', () => {
         secret
       );
     });
-    should('throw on previous versions', () => {
+    it('throw on previous versions', () => {
       const vector = {
         crypto: {
           cipher: 'aes-128-ctr',
@@ -446,7 +446,7 @@ describe('Validator keys', () => {
         bls.deriveEIP2334Key(seed, 'signing', 3).key,
       ]);
     };
-    should('scrypt keystore vectors', () => {
+    it('scrypt keystore vectors', () => {
       decryptScrypt();
       keystore();
       multiple();
@@ -454,4 +454,4 @@ describe('Validator keys', () => {
   });
 });
 
-should.runWhen(import.meta.url);
+it.runWhen(import.meta.url);

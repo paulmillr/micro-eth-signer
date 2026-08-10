@@ -1,29 +1,29 @@
-import { describe, should } from '@paulmillr/jsbt/test.js';
+import { describe, it } from '@paulmillr/jsbt/test.js';
 import * as mftch from 'micro-ftch';
 import { deepStrictEqual, rejects, throws } from 'node:assert';
 import { readFile } from 'node:fs/promises';
 import { DEFAULT_TOKENS, ERC1155, ERC20, events, tokenFromSymbol } from '../src/abi/index.ts';
 import { Transaction } from '../src/index.ts';
-import { RpcClient, Web3Error, mapPool, withRetry } from '../src/net.ts';
+import { mapPool, RpcClient, Web3Error, withRetry } from '../src/net.ts';
 import { enrichTx, rowCodec } from '../src/net/enrich.ts';
 import { calcTransfersDiff, history, historyMulti, newestFirst } from '../src/net/history.ts';
 import { Quoter } from '../src/net/quoter.ts';
 import { NameResolver } from '../src/net/resolver.ts';
 import {
-    approvalTopics,
-    calcAllowances,
-    contractCapabilities,
-    decodeReceiptTokenTransfers,
-    detectTokenContracts,
-    ipfsToHttp,
-    nftCandidates,
-    nftHoldings,
-    nftMetadata,
-    tokenBalances,
-    tokenInfo,
-    tokenInfos,
-    tokenTransferFromCalldata,
-    tokenURI,
+  approvalTopics,
+  calcAllowances,
+  contractCapabilities,
+  decodeReceiptTokenTransfers,
+  detectTokenContracts,
+  ipfsToHttp,
+  nftCandidates,
+  nftHoldings,
+  nftMetadata,
+  tokenBalances,
+  tokenInfo,
+  tokenInfos,
+  tokenTransferFromCalldata,
+  tokenURI,
 } from '../src/net/tokens.ts';
 
 import { internalTransactions, traceFilterSingle } from '../src/net/trace.ts';
@@ -93,19 +93,19 @@ const fixTx = (tx) => {
 };
 
 describe('Network', () => {
-  should('ENS', async () => {
+  it('ENS', async () => {
     const resolver = new NameResolver(initProv(await rpcVector('ens')));
     const vitalikAddr = await resolver.nameToAddress('vitalik.eth');
     const vitalikName = await resolver.addressToName(vitalikAddr);
     deepStrictEqual(vitalikAddr, '0xd8da6bf26964af9d7eed9e03e53415d37aa96045');
     deepStrictEqual(vitalikName, 'vitalik.eth');
   });
-  should('Quoter uses Chainlink by default', async () => {
+  it('Quoter uses Chainlink by default', async () => {
     const quoter = new Quoter(initProv(await rpcVector('chainlink')));
     const btcPrice = await quoter.coinPrice('BTC');
     deepStrictEqual(btcPrice, 69369.10271);
   });
-  should('Quoter reads Chainlink prices without caching', async () => {
+  it('Quoter reads Chainlink prices without caching', async () => {
     const latestRoundData = encodeWords(1n, 123456000000n, 0n, 1n, 1n);
     const { calls, provider } = mockEthCallProvider([latestRoundData, latestRoundData]);
     const quoter = new Quoter(provider);
@@ -113,7 +113,7 @@ describe('Network', () => {
     deepStrictEqual(await quoter.coinPrice('BTC'), 1234.56);
     deepStrictEqual(calls.length, 2);
   });
-  should('Quoter passes block tags to Chainlink reads', async () => {
+  it('Quoter passes block tags to Chainlink reads', async () => {
     const latestRoundData = encodeWords(1n, 123456000000n, 0n, 1n, 1n);
     const { calls, provider } = mockEthCallProvider([latestRoundData]);
     const quoter = new Quoter(provider);
@@ -123,7 +123,7 @@ describe('Network', () => {
       [123]
     );
   });
-  should('Quoter rejects invalid Chainlink round data', async () => {
+  it('Quoter rejects invalid Chainlink round data', async () => {
     const { calls, provider } = mockEthCallProvider([
       encodeWords(1n, 0n, 0n, 1n, 1n),
       encodeWords(1n, 123456000000n, 0n, 0n, 1n),
@@ -135,7 +135,7 @@ describe('Network', () => {
     await rejects(() => quoter.coinPrice('BTC'), /invalid price data/);
     deepStrictEqual(calls.length, 3);
   });
-  should('Quoter rejects old provider object arguments', async () => {
+  it('Quoter rejects old provider object arguments', async () => {
     const { calls, provider } = mockEthCallProvider([]);
     const quoter = new Quoter(provider);
     await rejects(
@@ -148,7 +148,7 @@ describe('Network', () => {
     );
     deepStrictEqual(calls.length, 0);
   });
-  should('asset price quoting uses captured RPC output', async () => {
+  it('asset price quoting uses captured RPC output', async () => {
     const replay = await rpcJsonVector('quoter-readme');
     deepStrictEqual(Object.keys(replay).length, 10);
     const prov = initProv(replay);
@@ -172,7 +172,7 @@ describe('Network', () => {
       }
     );
   });
-  should('Quoter Uniswap V3 priceIn API uses captured RPC output', async () => {
+  it('Quoter Uniswap V3 priceIn API uses captured RPC output', async () => {
     const replay = await rpcJsonVector('quoter-auto');
     deepStrictEqual(Object.keys(replay).length, 9);
     const prov = initProv(replay);
@@ -182,7 +182,7 @@ describe('Network', () => {
 
     deepStrictEqual(eth, 1698.97594);
   });
-  should('Quoter caches Uniswap routes without caching prices', async () => {
+  it('Quoter caches Uniswap routes without caching prices', async () => {
     const USDC = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48';
     const WETH = '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2';
     const pair = '0xb4e16d0168e52d35cacd2c6185b44281ec28c9dc';
@@ -204,7 +204,7 @@ describe('Network', () => {
       [7, 7, 7, 7, 7, 7]
     );
   });
-  should('Quoter clears cached Uniswap routes', async () => {
+  it('Quoter clears cached Uniswap routes', async () => {
     const USDC = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48';
     const WETH = '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2';
     const pair1 = '0x1111111111111111111111111111111111111111';
@@ -228,7 +228,7 @@ describe('Network', () => {
     deepStrictEqual(await quoter.coinPrice('ETH', 'uniswap-v2', { priceIn: USDC }), 2000);
     deepStrictEqual(calls.length, 10);
   });
-  should('default token metadata stores Chainlink feeds on canonical token addresses', () => {
+  it('default token metadata stores Chainlink feeds on canonical token addresses', () => {
     const feedTokens = Object.fromEntries(
       Object.entries(DEFAULT_TOKENS)
         .filter(([, token]) => token.feed)
@@ -238,7 +238,7 @@ describe('Network', () => {
     deepStrictEqual(feedTokens.USDT, tokenFromSymbol('USDT')!.contract);
     deepStrictEqual(feedTokens.WETH, tokenFromSymbol('WETH')!.contract);
   });
-  should('Quoter uses injected replacement token table', async () => {
+  it('Quoter uses injected replacement token table', async () => {
     const token = '0x00000000000000000000000000000000000000a1';
     const feed = '0x00000000000000000000000000000000000000f1';
     const latestRoundData = encodeWords(1n, 123456n, 0n, 1n, 1n);
@@ -259,7 +259,7 @@ describe('Network', () => {
     );
     await rejects(() => quoter.tokenPrice('BAT'), /unknown token: BAT/);
   });
-  should('Quoter normalizes injected token address keys', async () => {
+  it('Quoter normalizes injected token address keys', async () => {
     const token = '0x6B175474E89094C44Da98b954EedeAC495271d0F';
     const { calls, provider } = mockEthCallProvider([]);
     const quoter = new Quoter(provider, {
@@ -283,7 +283,7 @@ describe('Network', () => {
       /duplicate token address/
     );
   });
-  should('formats RPC quantities', () => {
+  it('formats RPC quantities', () => {
     deepStrictEqual(
       {
         encoded: [
@@ -304,7 +304,7 @@ describe('Network', () => {
     for (const hex of ['', '0x', '1', '0x00', '0x01', '0x0400'])
       throws(() => ethHexNum.decode(hex), /invalid RPC quantity/);
   });
-  should('passes eth_call tags as block parameters', async () => {
+  it('passes eth_call tags as block parameters', async () => {
     let seen;
     const archive = new RpcClient({
       call: async (method, ...args) => {
@@ -319,7 +319,7 @@ describe('Network', () => {
       args: [{ to, data: '0x1234' }, '0x7b'],
     });
   });
-  should('batches calls through multicall', async () => {
+  it('batches calls through multicall', async () => {
     // Response vector generated with ethers Interface (aggregate3):
     // [{ success: true, returnData: uint256(7) }, { success: false, returnData: 0x }]
     const RESULT =
@@ -350,7 +350,7 @@ describe('Network', () => {
     deepStrictEqual(seen.args[0].data.slice(0, 10), '0x82ad56cb');
     await rejects(() => archive.multicall([{ to: DAI }]), /wrong call at index 0/);
   });
-  should('rejects multicall responses that break input-output index alignment', async () => {
+  it('rejects multicall responses that break input-output index alignment', async () => {
     const archive = new RpcClient({
       call: async (method) => {
         if (method === 'eth_call') return encodeWords(32, 0);
@@ -363,7 +363,7 @@ describe('Network', () => {
       /expected 1 results, got 0/
     );
   });
-  should('rejects non-boolean multicall failure policy before encoding or RPC', async () => {
+  it('rejects non-boolean multicall failure policy before encoding or RPC', async () => {
     let calls = 0;
     const archive = new RpcClient({
       call: async () => {
@@ -384,7 +384,7 @@ describe('Network', () => {
     );
     deepStrictEqual(calls, 0);
   });
-  should('does not invoke a retried operation when its signal is already aborted', async () => {
+  it('does not invoke a retried operation when its signal is already aborted', async () => {
     const controller = new AbortController();
     controller.abort(new Error('stop'));
     let calls = 0;
@@ -397,7 +397,7 @@ describe('Network', () => {
     );
     deepStrictEqual({ outcome, calls }, { outcome: 'stop', calls: 0 });
   });
-  should('stops a worker pool from starting new items after one worker fails', async () => {
+  it('stops a worker pool from starting new items after one worker fails', async () => {
     let release = () => {};
     const gate = new Promise((resolve) => {
       release = resolve;
@@ -419,7 +419,7 @@ describe('Network', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     deepStrictEqual(started, [0, 1]);
   });
-  should('quotes Uniswap V2 spot rates', async () => {
+  it('quotes Uniswap V2 spot rates', async () => {
     const USDC = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48';
     const WETH = '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2';
     const pair = '0xb4e16d0168e52d35cacd2c6185b44281ec28c9dc';
@@ -447,7 +447,7 @@ describe('Network', () => {
       [24692474, 24692474, 24692474]
     );
   });
-  should('auto-selects Uniswap V2 pairs lazily', async () => {
+  it('auto-selects Uniswap V2 pairs lazily', async () => {
     const USDC = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48';
     const WETH = '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2';
     const pair = '0xb4e16d0168e52d35cacd2c6185b44281ec28c9dc';
@@ -473,7 +473,7 @@ describe('Network', () => {
       [2, 2, 2, 2, 2]
     );
   });
-  should('quotes Uniswap V2 prices with priceIn option', async () => {
+  it('quotes Uniswap V2 prices with priceIn option', async () => {
     const USDC = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48';
     const WETH = '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2';
     const pair = '0xb4e16d0168e52d35cacd2c6185b44281ec28c9dc';
@@ -492,7 +492,7 @@ describe('Network', () => {
       [2, 2, 2, 2, 2]
     );
   });
-  should('quotes Uniswap V2 explicit pairs with priceIn option', async () => {
+  it('quotes Uniswap V2 explicit pairs with priceIn option', async () => {
     const EURC = '0x1abaea1f7c830bd89acc67ec4af516284b1bc33c';
     const WETH = tokenFromSymbol('WETH')!.contract;
     const pair = '0x1111111111111111111111111111111111111111';
@@ -510,7 +510,7 @@ describe('Network', () => {
     );
     deepStrictEqual(calls.length, 1);
   });
-  should('rejects invalid priceIn option', async () => {
+  it('rejects invalid priceIn option', async () => {
     const { calls, provider } = mockEthCallProvider([]);
     const quoter = new Quoter(provider);
     await rejects(
@@ -519,7 +519,7 @@ describe('Network', () => {
     );
     deepStrictEqual(calls.length, 0);
   });
-  should('quotes Uniswap V2 prices with symbol priceIn option', async () => {
+  it('quotes Uniswap V2 prices with symbol priceIn option', async () => {
     const USDC = tokenFromSymbol('USDC')!.contract;
     const WETH = tokenFromSymbol('WETH')!.contract;
     const pair = '0x1111111111111111111111111111111111111111';
@@ -535,7 +535,7 @@ describe('Network', () => {
     deepStrictEqual(await quoter.coinPrice('ETH', 'uniswap-v2', { priceIn: 'USDC' }), 2000);
     deepStrictEqual(calls.length, 5);
   });
-  should('quotes Uniswap V2 prices with EUR priceIn aliases', async () => {
+  it('quotes Uniswap V2 prices with EUR priceIn aliases', async () => {
     const EURC = '0x1abaea1f7c830bd89acc67ec4af516284b1bc33c';
     const WETH = tokenFromSymbol('WETH')!.contract;
     const pair = '0x1111111111111111111111111111111111111111';
@@ -555,7 +555,7 @@ describe('Network', () => {
     deepStrictEqual(await quoter.coinPrice('ETH', 'uniswap-v2', { priceIn: EURC }), 2000);
     deepStrictEqual(calls.length, 7);
   });
-  should('quotes Uniswap V2 prices with default USDT priceIn', async () => {
+  it('quotes Uniswap V2 prices with default USDT priceIn', async () => {
     const USDT = tokenFromSymbol('USDT')!.contract;
     const WETH = tokenFromSymbol('WETH')!.contract;
     const pair = '0x1111111111111111111111111111111111111111';
@@ -571,7 +571,7 @@ describe('Network', () => {
     deepStrictEqual(await quoter.coinPrice('ETH', 'uniswap-v2'), 2000);
     deepStrictEqual(calls.length, 5);
   });
-  should('quotes Uniswap V3 spot rates', async () => {
+  it('quotes Uniswap V3 spot rates', async () => {
     const XAUT = '0x68749665ff8d2d112fa859aa293f07a622782f38';
     const USDT = '0xdac17f958d2ee523a2206206994597c13d831ec7';
     const pool = '0x6546055f46e866a4b9a4a13e81273e3152bae5da';
@@ -589,7 +589,7 @@ describe('Network', () => {
       1n
     );
   });
-  should('auto-selects Uniswap V3 pools lazily', async () => {
+  it('auto-selects Uniswap V3 pools lazily', async () => {
     const USDC = tokenFromSymbol('USDC')!.contract;
     const WETH = tokenFromSymbol('WETH')!.contract;
     const lowPool = '0x1111111111111111111111111111111111111111';
@@ -621,7 +621,7 @@ describe('Network', () => {
       [2, 2, 2, 2, 2, 2, 2, 2, 2]
     );
   });
-  should('quotes Uniswap V3 prices with default USDT priceIn', async () => {
+  it('quotes Uniswap V3 prices with default USDT priceIn', async () => {
     const USDT = tokenFromSymbol('USDT')!.contract;
     const WETH = tokenFromSymbol('WETH')!.contract;
     const lowPool = '0x1111111111111111111111111111111111111111';
@@ -642,7 +642,7 @@ describe('Network', () => {
     deepStrictEqual(await quoter.coinPrice('ETH', 'uniswap-v3', { fees: [500, 3000] }), 1);
     deepStrictEqual(calls.length, 9);
   });
-  should('quotes Uniswap V3 prices with priceIn option', async () => {
+  it('quotes Uniswap V3 prices with priceIn option', async () => {
     const USDC = tokenFromSymbol('USDC')!.contract;
     const WETH = tokenFromSymbol('WETH')!.contract;
     const lowPool = '0x1111111111111111111111111111111111111111';
@@ -673,7 +673,7 @@ describe('Network', () => {
       [2, 2, 2, 2, 2, 2, 2, 2, 2]
     );
   });
-  should('routes Uniswap V3 EUR prices through USDC', async () => {
+  it('routes Uniswap V3 EUR prices through USDC', async () => {
     const WBTC = tokenFromSymbol('WBTC')!.contract;
     const USDC = tokenFromSymbol('USDC')!.contract;
     const EURC = '0x1abaea1f7c830bd89acc67ec4af516284b1bc33c';
@@ -701,7 +701,7 @@ describe('Network', () => {
     deepStrictEqual(calls[5].data.endsWith(word(500n)), true);
     deepStrictEqual(calls.length, 10);
   });
-  should('quotes Uniswap V3 explicit pools with priceIn option', async () => {
+  it('quotes Uniswap V3 explicit pools with priceIn option', async () => {
     const USDC = tokenFromSymbol('USDC')!.contract;
     const WETH = tokenFromSymbol('WETH')!.contract;
     const pool = '0x1111111111111111111111111111111111111111';
@@ -719,7 +719,7 @@ describe('Network', () => {
     );
     deepStrictEqual(calls.length, 1);
   });
-  should('quotes Uniswap V3 prices with singular fee option', async () => {
+  it('quotes Uniswap V3 prices with singular fee option', async () => {
     const WBTC = tokenFromSymbol('WBTC')!.contract;
     const WETH = tokenFromSymbol('WETH')!.contract;
     const pool = '0x1111111111111111111111111111111111111111';
@@ -738,7 +738,7 @@ describe('Network', () => {
     );
     deepStrictEqual(calls.length, 5);
   });
-  should('quotes Uniswap V3 prices with WBTC priceIn symbol', async () => {
+  it('quotes Uniswap V3 prices with WBTC priceIn symbol', async () => {
     const WBTC = tokenFromSymbol('WBTC')!.contract;
     const WETH = tokenFromSymbol('WETH')!.contract;
     const pool = '0x1111111111111111111111111111111111111111';
@@ -757,7 +757,7 @@ describe('Network', () => {
     );
     deepStrictEqual(calls.length, 5);
   });
-  should('quotes Uniswap V3 stablecoin symbol prices', async () => {
+  it('quotes Uniswap V3 stablecoin symbol prices', async () => {
     const USDC = tokenFromSymbol('USDC')!.contract;
     const DAI = tokenFromSymbol('DAI')!.contract;
     const pool = '0x95dbb3c7546f22bce375900abfdd64a4e5bd73d6';
@@ -774,7 +774,7 @@ describe('Network', () => {
       1
     );
   });
-  should('quotes ERC-4626 vault conversions', async () => {
+  it('quotes ERC-4626 vault conversions', async () => {
     const vault = '0x0c6aec603d48ebf1cecc7b247a2c3da08b398dc1';
     const asset = '0x1abaea1f7c830bd89acc67ec4af516284b1bc33c';
     const { provider } = mockEthCallProvider([encodeWords(102n), encodeWords(98n)]);
@@ -783,7 +783,7 @@ describe('Network', () => {
     deepStrictEqual(await quoter.rate(100n, 'erc4626', { ...params, direction: 'forward' }), 102n);
     deepStrictEqual(await quoter.rate(100n, 'erc4626', { ...params, direction: 'reverse' }), 98n);
   });
-  should('Quoter dispatches provider rate calls', async () => {
+  it('Quoter dispatches provider rate calls', async () => {
     const USDC = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48';
     const WETH = '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2';
     const pair = '0xb4e16d0168e52d35cacd2c6185b44281ec28c9dc';
@@ -816,19 +816,19 @@ describe('Network', () => {
       102n
     );
   });
-  should('awaitDeep preserves null leaves', async () => {
+  it('awaitDeep preserves null leaves', async () => {
     deepStrictEqual(await awaitDeep({ a: null, b: [Promise.resolve(1), null] }, false), {
       a: null,
       b: [1, null],
     });
   });
-  should('awaitDeep preserves user awaitDeep keys', async () => {
+  it('awaitDeep preserves user awaitDeep keys', async () => {
     deepStrictEqual(await awaitDeep({ awaitDeep: true, value: Promise.resolve('ok') }, false), {
       awaitDeep: true,
       value: 'ok',
     });
   });
-  should('validates swap token input', async () => {
+  it('validates swap token input', async () => {
     const univ3 = new UniswapV3({
       ethCall: async () => {
         throw new Error('unexpected ethCall');
@@ -844,7 +844,7 @@ describe('Network', () => {
     await rejects(() => univ3.swap('DAI' as any, DAI, '1'), /uniswap\.swap: wrong fromCoin/);
     await rejects(() => univ3.swap('eth', { contract: DAI.contract } as any, '1'), /wrong toCoin/);
   });
-  should('swap only hides missing-route bestPath errors', async () => {
+  it('swap only hides missing-route bestPath errors', async () => {
     class TestUni extends UniswapAbstract {
       name = 'Test';
       contract = '0x0000000000000000000000000000000000000001';
@@ -877,7 +877,7 @@ describe('Network', () => {
       undefined
     );
   });
-  should('UniswapV3 wraps eth before direct quote', async () => {
+  it('UniswapV3 wraps eth before direct quote', async () => {
     const DAI = tokenFromSymbol('DAI')!;
     const WETH = tokenFromSymbol('WETH')!;
     const word = (n) => n.toString(16).padStart(64, '0');
@@ -909,7 +909,7 @@ describe('Network', () => {
     );
   });
 
-  should('UniswapV3', async () => {
+  it('UniswapV3', async () => {
     const univ3 = new UniswapV3(initProv(await rpcVector('uniswap')));
     // Actual code
     const vitalikAddr = '0xd8da6bf26964af9d7eed9e03e53415d37aa96045';
@@ -930,7 +930,7 @@ describe('Network', () => {
     });
   });
 
-  should('estimateGas', async () => {
+  it('estimateGas', async () => {
     const archive = initProv(await rpcVector('estimateGas'));
     const gasLimit = await archive.estimateGas({
       from: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
@@ -940,13 +940,13 @@ describe('Network', () => {
     });
     deepStrictEqual(gasLimit, 236082n);
   });
-  should('rejects empty RPC quantities', async () => {
+  it('rejects empty RPC quantities', async () => {
     const archive = new RpcClient({
       call: async () => '',
     });
     await rejects(() => archive.estimateGas({}), /RPC quantity/);
   });
-  should('validates pagination blocks', async () => {
+  it('validates pagination blocks', async () => {
     const archive = new RpcClient({
       call: async () => {
         throw new Error('unexpected rpc call');
@@ -969,7 +969,7 @@ describe('Network', () => {
       /validatePagination: wrong field toBlock=-1/
     );
   });
-  should('validates trace batch size', async () => {
+  it('validates trace batch size', async () => {
     const archive = new RpcClient({
       call: async () => {
         throw new Error('unexpected rpc call');
@@ -994,7 +994,7 @@ describe('Network', () => {
       /validateTraceOpts: wrong field limitTrace=-1/
     );
   });
-  should('validates log batch size', async () => {
+  it('validates log batch size', async () => {
     const archive = new RpcClient({
       call: async () => {
         throw new Error('unexpected rpc call');
@@ -1009,7 +1009,7 @@ describe('Network', () => {
       /validateLogOpts: wrong field limitLogs=-1/
     );
   });
-  should('validates direct log options', async () => {
+  it('validates direct log options', async () => {
     const archive = new RpcClient({
       call: async () => {
         throw new Error('unexpected rpc call');
@@ -1020,10 +1020,10 @@ describe('Network', () => {
       /validatePagination: wrong field fromBlock=-1/
     );
   });
-  should('validates approval topics address', () => {
+  it('validates approval topics address', () => {
     throws(() => approvalTopics(1 as any), /approvalTopics: wrong address/);
   });
-  should('keeps token balance snapshots independent', () => {
+  it('keeps token balance snapshots independent', () => {
     const contract = '0x0000000000000000000000000000000000000001';
     const from = '0x0000000000000000000000000000000000000002';
     const mid = '0x0000000000000000000000000000000000000003';
@@ -1081,7 +1081,7 @@ describe('Network', () => {
       ]
     );
   });
-  should('clamps eth_getLogs batches to toBlock', async () => {
+  it('clamps eth_getLogs batches to toBlock', async () => {
     const calls = [];
     const archive = new RpcClient({
       call: async (method, ...args) => {
@@ -1107,7 +1107,7 @@ describe('Network', () => {
       ],
     ]);
   });
-  should('deduplicates overlapping eth_getLogs batches', async () => {
+  it('deduplicates overlapping eth_getLogs batches', async () => {
     const log = {
       address: '0x0000000000000000000000000000000000000001',
       topics: [],
@@ -1133,7 +1133,7 @@ describe('Network', () => {
       },
     ]);
   });
-  should('caps eth_getLogs batch fan-out at eight requests', async () => {
+  it('caps eth_getLogs batch fan-out at eight requests', async () => {
     let active = 0;
     let maxActive = 0;
     let calls = 0;
@@ -1151,7 +1151,7 @@ describe('Network', () => {
     deepStrictEqual(calls, 21);
     deepStrictEqual(maxActive, 8);
   });
-  should('rebuilds zero-fee EIP-1559 transaction info', async () => {
+  it('rebuilds zero-fee EIP-1559 transaction info', async () => {
     const tx = Transaction.prepare(
       {
         type: 'eip1559',
@@ -1248,7 +1248,7 @@ describe('Network', () => {
     receipt.transactionHash = `0x${'22'.repeat(32)}`;
     await rejects(() => archive.txInfo(hash), /txInfo: wrong receipt hash/);
   });
-  should('rebuilds zero-gas-price legacy transaction info', async () => {
+  it('rebuilds zero-gas-price legacy transaction info', async () => {
     const tx = Transaction.prepare(
       {
         type: 'legacy',
@@ -1335,7 +1335,7 @@ describe('Network', () => {
       raw: tx.toHex(),
     });
   });
-  should('validates transaction info hash', async () => {
+  it('validates transaction info hash', async () => {
     const calls = [];
     const archive = new RpcClient({
       call: async (method, ...args) => {
@@ -1352,7 +1352,7 @@ describe('Network', () => {
     );
     deepStrictEqual(calls, []);
   });
-  should('txInfo verify:false tolerates txs that cannot be rebuilt', async () => {
+  it('txInfo verify:false tolerates txs that cannot be rebuilt', async () => {
     const txHash = `0x${'11'.repeat(32)}`;
     // a plausible node response whose signature is garbage: the raw tx cannot
     // be rebuilt to match the claimed sender/hash
@@ -1432,7 +1432,7 @@ describe('Network', () => {
     const empty = new RpcClient({ call: async () => null });
     await rejects(() => empty.txInfo(txHash, { verify: false }), /txInfo: not found/);
   });
-  should('formats trace_filter bounds', async () => {
+  it('formats trace_filter bounds', async () => {
     const calls = [];
     const archive = new RpcClient({
       call: async (method, ...args) => {
@@ -1471,7 +1471,7 @@ describe('Network', () => {
       ],
     ]);
   });
-  should('validates OTS search blocks', async () => {
+  it('validates OTS search blocks', async () => {
     const archive = new RpcClient({
       call: async () => {
         throw new Error('unexpected rpc call');
@@ -1494,7 +1494,7 @@ describe('Network', () => {
       /ots_searchAfter: wrong pageSize/
     );
   });
-  should('clamps trace_filter batches to toBlock', async () => {
+  it('clamps trace_filter batches to toBlock', async () => {
     const calls = [];
     const archive = new RpcClient({
       call: async (method, ...args) => {
@@ -1521,7 +1521,7 @@ describe('Network', () => {
       ],
     ]);
   });
-  should('does not overlap trace_filter batches', async () => {
+  it('does not overlap trace_filter batches', async () => {
     const calls = [];
     const archive = new RpcClient({
       call: async (method, ...args) => {
@@ -1559,7 +1559,7 @@ describe('Network', () => {
       ],
     ]);
   });
-  should('Transcations basic', async () => {
+  it('Transcations basic', async () => {
     // Random address from abi tests which test for fingerprinted data in encoding.
     // Perfect for tests: only has a few transactions and provides different types of txs.
     const addr = '0x6994eCe772cC4aBb5C9993c065a34C94544A4087';
@@ -1610,7 +1610,7 @@ describe('Network', () => {
     });
   });
 
-  should('allowances', async () => {
+  it('allowances', async () => {
     const addr = '0x6994eCe772cC4aBb5C9993c065a34C94544A4087';
     const tx = initProv(await rpcVector('net_allowances'));
     deepStrictEqual(calcAllowances(await tx.ethLogs(approvalTopics(addr)), addr), {
@@ -1644,7 +1644,7 @@ describe('Network', () => {
     });
   });
 
-  should('contractCapabilities', async () => {
+  it('contractCapabilities', async () => {
     const replay = mftch.replayable(fetch, await rpcVector('net_contract_capabilities'), {
       getKey,
       offline: true,
@@ -1705,7 +1705,7 @@ describe('Network', () => {
     const dead = '0x52903256dd18d85c2dc4a6c999907c9793ea61e3'; // self-destructed contract
     await rejects(() => contractCapabilities(archive, dead));
   });
-  should('tokenInfo', async () => {
+  it('tokenInfo', async () => {
     const replay = mftch.replayable(fetch, await rpcVector('net_token_info'), {
       getKey,
       offline: true,
@@ -1751,7 +1751,7 @@ describe('Network', () => {
       error: 'not contract or destructed',
     });
   });
-  should(
+  it(
     'propagates token metadata cancellation instead of returning a negative result',
     async () => {
       const controller = new AbortController();
@@ -1777,7 +1777,7 @@ describe('Network', () => {
       deepStrictEqual({ outcome, calls }, { outcome: { error: 'stop' }, calls: 0 });
     }
   );
-  should('preserves zero ERC20 decimals', async () => {
+  it('preserves zero ERC20 decimals', async () => {
     const contract = '0x0000000000000000000000000000000000000001';
     const archive = new RpcClient({
       call: async (method, ...args) => {
@@ -1800,7 +1800,7 @@ describe('Network', () => {
       decimals: 0,
     });
   });
-  should('handles empty ERC20 tokenIds filter', async () => {
+  it('handles empty ERC20 tokenIds filter', async () => {
     const address = '0x0000000000000000000000000000000000000002';
     const contract = '0x0000000000000000000000000000000000000001';
     const archive = new RpcClient({
@@ -1819,7 +1819,7 @@ describe('Network', () => {
       [contract]: new Map(),
     });
   });
-  should('validates tokenURI token input', async () => {
+  it('validates tokenURI token input', async () => {
     const archive = new RpcClient({
       call: async () => {
         throw new Error('unexpected rpc call');
@@ -1827,7 +1827,7 @@ describe('Network', () => {
     });
     await rejects(() => tokenURI(archive, 123 as any, 1n), /tokenURI: wrong token/);
   });
-  should('validates tokenBalances token input', async () => {
+  it('validates tokenBalances token input', async () => {
     const archive = new RpcClient({
       call: async () => {
         throw new Error('unexpected rpc call');
@@ -1843,7 +1843,7 @@ describe('Network', () => {
       /tokenBalances: wrong token/
     );
   });
-  should('tokenBalances', async () => {
+  it('tokenBalances', async () => {
     const replay = mftch.replayable(fetch, await rpcVector('net_token_balances'), {
       getKey,
       offline: true,
@@ -1991,7 +1991,7 @@ describe('Network', () => {
       error: 'not supported token type',
     });
   });
-  should('accountState', async () => {
+  it('accountState', async () => {
     const archive = new RpcClient({
       call: async (method, ...args) => {
         deepStrictEqual(args, ['0x0000000000000000000000000000000000000001', 'latest']);
@@ -2006,7 +2006,7 @@ describe('Network', () => {
       expected
     );
   });
-  should('accountState reports an unused account as inactive', async () => {
+  it('accountState reports an unused account as inactive', async () => {
     const archive = new RpcClient({
       call: async (method) => {
         if (method === 'eth_getBalance' || method === 'eth_getTransactionCount') return '0x0';
@@ -2024,7 +2024,7 @@ describe('Network', () => {
       }
     );
   });
-  should('nonce', async () => {
+  it('nonce', async () => {
     const archive = new RpcClient({
       call: async (method, ...args) => {
         deepStrictEqual(method, 'eth_getTransactionCount');
@@ -2035,7 +2035,7 @@ describe('Network', () => {
     deepStrictEqual(await archive.nonce('0x0000000000000000000000000000000000000001'), 31n);
     await rejects(() => archive.nonce(1 as any), /nonce: wrong address/);
   });
-  should('fees from eth_feeHistory', async () => {
+  it('fees from eth_feeHistory', async () => {
     const archive = new RpcClient({
       call: async (method) => {
         if (method === 'eth_feeHistory')
@@ -2054,7 +2054,7 @@ describe('Network', () => {
       maxFeePerGas: 203n,
     });
   });
-  should('fees falls back to eth_gasPrice', async () => {
+  it('fees falls back to eth_gasPrice', async () => {
     const archive = new RpcClient({
       call: async (method) => {
         if (method === 'eth_feeHistory')
@@ -2067,7 +2067,7 @@ describe('Network', () => {
     });
     deepStrictEqual(await archive.fees(), { type: 'legacy', gasPrice: 2000000000n });
   });
-  should('broadcast accepts hex and Transaction', async () => {
+  it('broadcast accepts hex and Transaction', async () => {
     const tx = Transaction.prepare({
       to: '0x0000000000000000000000000000000000000001',
       value: 1n,
@@ -2089,7 +2089,7 @@ describe('Network', () => {
     deepStrictEqual(sent, [tx.toHex(), tx.toHex()]);
     await rejects(() => archive.broadcast('nothex'), /broadcast: wrong transaction/);
   });
-  should('waitForReceipt polls until inclusion', async () => {
+  it('waitForReceipt polls until inclusion', async () => {
     const hash = `0x${'11'.repeat(32)}`;
     let polls = 0;
     const receipt = {
@@ -2131,7 +2131,7 @@ describe('Network', () => {
     );
     await rejects(() => archive.waitForReceipt('0x1234'), /waitForReceipt: wrong txHash/);
   });
-  should('waitForReceipt timeout and abort', async () => {
+  it('waitForReceipt timeout and abort', async () => {
     const hash = `0x${'11'.repeat(32)}`;
     const archive = new RpcClient({
       call: async (method) => {
@@ -2150,7 +2150,7 @@ describe('Network', () => {
       /abort/i
     );
   });
-  should('waitForReceipt bounds pending RPC, confirmation and polling waits', async () => {
+  it('waitForReceipt bounds pending RPC, confirmation and polling waits', async () => {
     const hash = `0x${'11'.repeat(32)}`;
     const pending = () => new Promise(() => {});
     const outcome = async (promise) => {
@@ -2214,7 +2214,7 @@ describe('Network', () => {
       ['waitForReceipt: timeout', 'waitForReceipt: timeout', 'waitForReceipt: timeout', 'stop']
     );
   });
-  should('prepare fetches wallet-loop fields in parallel', async () => {
+  it('prepare fetches wallet-loop fields in parallel', async () => {
     const to = '0x0000000000000000000000000000000000000001';
     const from = '0xd8da6bf26964af9d7eed9e03e53415d37aa96045';
     const archive = new RpcClient({
@@ -2246,7 +2246,7 @@ describe('Network', () => {
     const tx = Transaction.prepare(fields);
     deepStrictEqual(tx.raw.nonce, 5n);
   });
-  should('wraps method-not-found errors with node requirement', async () => {
+  it('wraps method-not-found errors with node requirement', async () => {
     const notFound = () =>
       Object.assign(new Error('FetchProvider(-32601): the method does not exist'), {
         code: -32601,
@@ -2271,7 +2271,7 @@ describe('Network', () => {
       (e) => e instanceof Web3Error && /OtterScan/.test(e.message)
     );
   });
-  should('capabilities probes node namespaces', async () => {
+  it('capabilities probes node namespaces', async () => {
     const archive = new RpcClient({
       call: async (method) => {
         if (method === 'eth_blockNumber') return '0x1';
@@ -2283,7 +2283,7 @@ describe('Network', () => {
     });
     deepStrictEqual(await archive.capabilities(), { eth: true, trace: false, ots: true });
   });
-  should('capabilities surfaces non-RPC failures', async () => {
+  it('capabilities surfaces non-RPC failures', async () => {
     const archive = new RpcClient({
       call: async () => {
         throw new Error('ECONNREFUSED');
@@ -2291,7 +2291,7 @@ describe('Network', () => {
     });
     await rejects(() => archive.capabilities(), /ECONNREFUSED/);
   });
-  should('clearCapabilities retries a cached failed probe', async () => {
+  it('clearCapabilities retries a cached failed probe', async () => {
     let calls = 0;
     const archive = new RpcClient(
       mftch.jsonrpc(async (_url, opts) => {
@@ -2338,7 +2338,7 @@ describe('Network', () => {
       }
     );
   });
-  should('contract() binds provider', async () => {
+  it('contract() binds provider', async () => {
     const contract = '0x0000000000000000000000000000000000000001';
     const archive = new RpcClient({
       call: async (method, callArgs) => {
@@ -2471,7 +2471,7 @@ describe('Network', () => {
         ),
       })),
     });
-    should('history builds wallet rows from one OTS search page', async () => {
+    it('history builds wallet rows from one OTS search page', async () => {
       const calls = [];
       const archive = new RpcClient({
         call: async (method, ...args) => {
@@ -2541,7 +2541,7 @@ describe('Network', () => {
       deepStrictEqual(res[0].info.receipt.status, 1);
       deepStrictEqual(Object.hasOwn(res[0], 'partial'), false);
     });
-    should('history passes OTS cursor and page size through', async () => {
+    it('history passes OTS cursor and page size through', async () => {
       const calls = [];
       const archive = new RpcClient({
         call: async (method, ...args) => {
@@ -2556,7 +2556,7 @@ describe('Network', () => {
       deepStrictEqual(calls, [['ots_searchTransactionsBefore', ADDR, 100, 10]]);
       throws(() => history(archive, ADDR, { pageSize: 0 }), /history: wrong pageSize/);
     });
-    should('order oldest pages forward via ots_searchAfter', async () => {
+    it('order oldest pages forward via ots_searchAfter', async () => {
       // OTS pages are natively newest-first even when searching forward;
       // firstPage marks the newest end of history, lastPage the oldest.
       const pages = {
@@ -2615,7 +2615,7 @@ describe('Network', () => {
       );
       throws(() => history(archive, ADDR, { after: 5 }), /history: after requires order oldest/);
     });
-    should('history retries transient rpc errors during logs scan', async () => {
+    it('history retries transient rpc errors during logs scan', async () => {
       // Nodes shed load with retryable errors; a long scan must back off and
       // retry instead of aborting. One window issues 7 log queries per pass.
       const transient = [
@@ -2644,7 +2644,7 @@ describe('Network', () => {
       });
       await rejects(() => collectHistory(broken, ADDR, opts), /method handler crashed/);
     });
-    should('historyMulti merges accounts as one wallet', async () => {
+    it('historyMulti merges accounts as one wallet', async () => {
       const B = '0x0000000000000000000000000000000000000004';
       const FEE = 21000n * 10n ** 9n; // helpers: gasUsed * effectiveGasPrice
       // T1: owned -> owned 1 ETH, plus a token movement to B from a third party
@@ -2711,7 +2711,7 @@ describe('Network', () => {
       throws(() => historyMulti(archive, [ADDR, 5], {}), /historyMulti: wrong addresses/);
       throws(() => historyMulti(archive, ADDR, {}), /historyMulti: wrong addresses/);
     });
-    should('historyMulti yields a ready row before fetching its next page', async () => {
+    it('historyMulti yields a ready row before fetching its next page', async () => {
       let calls = 0;
       const provider = {
         ots_searchBefore: async () => {
@@ -2736,7 +2736,7 @@ describe('Network', () => {
       await rejects(() => iterator.next(), /next page failed/);
       deepStrictEqual(calls, 2);
     });
-    should('historyMulti uses checksummed canonical addresses', async () => {
+    it('historyMulti uses checksummed canonical addresses', async () => {
       const lower = '0x8ba1f109551bd432803012645ac136ddd64dba72';
       const checksum = '0x8ba1f109551bD432803012645Ac136ddd64DBA72';
       const upper = `0x${lower.slice(2).toUpperCase()}`;
@@ -2759,7 +2759,7 @@ describe('Network', () => {
         { calls: [checksum], addresses: [[checksum]] }
       );
     });
-    should('ots+logs recovers an incoming-only token transaction', async () => {
+    it('ots+logs recovers an incoming-only token transaction', async () => {
       const incoming = transferLog(USDT, OTHER, ADDR, 5000000n);
       const calls = [];
       const progress = [];
@@ -2820,7 +2820,7 @@ describe('Network', () => {
         },
       ]);
     });
-    should('ots+logs deduplicates log discoveries in favor of the OTS row', async () => {
+    it('ots+logs deduplicates log discoveries in favor of the OTS row', async () => {
       const transfer = transferLog(USDT, OTHER, ADDR, 5000000n);
       const calls = [];
       let logCalls = 0;
@@ -2851,7 +2851,7 @@ describe('Network', () => {
         []
       );
     });
-    should('ots+logs page scopes logs to the OTS page block span', async () => {
+    it('ots+logs page scopes logs to the OTS page block span', async () => {
       const logRequests = [];
       const archive = new RpcClient({
         call: async (method, ...args) => {
@@ -2883,7 +2883,7 @@ describe('Network', () => {
         true
       );
     });
-    should('history is the streaming API and supports abort', async () => {
+    it('history is the streaming API and supports abort', async () => {
       const makeProvider = () =>
         new RpcClient({
           call: async (method, ...args) => {
@@ -2915,7 +2915,7 @@ describe('Network', () => {
         }));
       }, /abort/i);
     });
-    should('history pages the full OTS history with progress', async () => {
+    it('history pages the full OTS history with progress', async () => {
       const calls = [];
       const progress = [];
       const archive = new RpcClient({
@@ -2989,7 +2989,7 @@ describe('Network', () => {
         { source: 'ots', phase: 'ots', percent: 100, scannedTxs: 3, currentBlock: 50 },
       ]);
     });
-    should('ots+logs full-depth progress distinguishes OTS and logs phases', async () => {
+    it('ots+logs full-depth progress distinguishes OTS and logs phases', async () => {
       const progress = [];
       const provider = {
         ots_searchAfter: async () => ({
@@ -3030,7 +3030,7 @@ describe('Network', () => {
         { source: 'ots+logs', phase: 'logs', percent: 100, scannedTxs: 3, currentBlock: 1 },
       ]);
     });
-    should('history tolerates receipt-less (pending) OTS rows', async () => {
+    it('history tolerates receipt-less (pending) OTS rows', async () => {
       const archive = new RpcClient({
         call: async (method) => {
           if (method !== 'ots_searchTransactionsBefore')
@@ -3077,7 +3077,7 @@ describe('Network', () => {
       );
       deepStrictEqual(res[1].tokenTransfers, []);
     });
-    should('sorts pending transactions before mined transactions in newest-first order', () => {
+    it('sorts pending transactions before mined transactions in newest-first order', () => {
       const row = (name, block) => ({
         hash: name,
         block,
@@ -3090,7 +3090,7 @@ describe('Network', () => {
         ['pending', 'mined']
       );
     });
-    should('continues full OTS pagination when a mined row has no receipt', async () => {
+    it('continues full OTS pagination when a mined row has no receipt', async () => {
       const cursors = [];
       const row = (h, block) => ({ ...normalizedTx(h, block, OTHER, ADDR), receipt: undefined });
       const provider = {
@@ -3107,7 +3107,7 @@ describe('Network', () => {
         { hashes: [hash('11'), hash('22')], cursors: [0, 100] }
       );
     });
-    should('history validates options and supports abort', async () => {
+    it('history validates options and supports abort', async () => {
       let rpcCalls = 0;
       const archive = new RpcClient({
         call: async (method) => {
@@ -3131,7 +3131,7 @@ describe('Network', () => {
       ctrl.abort();
       await rejects(() => collectHistory(archive, ADDR, { signal: ctrl.signal }), /abort/i);
     });
-    should('auto source combines OTS with logs and memoizes capability probes', async () => {
+    it('auto source combines OTS with logs and memoizes capability probes', async () => {
       const calls = [];
       const archive = new RpcClient({
         call: async (method) => {
@@ -3154,7 +3154,7 @@ describe('Network', () => {
       deepStrictEqual(calls.filter((m) => m === 'ots_searchTransactionsBefore').length, 2);
       deepStrictEqual(calls.filter((m) => m === 'eth_getLogs').length, 14);
     });
-    should(
+    it(
       'logs fallback marks partial rows, limits pages, and deduplicates tx lookups',
       async () => {
         const a = normalizedTransferLog(hash('11'), 100, OTHER, ADDR, 5n);
@@ -3181,7 +3181,7 @@ describe('Network', () => {
         deepStrictEqual(txCalls.sort(), [a.transactionHash, b.transactionHash].sort());
       }
     );
-    should('logs source returns all rows at full depth', async () => {
+    it('logs source returns all rows at full depth', async () => {
       const a = normalizedTransferLog(hash('11'), 100, OTHER, ADDR, 5n);
       const b = normalizedTransferLog(hash('22'), 90, ADDR, OTHER, 2n);
       let logCalls = 0;
@@ -3203,7 +3203,7 @@ describe('Network', () => {
         true
       );
     });
-    should('logs source applies before and block-range bounds', async () => {
+    it('logs source applies before and block-range bounds', async () => {
       const opts = [];
       const provider = {
         ethLogs: async (_topics, range) => {
@@ -3229,7 +3229,7 @@ describe('Network', () => {
         true
       );
     });
-    should('full logs source applies after to every window', async () => {
+    it('full logs source applies after to every window', async () => {
       const ranges = [];
       const provider = {
         height: async () => 105,
@@ -3257,7 +3257,7 @@ describe('Network', () => {
         { fromBlock: 104, toBlock: 105 },
       ]);
     });
-    should('full logs source reports window progress', async () => {
+    it('full logs source reports window progress', async () => {
       const a = normalizedTransferLog(hash('11'), 100, OTHER, ADDR, 5n);
       const b = normalizedTransferLog(hash('22'), 90, ADDR, OTHER, 2n);
       let logCalls = 0;
@@ -3279,7 +3279,7 @@ describe('Network', () => {
         { source: 'logs', phase: 'logs', percent: 100, scannedTxs: 2, currentBlock: 0 },
       ]);
     });
-    should('conforms to the windowed history vector and stops prefetch on early exit', async () => {
+    it('conforms to the windowed history vector and stops prefetch on early exit', async () => {
       const vector = await historyJsonVector('history-windowed');
       const progress = [];
       const full = historyVectorProvider(vector);
@@ -3326,7 +3326,7 @@ describe('Network', () => {
         false
       );
     });
-    should(
+    it(
       'yields prefetched windows in order even when an older window resolves first',
       async () => {
         const newer = normalizedTransferLog(hash('11'), 3, OTHER, ADDR, 5n);
@@ -3366,7 +3366,7 @@ describe('Network', () => {
         );
       }
     );
-    should('logsWindow zero keeps one unbounded full-depth logs query', async () => {
+    it('logsWindow zero keeps one unbounded full-depth logs query', async () => {
       const ranges = [];
       const progress = [];
       const provider = {
@@ -3392,7 +3392,7 @@ describe('Network', () => {
         { source: 'logs', phase: 'logs', percent: 100, scannedTxs: 0, currentBlock: 0 },
       ]);
     });
-    should('OTS internal enrichment normalizes values and excludes top-level calls', async () => {
+    it('OTS internal enrichment normalizes values and excludes top-level calls', async () => {
       const archive = new RpcClient({
         call: async (method) => {
           if (method === 'eth_blockNumber') return '0x1';
@@ -3417,7 +3417,7 @@ describe('Network', () => {
       const rows = await collectHistory(archive, ADDR, { source: 'ots', internal: true });
       deepStrictEqual(rows[0].internal, [{ from: OTHER, to: ADDR, value: 2n }]);
     });
-    should('trace_transaction enriches logs-discovered rows per transaction', async () => {
+    it('trace_transaction enriches logs-discovered rows per transaction', async () => {
       const log = normalizedTransferLog(hash('11'), 100, OTHER, ADDR, 5n);
       let logCalls = 0;
       const provider = {
@@ -3439,7 +3439,7 @@ describe('Network', () => {
       });
       deepStrictEqual(rows[0].internal, [{ from: OTHER, to: ADDR, value: 3n }]);
     });
-    should('unsupported internal enrichment surfaces the capability gap', async () => {
+    it('unsupported internal enrichment surfaces the capability gap', async () => {
       const log = normalizedTransferLog(hash('11'), 100, OTHER, ADDR, 5n);
       let logCalls = 0;
       const provider = {
@@ -3458,7 +3458,7 @@ describe('Network', () => {
           /internal history enrichment/.test(error.message)
       );
     });
-    should('abort during internal enrichment rejects before yielding a row', async () => {
+    it('abort during internal enrichment rejects before yielding a row', async () => {
       const ctrl = new AbortController();
       const archive = new RpcClient({
         call: async (method) => {
@@ -3485,7 +3485,7 @@ describe('Network', () => {
         /stopped during trace/
       );
     });
-    should('full OTS history stops after crossing fromBlock', async () => {
+    it('full OTS history stops after crossing fromBlock', async () => {
       let searches = 0;
       const archive = new RpcClient({
         call: async (method) => {
@@ -3511,7 +3511,7 @@ describe('Network', () => {
       );
       deepStrictEqual(searches, 1);
     });
-    should('full OTS history deduplicates overlapping pages and trace requests', async () => {
+    it('full OTS history deduplicates overlapping pages and trace requests', async () => {
       let searches = 0;
       let traces = 0;
       const archive = new RpcClient({
@@ -3545,7 +3545,7 @@ describe('Network', () => {
       deepStrictEqual(searches, 2);
       deepStrictEqual(traces, 1);
     });
-    should('offline receipt decoding skips malformed ERC1155 batches', () => {
+    it('offline receipt decoding skips malformed ERC1155 batches', () => {
       const contract = '0x0000000000000000000000000000000000000001';
       const batch = events(ERC1155).TransferBatch;
       const log = {
@@ -3572,7 +3572,7 @@ describe('Network', () => {
         []
       );
     });
-    should('tokenTransferFromCalldata decodes pending transfer calldata', () => {
+    it('tokenTransferFromCalldata decodes pending transfer calldata', () => {
       const value = encodeWords(174361755n).slice(2);
       const transfer = `0xa9059cbb${encodeAddress(OTHER).slice(2)}${value}`;
       deepStrictEqual(tokenTransferFromCalldata({ to: USDT, input: transfer, from: ADDR }), {
@@ -3678,7 +3678,7 @@ describe('Network', () => {
         },
       });
 
-    should('detectTokenContracts classifies transfer-shaped logs', () => {
+    it('detectTokenContracts classifies transfer-shaped logs', () => {
       const nft = '0x00000000000000000000000000000000000beef2';
       const game = '0x00000000000000000000000000000000000beef3';
       const logs = [
@@ -3724,7 +3724,7 @@ describe('Network', () => {
       throws(() => detectTokenContracts([], 123), /wrong address/);
     });
 
-    should('tokenInfos pools, dedupes and never rejects', async () => {
+    it('tokenInfos pools, dedupes and never rejects', async () => {
       let getCode = 0;
       const prov = new RpcClient({
         call: async (method) => {
@@ -3741,7 +3741,7 @@ describe('Network', () => {
       await rejects(() => tokenInfos(prov, [], { concurrency: 0 }), /wrong concurrency/);
     });
 
-    should('nftHoldings verifies ownership on-chain', async () => {
+    it('nftHoldings verifies ownership on-chain', async () => {
       const nft = '0x00000000000000000000000000000000000beef2';
       const game = '0x00000000000000000000000000000000000beef3';
       const prov = new RpcClient({
@@ -3772,7 +3772,7 @@ describe('Network', () => {
       await rejects(() => nftHoldings(prov, 123, []), /wrong address/);
     });
 
-    should('nftHoldings rejects incomplete ERC1155 balance batches', async () => {
+    it('nftHoldings rejects incomplete ERC1155 balance batches', async () => {
       const contract = '0x00000000000000000000000000000000000beef3';
       const prov = new RpcClient({
         call: async (method) => {
@@ -3800,7 +3800,7 @@ describe('Network', () => {
       );
     });
 
-    should('nftCandidates bridges history rows to nftHoldings', () => {
+    it('nftCandidates bridges history rows to nftHoldings', () => {
       const nft = '0x00000000000000000000000000000000000BEEF2'; // mixed casing folds
       const game = '0x00000000000000000000000000000000000beef3';
       const rows = [
@@ -3833,7 +3833,7 @@ describe('Network', () => {
       throws(() => nftCandidates([{}]), /wrong rows/);
     });
 
-    should('tokenURI substitutes every ERC-1155 {id} template', async () => {
+    it('tokenURI substitutes every ERC-1155 {id} template', async () => {
       const game = '0x00000000000000000000000000000000000beef3';
       const prov = new RpcClient({
         call: async (method, ...args) => {
@@ -3850,7 +3850,7 @@ describe('Network', () => {
       );
     });
 
-    should('ipfsToHttp and nftMetadata sanitize external data', () => {
+    it('ipfsToHttp and nftMetadata sanitize external data', () => {
       deepStrictEqual(ipfsToHttp('ipfs://Qm1/1.png'), 'https://ipfs.io/ipfs/Qm1/1.png');
       deepStrictEqual(ipfsToHttp('ipfs://ipfs/Qm1'), 'https://ipfs.io/ipfs/Qm1'); // legacy form
       deepStrictEqual(ipfsToHttp('https://x/y.png'), 'https://x/y.png'); // passthrough
@@ -3874,7 +3874,7 @@ describe('Network', () => {
       );
     });
 
-    should('rowCodec round-trips bigint/Map and drops functions', () => {
+    it('rowCodec round-trips bigint/Map and drops functions', () => {
       const row = {
         diff: -123n,
         tokens: new Map([[1n, 1_500_000n]]),
@@ -3893,7 +3893,7 @@ describe('Network', () => {
       });
     });
 
-    should('enrichTx: perspective, offline clear-signing, zero RPC', async () => {
+    it('enrichTx: perspective, offline clear-signing, zero RPC', async () => {
       const tx = transferTx([
         erc20Log(USDT, OTHER, ME, 1_500_000n),
         erc20Log(USDT, OTHER, OTHER, 7n), // third-party movement
@@ -3924,7 +3924,7 @@ describe('Network', () => {
       await rejects(() => enrichTx(offlineProv(), tx, { clearSig: 'nope' }), /wrong clearSig/);
     });
 
-    should('enrichTx: discovers unknown tokens once per cache', async () => {
+    it('enrichTx: discovers unknown tokens once per cache', async () => {
       const counters = {};
       const prov = tokenMetaProv(
         { name: 'Mock', symbol: 'MCK', decimals: 18, totalSupply: 1000n },
@@ -3954,7 +3954,7 @@ describe('Network', () => {
       deepStrictEqual(blind.tokenTransfers.length, 0);
     });
 
-    should('nft-heavy address: replayed discovery, holdings, enrichTx', async () => {
+    it('nft-heavy address: replayed discovery, holdings, enrichTx', async () => {
       // Real node responses captured for 0xed216b…c60a41: full history from
       // block 0 (single un-windowed logs pass, pinned toBlock so no height()
       // call). The call sequence must stay in sync with the capture script,
@@ -4119,4 +4119,4 @@ describe('Network', () => {
   });
 });
 
-should.runWhen(import.meta.url);
+it.runWhen(import.meta.url);

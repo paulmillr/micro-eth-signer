@@ -1,7 +1,7 @@
-import { afterEach, describe, should } from '@paulmillr/jsbt/test.js';
 import { pippenger } from '@noble/curves/abstract/curve.js';
 import { Field } from '@noble/curves/abstract/modular.js';
 import { bls12_381 as bls } from '@noble/curves/bls12-381.js';
+import { afterEach, describe, it } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual, notStrictEqual, ok, strictEqual, throws } from 'node:assert';
 import { readFileSync } from 'node:fs';
 import { KZG } from '../src/kzg.ts';
@@ -87,7 +87,7 @@ const splitScalarG1 = new Function(
 function run(setup) {
   afterEach(forceGC);
 
-  should('G1 endomorphism identities', () => {
+  it('G1 endomorphism identities', () => {
     const G1 = bls.G1.Point;
     const Fp = bls.fields.Fp;
     const Fr = bls.fields.Fr;
@@ -108,7 +108,7 @@ function run(setup) {
     }
   });
 
-  should('splitScalarG1 reconstructs fixed scalars', () => {
+  it('splitScalarG1 reconstructs fixed scalars', () => {
     const Fr = bls.fields.Fr;
     const lambda = G1_ENDO_LAMBDA;
     const cases = [0n, 1n, 2n, Fr.ORDER - 1n, lambda, 0x123456789abcdef0123456789abcdefn];
@@ -120,7 +120,7 @@ function run(setup) {
     }
   });
 
-  should('constructor validates setup lengths', async () => {
+  it('constructor validates setup lengths', async () => {
     const trustedSetup = await getTrustedSetup(setup);
     // A truncated G2 setup previously made verifyProof catch an undefined access and return false.
     throws(
@@ -152,12 +152,12 @@ function run(setup) {
     );
   });
 
-  should('ROOTS_OF_UNITY', async () => {
+  it('ROOTS_OF_UNITY', async () => {
     const kzg = await getKzg(setup);
     deepStrictEqual(kzg.ROOTS_OF_UNITY_BRP, ROOTS_UN.map(BigInt));
   });
 
-  should('G1msm matches noble pippenger on adversarial public inputs', async () => {
+  it('G1msm matches noble pippenger on adversarial public inputs', async () => {
     const kzg = await getKzg(setup);
     const G1 = bls.G1.Point;
     const Fr = bls.fields.Fr;
@@ -216,24 +216,24 @@ function run(setup) {
   });
 
   describe('VIEM', () => {
-    should('parseBlob', async () => {
+    it('parseBlob', async () => {
       const kzg = await getKzg(setup);
       for await (const b of viemItems('blobs')) kzg.parseBlob(b);
       for await (const b of viemItems('invalid-blobs')) throws(() => kzg.parseBlob(b));
     });
-    should('verifyProof', async () => {
+    it('verifyProof', async () => {
       const kzg = await getKzg(setup);
       for (const { input, output } of KZG_VERIFY_PROOF) {
         deepStrictEqual(kzg.verifyProof(input.commitment, input.z, input.y, input.proof), !!output);
       }
     });
-    should('verifyProof2', async () => {
+    it('verifyProof2', async () => {
       const kzg = await getKzg(setup);
       for await (const { input, output } of viemItems('verify-kzg-proof')) {
         deepStrictEqual(kzg.verifyProof(input.commitment, input.z, input.y, input.proof), !!output);
       }
     });
-    should('computeChallenge', async () => {
+    it('computeChallenge', async () => {
       const kzg = await getKzg(setup);
       const challengeStuff = (await viemItemAt('verify-blob-kzg-proof', 25)).input;
       deepStrictEqual(
@@ -244,7 +244,7 @@ function run(setup) {
         0x4f00eef944a21cb9f3ac3390702621e4bbf1198767c43c0fb9c8e9923bfbb31an
       );
     });
-    should('evalPoly', async () => {
+    it('evalPoly', async () => {
       const kzg = await getKzg(setup);
       const polyStuff = (await viemItemAt('verify-blob-kzg-proof', 18)).input;
       deepStrictEqual(
@@ -255,13 +255,13 @@ function run(setup) {
         0x1bdfc5da40334b9c51220e8cbea1679c20a7f32dd3d7f3c463149bb4b41a7d18n
       );
     });
-    should('verifyBlobProof', async () => {
+    it('verifyBlobProof', async () => {
       const kzg = await getKzg(setup);
       for await (const { input, output } of viemItems('verify-blob-kzg-proof')) {
         deepStrictEqual(kzg.verifyBlobProof(input.blob, input.commitment, input.proof), !!output);
       }
     });
-    should('verifyBlobProofBatch', async () => {
+    it('verifyBlobProofBatch', async () => {
       const kzg = await getKzg(setup);
       for await (const { input, output } of viemItems('verify-blob-kzg-proof-batch')) {
         deepStrictEqual(
@@ -270,7 +270,7 @@ function run(setup) {
         );
       }
     });
-    should('blobToKzgCommitment', async () => {
+    it('blobToKzgCommitment', async () => {
       const kzg = await getKzg(setup);
       for await (const { input, output } of viemItems('blob-to-kzg-commitment')) {
         if (!output) throws(() => kzg.blobToKzgCommitment(input.blob));
@@ -296,14 +296,14 @@ function run(setup) {
         `0x${kzg.G1LB[sparseIndex].multiply(sparseScalar).toHex(true)}`
       );
     });
-    should('computeBlobProof', async () => {
+    it('computeBlobProof', async () => {
       const kzg = await getKzg(setup);
       for await (const { input, output } of viemItems('compute-blob-kzg-proof')) {
         if (!output) throws(() => kzg.computeBlobProof(input.blob, input.commitment));
         else deepStrictEqual(kzg.computeBlobProof(input.blob, input.commitment), output);
       }
     });
-    should('computeKzgProof', async () => {
+    it('computeKzgProof', async () => {
       const kzg = await getKzg(setup);
       for await (const { input, output } of viemItems('compute-kzg-proof')) {
         if (!output) throws(() => kzg.computeProof(input.blob, input.z));
@@ -323,4 +323,4 @@ describe('KZG', () => {
   });
 });
 
-should.runWhen(import.meta.url);
+it.runWhen(import.meta.url);

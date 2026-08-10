@@ -1,5 +1,5 @@
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
-import { describe, should } from '@paulmillr/jsbt/test.js';
+import { describe, it } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual, rejects, throws } from 'node:assert';
 import { addr } from '../src/index.ts';
 import NameResolver, {
@@ -50,7 +50,7 @@ const mockGns = (handler: (selector: string, data: string) => string): IWeb3Prov
 
 describe('resolver', () => {
   describe('ENS', () => {
-    should('namehash', () => {
+    it('namehash', () => {
       deepStrictEqual(
         bytesToHex(namehash('vitalik.eth')),
         'ee6c4522aab0003e8d14cd40a6af439055fd2577951148c14b6cea9a53475835'
@@ -77,13 +77,13 @@ describe('resolver', () => {
         ]
       );
     });
-    should('namehash rejects non-ASCII names', () => {
+    it('namehash rejects non-ASCII names', () => {
       // UTS-46 normalization is unsupported: hashing these would silently produce
       // digests no conforming resolver computes.
       for (const name of ['bücher.eth', 'ξ.eth', 'emoji-💩.eth'])
         throws(() => namehash(name), /UTS-46/);
     });
-    should('addressToName accepts checksum-equivalent addresses', async () => {
+    it('addressToName accepts checksum-equivalent addresses', async () => {
       const nameData = bytesToHex(utf8ToBytes('vitalik.eth'));
       const vitalikName = `0x${word(32)}${word(nameData.length / 2)}${nameData.padEnd(Math.ceil(nameData.length / 64) * 64, '0')}`;
       const address = '0xd8da6bf26964af9d7eed9e03e53415d37aa96045';
@@ -114,7 +114,7 @@ describe('resolver', () => {
   });
 
   describe('GNS', () => {
-    should('gnsTokenId matches on-chain namehash scheme', () => {
+    it('gnsTokenId matches on-chain namehash scheme', () => {
       // Published constant: namehash('gwei'), the node all `.gwei` ids live under.
       deepStrictEqual(`0x${bytesToHex(namehash('gwei'))}`, NameResolver.GWEI_NODE);
       // TLD is appended when missing; ASCII case-folds like ENS namehash.
@@ -131,7 +131,7 @@ describe('resolver', () => {
       throws(() => gnsTokenId('.alice'), /empty label/);
       throws(() => gnsTokenId('bücher'), /UTS-46/);
     });
-    should('gnsRegistrationFee uses fixed byte-length schedule', () => {
+    it('gnsRegistrationFee uses fixed byte-length schedule', () => {
       deepStrictEqual(gnsRegistrationFee('a'), 500000000000000000n);
       deepStrictEqual(gnsRegistrationFee('ab'), 100000000000000000n);
       deepStrictEqual(gnsRegistrationFee('abc'), 50000000000000000n);
@@ -142,7 +142,7 @@ describe('resolver', () => {
       throws(() => gnsRegistrationFee(''), /wrong label/);
       throws(() => gnsRegistrationFee('a.b'), /wrong label/);
     });
-    should('nameToAddress routes .gwei to NameNFT', async () => {
+    it('nameToAddress routes .gwei to NameNFT', async () => {
       const owner = '0xd8da6bf26964af9d7eed9e03e53415d37aa96045';
       const resolver = new NameResolver(
         mockGns((selector, data) => {
@@ -158,7 +158,7 @@ describe('resolver', () => {
       // non-.gwei names go to the ENS registry, never to NameNFT
       await rejects(() => empty.nameToAddress('alice.eth'), /unexpected contract/);
     });
-    should('addressToName with gns mode', async () => {
+    it('addressToName with gns mode', async () => {
       const address = '0xd8da6bf26964af9d7eed9e03e53415d37aa96045';
       const resolver = new NameResolver(
         mockGns((selector, data) => {
@@ -175,7 +175,7 @@ describe('resolver', () => {
       await rejects(() => empty.addressToName(address), /unexpected contract/);
       await rejects(() => empty.addressToName(address, 'esn' as any), /unknown mode/);
     });
-    should('text and contenthash records', async () => {
+    it('text and contenthash records', async () => {
       const resolver = new NameResolver(
         mockGns((selector, data) => {
           if (selector === GNS_SELECTORS.text) {
@@ -201,7 +201,7 @@ describe('resolver', () => {
       deepStrictEqual(await empty.getContenthash('alice.gwei'), undefined);
       deepStrictEqual(await empty.getAddrForCoin('alice', 0n), undefined);
     });
-    should('isAvailable, expiresAt, premium', async () => {
+    it('isAvailable, expiresAt, premium', async () => {
       const resolver = new NameResolver(
         mockGns((selector, data) => {
           if (selector === GNS_SELECTORS.isAvailable) {
@@ -231,4 +231,4 @@ describe('resolver', () => {
   });
 });
 
-should.runWhen(import.meta.url);
+it.runWhen(import.meta.url);

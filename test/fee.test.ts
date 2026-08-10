@@ -1,4 +1,4 @@
-import { describe, should } from '@paulmillr/jsbt/test.js';
+import { describe, it } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual, throws } from 'node:assert';
 import { Transaction, addr, authorization } from '../src/index.ts';
 import { weieth, weigwei } from '../src/utils.ts';
@@ -6,7 +6,7 @@ import { weieth, weigwei } from '../src/utils.ts';
 // NOTE: other libraries doesn't support fee estimation, so there is no crosstests for now :(
 // But we need some tests to avoid accidental breakage.
 describe('Fees', () => {
-  should('Legacy', () => {
+  it('Legacy', () => {
     const tx = Transaction.prepare({
       type: 'legacy',
       to: '0x27b1fdb04752bbc536007a920d24acb045561c26',
@@ -25,7 +25,7 @@ describe('Fees', () => {
     });
     deepStrictEqual(tx2.fee, 1161300000000000n);
   });
-  should('EIP1559', () => {
+  it('EIP1559', () => {
     const tx = Transaction.prepare({
       to: '0x27b1fdb04752bbc536007a920d24acb045561c26',
       nonce: 1n,
@@ -45,7 +45,7 @@ describe('Fees', () => {
     // 21k * 2 = 42
     deepStrictEqual(tx2.fee, 1161300000000000n);
   });
-  should('EIP4844', () => {
+  it('EIP4844', () => {
     const tx = Transaction.prepare(
       {
         type: 'eip4844',
@@ -61,7 +61,7 @@ describe('Fees', () => {
     );
     deepStrictEqual(tx.fee, 42000000000000n + 2n * 131072n * 3n);
   });
-  should('Whole amount', () => {
+  it('Whole amount', () => {
     const tx = Transaction.prepare({
       to: '0x27b1fdb04752bbc536007a920d24acb045561c26',
       nonce: 1n,
@@ -84,7 +84,7 @@ describe('Fees', () => {
       type: 'eip1559',
     });
   });
-  should('Whole amount: legacy & burnRemaining=false', () => {
+  it('Whole amount: legacy & burnRemaining=false', () => {
     const legacy = Transaction.prepare({
       type: 'legacy',
       to: '0x27b1fdb04752bbc536007a920d24acb045561c26',
@@ -133,7 +133,7 @@ describe('Fees', () => {
       weieth.decode('10') - looseRt.fee
     );
   });
-  should('Whole amount: EIP4844 includes blob fee', () => {
+  it('Whole amount: EIP4844 includes blob fee', () => {
     const tx = Transaction.prepare({
       type: 'eip4844',
       to: '0x27b1fdb04752bbc536007a920d24acb045561c26',
@@ -148,7 +148,7 @@ describe('Fees', () => {
     deepStrictEqual(tx.fee, 42000000000000n + 131072n * 3n);
     deepStrictEqual(tx.setWholeAmount(weieth.decode('1')).raw.value, weieth.decode('1') - tx.fee);
   });
-  should('intrinsic gas defaults', () => {
+  it('intrinsic gas defaults', () => {
     const base = {
       to: '0x27b1fdb04752bbc536007a920d24acb045561c26',
       nonce: 1n,
@@ -187,4 +187,4 @@ describe('Fees', () => {
   });
 });
 
-should.runWhen(import.meta.url);
+it.runWhen(import.meta.url);
