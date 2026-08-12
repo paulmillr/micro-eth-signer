@@ -67,14 +67,19 @@ const numberToBytes = (n: number): Bytes => {
   return res;
 };
 const maxSafeInteger = /* @__PURE__ */ BigInt(Number.MAX_SAFE_INTEGER);
+// Public RLP is generic, so retain substantial nesting headroom while staying
+// well below engine-dependent JavaScript call-stack limits. Ethereum protocol
+// structures are only a handful of levels deep.
+const MAX_RLP_DEPTH = 1024;
 
-const measure = (data: RLPInput): Measured => {
+const measure = (data: RLPInput, depth = 0): Measured => {
+  if (depth > MAX_RLP_DEPTH) throw new RangeError('RLP.encode: too deep');
   if (data == null) return leaf(empty);
   if (isBytes(data)) return leaf(data);
   if (Array.isArray(data)) {
     const items: Measured[] = new Array(data.length);
     let payload = 0;
-    for (let i = 0; i < data.length; i++) payload += (items[i] = measure(data[i])).total;
+    for (let i = 0; i < data.length; i++) payload += (items[i] = measure(data[i], depth + 1)).total;
     const total = payload < 56 ? 1 + payload : 1 + lenLen(payload) + payload;
     return { bytes: null, items, payload, total };
   }
@@ -109,7 +114,8 @@ const writePrefix = (out: Uint8Array, pos: number, offset: number, len: number):
   return pos + ll;
 };
 
-const writeNode = (node: Measured, out: Uint8Array, pos: number): number => {
+const writeNode = (node: Measured, out: Uint8Array, pos: number, depth = 0): number => {
+  if (depth > MAX_RLP_DEPTH) throw new RangeError('RLP.encode: too deep');
   const bytes = node.bytes;
   if (bytes !== null) {
     const len = bytes.length;
@@ -122,7 +128,7 @@ const writeNode = (node: Measured, out: Uint8Array, pos: number): number => {
     return pos + len;
   }
   pos = writePrefix(out, pos, 0xc0, node.payload);
-  for (const item of node.items!) pos = writeNode(item, out, pos);
+  for (const item of node.items!) pos = writeNode(item, out, pos, depth + 1);
   return pos;
 };
 
@@ -151,7 +157,8 @@ const rlpDecodeSlice = (
     if (len < 56) throw new Error('RLP.decode: length less than 56, but used multi-byte flag');
     return len;
   };
-  const item = (boundary: number): RLPInput => {
+  const item = (boundary: number, depth = 0): RLPInput => {
+    if (depth > MAX_RLP_DEPTH) throw new RangeError('RLP.decode: too deep');
     if (pos >= boundary) throw new Error('RLP.decode: out of range');
     const first = d[pos++];
     if (first < 0x80) return d.subarray(pos - 1, pos); // single byte, no prefix
@@ -176,7 +183,7 @@ const rlpDecodeSlice = (
       return res;
     }
     const items: RLPInput[] = [];
-    while (pos < itemEnd) items.push(item(itemEnd));
+    while (pos < itemEnd) items.push(item(itemEnd, depth + 1));
     return items;
   };
   const res = item(end);

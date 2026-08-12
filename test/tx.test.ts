@@ -1,9 +1,8 @@
 import { bytesToHex } from '@noble/hashes/utils.js';
 import { describe, it } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual, throws } from 'node:assert';
-import { inspect } from 'node:util';
 import { deployContract } from '../src/abi/decoder.ts';
-import { RawTx, RlpTx, TxVersions, legacySig, validateFields } from '../src/core/tx-internal.ts';
+import { RawTx, TxVersions, legacySig, validateFields } from '../src/core/tx-internal.ts';
 import { Transaction, addr, authorization } from '../src/index.ts';
 import {
   add0x,
@@ -27,7 +26,6 @@ import * as ethTests from './vectors/eth-tests-tx-vectors.js';
 import { default as TX_VECTORS } from './vectors/transactions.json' with { type: 'json' };
 
 const SKIPPED_ERRORS = {
-  viem: 'address must be',
   ethereum_tests_raw_tx: [
     // no address
     'dataTx_bcValidBlockTest',
@@ -163,25 +161,6 @@ const SKIPPED_ERRORS = {
     'TransactionWithLeadingZerosNonce',
     'TransactionWithRvaluePrefixed00BigInt',
   ],
-};
-
-function log(...args) {
-  console.log(
-    ...args.map((arg) =>
-      typeof arg === 'object'
-        ? inspect(arg, { depth: Infinity, colors: true, compact: false })
-        : arg
-    )
-  );
-}
-
-const debugTx = (hex) => {
-  const bytes = ethHex.decode(hex);
-  console.log('RLP ORIG', RlpTx.decode(bytes));
-  const decoded = RawTx.decode(bytes);
-  console.log('DECODED', decoded);
-  const encoded = RawTx.encode(decoded);
-  console.log('RLP NEW', RlpTx.decode(encoded));
 };
 
 const convertTx = (raw) => {
@@ -563,7 +542,6 @@ describe('Transactions', () => {
 
   describe('RawTx', () => {
     const t = (hex) => {
-      //debugTx(hex);
       const decoded = RawTx.decode(ethHex.decode(hex));
       const encoded = ethHex.encode(RawTx.encode(decoded));
       deepStrictEqual(encoded, hex, 'RawTx.encoded');
@@ -612,12 +590,6 @@ describe('Transactions', () => {
           if (hasError === 'TR_IntrinsicGas') continue;
           // Raw Tx doesn't validate this, only Transaction does.
           if (hasError === 'TR_InitCodeLimitExceeded') continue;
-          // if (k === 'DataTestInitCodeTooBig') {
-          //   // DEBUG
-          //   console.log('ERROR', hasError);
-          //   console.log('TTT', v.txbytes, RlpTx.decode(ethHex.decode(v.txbytes)));
-          //   // t(v.txbytes);
-          // }
           if (hasError) throws(() => t(v.txbytes), `throws(${cat}/${k})`);
           else {
             t(v.txbytes);
@@ -626,27 +598,13 @@ describe('Transactions', () => {
       }
     });
     it(`viem tests`, async () => {
-      let skipped = 0;
-      let passed = 0;
       try {
         for await (const v of getViemVectorItems('transaction.json.gz')) {
-          for (const tx of [v.serialized, v.serializedSigned]) {
-            try {
-              t(tx);
-              passed += 1;
-            } catch (e) {
-              if (e.message.includes(SKIPPED_ERRORS.viem)) {
-                skipped++;
-                continue;
-              }
-              throw e;
-            }
-          }
+          for (const tx of [v.serialized, v.serializedSigned]) t(tx);
         }
       } finally {
         forceGC();
       }
-      if (skipped > 0) console.log(`skipped: ${skipped} ${passed}`);
     });
     it('EIP-4844', () => {
       // FROM https://github.com/ethereumjs/ethereumjs-monorepo/blob/master/packages/tx/test/eip4844.spec.ts
@@ -986,15 +944,8 @@ describe('Transactions', () => {
         const v = Object.values(ethTests[cat][k])[0];
         if (skip.includes(k)) continue;
         let hasError = (!v.result.Shanghai ? v.result.London : v.result.Shanghai).exception;
-        // console.log('TTTT', cat, k, v.result, hasError);
         // TR_IntrinsicGas
         if (hasError === 'TR_IntrinsicGas') continue;
-        // console.log('ddd', cat, k, hasError);
-        // if (k === 'TransactionWithRvaluePrefixed00BigInt') {
-        //   console.log('TTT', v.txbytes, RlpTx.decode(ethHex().decode(v.txbytes)));
-        //   console.log('AAA', Transaction.fromHex(v.txbytes, false));
-        //   console.log('DDD', RawTx.decode(ethHex().decode(v.txbytes)));
-        // }
         if (hasError) throws(() => Transaction.fromHex(v.txbytes, true), `throws(${cat}/${k})`);
         else {
           Transaction.fromHex(v.txbytes, true);

@@ -108,6 +108,11 @@ export const eip191Signer: TRet<TypedSigner<string | Uint8Array>> = /* @__PURE__
 export type EIP712Component = { name: string; type: string };
 export type EIP712Types = Record<string, readonly EIP712Component[]>;
 
+const MAX_EIP712_TYPES = 256;
+const MAX_EIP712_SCHEMA_FIELDS = 1024;
+const MAX_EIP712_MESSAGE_DEPTH = 64;
+const MAX_EIP712_MESSAGE_NODES = 4096;
+
 // This makes 'bytes' -> Uint8Array, 'uint' -> bigint. However, we support 'string' for them (JSON in wallets),
 // but for static types it is actually better to use strict types, since otherwise everything is 'string'. Address is string,
 // but sending it in uint field can be mistake. Please open issue if you have use case where this behavior causes problems.
@@ -167,12 +172,22 @@ function parseType(s: string): {
 // traverse dependency graph, find all transitive dependencies. Also, basic sanity check
 function getDependencies(types: EIP712Types): Record<string, Set<string>> {
   if (typeof types !== 'object' || types === null) throw new Error('wrong types object');
+  const typeEntries = Object.entries(types);
+  if (typeEntries.length > MAX_EIP712_TYPES)
+    throw new RangeError(`EIP712: too many types, limit is ${MAX_EIP712_TYPES}`);
   // Collect non-basic dependencies & sanity
   const res: Record<string, Set<string>> = {};
-  for (const [name, fields] of Object.entries(types)) {
+  let totalFields = 0;
+  for (const [name, fields] of typeEntries) {
     // EIP-712 struct names must be valid identifiers; otherwise malformed
     // tokens like `bytes32]` become observable custom types.
     if (!isIdentifier(name)) throw new Error(`getDependencies: wrong struct type name=${name}`);
+    if (!Array.isArray(fields))
+      throw new Error(`getDependencies: fields for ${name} should be array`);
+    totalFields += fields.length;
+    if (totalFields > MAX_EIP712_SCHEMA_FIELDS) {
+      throw new RangeError(`EIP712: too many schema fields, limit is ${MAX_EIP712_SCHEMA_FIELDS}`);
+    }
     const cur: Set<string> = new Set(); // type may appear multiple times in struct
     for (const { type } of fields) {
       const p = parseType(type);
@@ -242,13 +257,32 @@ export function encoder<T extends EIP712Types>(types: T, domain: TArg<GetType<T,
   if (!isObject(domain)) throw Error(`wrong domain=${domain}`);
   if (!isObject(types)) throw Error(`wrong types=${types}`);
   const info = getTypes(types);
-  const encodeField = (type: string, data: any, withHash = true): TRet<Uint8Array> => {
+  type EncodeBudget = { nodes: number };
+  const encodeField = (
+    type: string,
+    data: any,
+    withHash: boolean,
+    depth: number,
+    budget: EncodeBudget
+  ): TRet<Uint8Array> => {
+    if (depth > MAX_EIP712_MESSAGE_DEPTH)
+      throw new RangeError(`EIP712: message too deep, limit is ${MAX_EIP712_MESSAGE_DEPTH}`);
+    if (++budget.nodes > MAX_EIP712_MESSAGE_NODES)
+      throw new RangeError(`EIP712: message too large, limit is ${MAX_EIP712_MESSAGE_NODES} nodes`);
     const p = parseType(type);
     if (p.isArray) {
       if (!Array.isArray(data)) throw new Error(`expected array, got: ${data}`);
       if (p.arrayLen !== undefined && data.length !== p.arrayLen)
         throw new Error(`wrong array length: expected ${p.arrayLen}, got ${data}`);
-      return keccak_256(concatBytes(...data.map((i) => encodeField(p.item, i))));
+      // Every item contributes at least one node. Reject impossible budgets before
+      // encoding any elements, then hash incrementally without spread arguments.
+      if (data.length > MAX_EIP712_MESSAGE_NODES - budget.nodes)
+        throw new RangeError(
+          `EIP712: message too large, limit is ${MAX_EIP712_MESSAGE_NODES} nodes`
+        );
+      const hash = keccak_256.create();
+      for (const item of data) hash.update(encodeField(p.item, item, true, depth + 1, budget));
+      return hash.digest() as TRet<Uint8Array>;
     }
     if (p.type === 'struct') {
       const def = types[type];
@@ -257,21 +291,27 @@ export function encoder<T extends EIP712Types>(types: T, domain: TArg<GetType<T,
       if (!isObject(data)) throw new Error(`encoding non-object as custom type ${type}`);
       for (const k in data)
         if (!fieldNames.has(k)) throw new Error(`unexpected field ${k} in ${type}`);
-      // TODO: use correct concatBytes (need to export from P?). This will easily crash with stackoverflow if too much fields.
-      const fields = [];
+      const typeHash = info.hashes[p.base];
+      const hash = withHash ? keccak_256.create().update(typeHash) : undefined;
+      const res = withHash ? undefined : new Uint8Array(32 * (def.length + 1));
+      if (res) res.set(typeHash);
+      let offset = 32;
       for (const { name, type } of def) {
         // This is not mentioned in spec, but used in eth-sig-util
         // Since there is no 'optional' fields inside eip712, it makes impossible to encode circular structure without arrays,
         // but seems like other project use this.
         // NOTE: this is V4 only stuff. If you need V3 behavior, please open issue.
+        let field: Uint8Array;
         if (types[type] && data[name] === undefined) {
-          fields.push(new Uint8Array(32));
-          continue;
+          field = new Uint8Array(32);
+        } else field = encodeField(type, data[name], true, depth + 1, budget);
+        if (hash) hash.update(field);
+        else {
+          res!.set(field, offset);
+          offset += 32;
         }
-        fields.push(encodeField(type, data[name]));
       }
-      const res = concatBytes(info.hashes[p.base], ...fields);
-      return (withHash ? keccak_256(res) : res) as TRet<Uint8Array>;
+      return (hash ? hash.digest() : res!) as TRet<Uint8Array>;
     }
     if (type === 'string' || type === 'bytes') {
       if (type === 'bytes' && typeof data === 'string') data = ethHex.decode(data);
@@ -287,7 +327,7 @@ export function encoder<T extends EIP712Types>(types: T, domain: TArg<GetType<T,
     astring(type);
     if (!types[type]) throw new Error(`Unknown type: ${type}`);
     if (!isObject(data)) throw new Error('wrong data object');
-    return encodeField(type, data, false);
+    return encodeField(type, data, false, 0, { nodes: 0 });
   };
   const structHash = (type: Key<T>, data: any) => keccak_256(encodeData(type, data) as Uint8Array);
   const domainHash = structHash('EIP712Domain', domain);

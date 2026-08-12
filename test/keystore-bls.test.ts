@@ -168,6 +168,18 @@ describe('Validator keys', () => {
       const badPath = structuredClone(vector) as typeof vector & { path: number | string };
       badPath.path = 123;
       throws(() => decryptInvalid(badPath));
+      const excessiveN = structuredClone(vector);
+      excessiveN.crypto.kdf.params.n = 2 ** 21;
+      throws(() => decryptInvalid(excessiveN), /Invalid KDF scrypt n/);
+      const excessiveMemory = structuredClone(vector);
+      excessiveMemory.crypto.kdf.params.n = 2 ** 20;
+      excessiveMemory.crypto.kdf.params.r = 4;
+      throws(() => decryptInvalid(excessiveMemory), /memory requirement/);
+      const excessiveWork = structuredClone(vector);
+      excessiveWork.crypto.kdf.params.n = 2 ** 20;
+      excessiveWork.crypto.kdf.params.r = 3;
+      excessiveWork.crypto.kdf.params.p = 8;
+      throws(() => decryptInvalid(excessiveWork), /work factor/);
     };
     it('decrypt PBKDF2', () => {
       const vector = {
@@ -206,6 +218,15 @@ describe('Validator keys', () => {
         bls.decryptEIP2335Keystore(vector, '𝔱𝔢𝔰𝔱𝔭𝔞𝔰𝔰𝔴𝔬𝔯𝔡🔑'),
         hexToBytes('000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f')
       );
+      const excessiveIterations = structuredClone(vector);
+      excessiveIterations.crypto.kdf.params.c = 2 ** 22 + 1;
+      throws(
+        () => bls.decryptEIP2335Keystore(excessiveIterations, 'testpassword'),
+        /Invalid KDF pbkdf2 c/
+      );
+      const excessiveDklen = structuredClone(vector);
+      excessiveDklen.crypto.kdf.params.dklen = 65;
+      throws(() => bls.decryptEIP2335Keystore(excessiveDklen, 'testpassword'), /Invalid KDF dklen/);
       vector.uuid = '64625DEF-3331-4EEA-AB6F-782F3ED16A83';
       deepStrictEqual(
         bls.decryptEIP2335Keystore(vector, '𝔱𝔢𝔰𝔱𝔭𝔞𝔰𝔰𝔴𝔬𝔯𝔡🔑'),
@@ -220,32 +241,34 @@ describe('Validator keys', () => {
       const key = pbkdf2(sha256, utf8ToBytes(password), salt, { c: 1, dkLen: 32 });
       const ciphertext = ctr(key.subarray(0, 16), iv).encrypt(secret);
       const checksum = sha256(concatBytes(key.subarray(16, 32), ciphertext));
-      deepStrictEqual(
-        bls.decryptEIP2335Keystore(
-          {
-            version: 4,
-            description: '',
-            pubkey: undefined,
-            path: '',
-            uuid: '64625def-3331-4eea-ab6f-782f3ed16a83',
-            crypto: {
-              kdf: {
-                function: 'pbkdf2',
-                params: { dklen: 32, c: 1, prf: 'hmac-sha256', salt: bytesToHex(salt) },
-                message: '',
-              },
-              checksum: { function: 'sha256', params: {}, message: bytesToHex(checksum) },
-              cipher: {
-                function: 'aes-128-ctr',
-                params: { iv: bytesToHex(iv) },
-                message: bytesToHex(ciphertext),
-              },
-            },
+      const store = {
+        version: 4,
+        description: '',
+        pubkey: undefined,
+        path: '',
+        uuid: '64625def-3331-4eea-ab6f-782f3ed16a83',
+        crypto: {
+          kdf: {
+            function: 'pbkdf2',
+            params: { dklen: 32, c: 1, prf: 'hmac-sha256', salt: bytesToHex(salt) },
+            message: '',
           },
-          password
-        ),
-        secret
-      );
+          checksum: { function: 'sha256', params: {}, message: bytesToHex(checksum) },
+          cipher: {
+            function: 'aes-128-ctr',
+            params: { iv: bytesToHex(iv) },
+            message: bytesToHex(ciphertext),
+          },
+        },
+      } as const;
+      deepStrictEqual(bls.decryptEIP2335Keystore(store, password), secret);
+      throws(() => bls.decryptEIP2335Keystore(store, 'wrong password'), {
+        name: 'Error',
+        message: 'Invalid password or checksum',
+      });
+      const shortChecksum = structuredClone(store);
+      shortChecksum.crypto.checksum.message = '00';
+      throws(() => bls.decryptEIP2335Keystore(shortChecksum, password), /length 32/);
     });
     it('throw on previous versions', () => {
       const vector = {
@@ -273,13 +296,6 @@ describe('Validator keys', () => {
       const iv = hexToBytes('ea19787657550f76181bb4c0ce49cc8a');
       const salt = hexToBytes('9330c1010e6859591404baf9d0c490efd7f8b476314358111a09b4b41d9c4498');
       const uuid = hexToBytes('c2de70413e806097058393c2e8da2161');
-      // const seed = await mnemonicToSeed(
-      //   entropyToMnemonic(
-      //     hexToBytes('8ba269cc68cb6c2eeaf4ff33536ab2a7f290da291c6f908532d8996ba30bf419'),
-      //     wordlist
-      //   ),
-      //   ''
-      // );
       const seed = hexToBytes(
         'cbd1178c008ca4ee38654d6584f753e7f6c42b258ae0efd5a99d1c69e293f8488ce4e994c9ce06ae8b284a1b3a07a41059782e72036378427277d988fdd61c83'
       );

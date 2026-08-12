@@ -228,7 +228,7 @@ describe('uniswap', () => {
           undefined,
           { deadline: TS, slippagePercent: 10, fee: { fee: 1, to: 'eth' } }
         ),
-      /invalid fee recepient addresss/
+      /invalid fee recipient address/
     );
     const oldNow = Date.now;
     Date.now = () => 2000000000000;
