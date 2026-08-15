@@ -21,10 +21,11 @@
     "micro-packed": "~0.11.0"
   },
   "devDependencies": {
-    "@paulmillr/jsbt": "0.6.5",
+    "@paulmillr/jsbt": "0.7.0",
+    "bismar": "0.1.8",
     "@paulmillr/trusted-setups": "~0.3.0",
     "@types/node": "25.9.0",
-    "micro-ftch": "1.1.0",
+    "micro-ftch": "1.2.0",
     "prettier": "3.8.3",
     "snappyjs": "0.7.0",
     "typescript": "6.0.3",
@@ -33,7 +34,7 @@
   "scripts": {
     "benchmark": "node benchmark/microeth.ts",
     "benchmark:thirdparty": "cd benchmark/thirdparty; npm ci; node *.ts",
-    "benchmark:size": "npx bismar@0.1 -bs",
+    "benchmark:size": "bismar -bsm",
     "build": "tsc",
     "build:clean": "rm -f *.{js,d.ts,js.map,d.ts.map}; rm -rf {abi,clearsig,core,net}",
     "build:clearsig": "node test/misc/build-clearsig.ts test/vectors/clear-signing",
