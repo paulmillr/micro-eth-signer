@@ -1020,6 +1020,29 @@ describe('Network', () => {
       /validatePagination: wrong field fromBlock=-1/
     );
   });
+  it('rejects excessive block-range chunks before RPC fan-out', async () => {
+    let calls = 0;
+    const archive = new RpcClient({
+      call: async () => {
+        calls++;
+        throw new Error('unexpected rpc call');
+      },
+    });
+    await rejects(
+      () => archive.ethLogs([], { fromBlock: 0, toBlock: 4096, limitLogs: 1 }),
+      /ethLogs: block range requires 4097 chunks, limit is 4096/
+    );
+    await rejects(
+      () =>
+        internalTransactions(archive, '0x0000000000000000000000000000000000000000', {
+          fromBlock: 0,
+          toBlock: 8192,
+          limitTrace: 1,
+        }),
+      /internalTransactions: block range requires 4097 chunks, limit is 4096/
+    );
+    deepStrictEqual(calls, 0);
+  });
   it('validates approval topics address', () => {
     throws(() => approvalTopics(1 as any), /approvalTopics: wrong address/);
   });
@@ -1559,6 +1582,40 @@ describe('Network', () => {
       ],
     ]);
   });
+  it('bounds trace_filter concurrency and preserves batch result order', async () => {
+    let active = 0;
+    let maxActive = 0;
+    let calls = 0;
+    const archive = new RpcClient({
+      call: async (method, params) => {
+        if (method !== 'trace_filter') throw new Error(`unexpected call ${method}`);
+        calls++;
+        active++;
+        maxActive = Math.max(maxActive, active);
+        const fromBlock = Number(BigInt(params.fromBlock));
+        await new Promise((resolve) => setTimeout(resolve, Math.max(0, 4 - fromBlock)));
+        active--;
+        return [
+          {
+            action: { value: '0x0', gas: '0x0' },
+            result: { gasUsed: '0x0' },
+            blockNumber: fromBlock,
+          },
+        ];
+      },
+    });
+    const actions = await internalTransactions(
+      archive,
+      '0x0000000000000000000000000000000000000000',
+      { fromBlock: 0, toBlock: 41, limitTrace: 1 }
+    );
+    deepStrictEqual(calls, 21);
+    deepStrictEqual(maxActive, 8);
+    deepStrictEqual(
+      actions.map((action) => action.blockNumber),
+      Array.from({ length: 21 }, (_, i) => i * 2)
+    );
+  });
   it('Transcations basic', async () => {
     // Random address from abi tests which test for fingerprinted data in encoding.
     // Perfect for tests: only has a few transactions and provides different types of txs.
@@ -1751,32 +1808,29 @@ describe('Network', () => {
       error: 'not contract or destructed',
     });
   });
-  it(
-    'propagates token metadata cancellation instead of returning a negative result',
-    async () => {
-      const controller = new AbortController();
-      controller.abort(new Error('stop'));
-      let calls = 0;
-      const archive = new RpcClient(
-        mftch.jsonrpc(async (_url, opts) => {
-          calls++;
-          const request = JSON.parse(opts?.body);
-          return {
-            json: async () => ({ jsonrpc: '2.0', id: request.id, result: '0x' }),
-          };
-        }, 'http://rpc.invalid')
-      );
-      const outcome = await tokenInfo(
-        archive,
-        '0x0000000000000000000000000000000000000001',
-        controller.signal
-      ).then(
-        (value) => ({ value }),
-        (error) => ({ error: error.message })
-      );
-      deepStrictEqual({ outcome, calls }, { outcome: { error: 'stop' }, calls: 0 });
-    }
-  );
+  it('propagates token metadata cancellation instead of returning a negative result', async () => {
+    const controller = new AbortController();
+    controller.abort(new Error('stop'));
+    let calls = 0;
+    const archive = new RpcClient(
+      mftch.jsonrpc(async (_url, opts) => {
+        calls++;
+        const request = JSON.parse(opts?.body);
+        return {
+          json: async () => ({ jsonrpc: '2.0', id: request.id, result: '0x' }),
+        };
+      }, 'http://rpc.invalid')
+    );
+    const outcome = await tokenInfo(
+      archive,
+      '0x0000000000000000000000000000000000000001',
+      controller.signal
+    ).then(
+      (value) => ({ value }),
+      (error) => ({ error: error.message })
+    );
+    deepStrictEqual({ outcome, calls }, { outcome: { error: 'stop' }, calls: 0 });
+  });
   it('preserves zero ERC20 decimals', async () => {
     const contract = '0x0000000000000000000000000000000000000001';
     const archive = new RpcClient({
@@ -1842,6 +1896,56 @@ describe('Network', () => {
       () => tokenBalances(archive, address, [{ abi: 'ERC20' } as any]),
       /tokenBalances: wrong token/
     );
+  });
+  it('caps and pools ERC721 enumerable balance reads', async () => {
+    const address = '0x0000000000000000000000000000000000000002';
+    const contract = '0x0000000000000000000000000000000000000001';
+    const token = { contract, abi: 'ERC721', enumerable: true } as const;
+    let indexCalls = 0;
+    const oversized = new RpcClient({
+      call: async (method, ...args) => {
+        if (method !== 'eth_call') throw new Error(`unexpected call ${method}`);
+        const selector = args[0].data.slice(0, 10);
+        if (selector === '0x70a08231') return encodeWords(4097n); // balanceOf
+        if (selector === '0x2f745c59') indexCalls++; // tokenOfOwnerByIndex
+        throw new Error(`unexpected selector ${selector}`);
+      },
+    });
+    deepStrictEqual(await tokenBalances(oversized, address, [token]), {
+      [contract]: {
+        contract,
+        error: 'erc721 enumerable balance 4097 exceeds limit 4096',
+      },
+    });
+    deepStrictEqual(indexCalls, 0);
+
+    let active = 0;
+    let maxActive = 0;
+    let release = () => {};
+    const firstWave = new Promise<void>((resolve) => (release = resolve));
+    const pooled = new RpcClient({
+      call: async (method, ...args) => {
+        if (method !== 'eth_call') throw new Error(`unexpected call ${method}`);
+        const data = args[0].data;
+        const selector = data.slice(0, 10);
+        if (selector === '0x70a08231') return encodeWords(20n);
+        if (selector !== '0x2f745c59') throw new Error(`unexpected selector ${selector}`);
+        indexCalls++;
+        active++;
+        maxActive = Math.max(maxActive, active);
+        if (active === 10) release();
+        await firstWave;
+        active--;
+        const index = BigInt(`0x${data.slice(-64)}`);
+        return encodeWords(100n + index);
+      },
+    });
+    indexCalls = 0;
+    const balances = await tokenBalances(pooled, address, [token]);
+    const ids = balances[contract];
+    if (!(ids instanceof Map)) throw new Error('expected ERC721 balance map');
+    deepStrictEqual(ids, new Map(Array.from({ length: 20 }, (_, i) => [100n + BigInt(i), 1n])));
+    deepStrictEqual({ indexCalls, maxActive }, { indexCalls: 20, maxActive: 10 });
   });
   it('tokenBalances', async () => {
     const replay = mftch.replayable(fetch, await rpcVector('net_token_balances'), {
@@ -2013,16 +2117,13 @@ describe('Network', () => {
         throw new Error(`unexpected rpc call ${method}`);
       },
     });
-    deepStrictEqual(
-      await archive.accountState('0x0000000000000000000000000000000000000001'),
-      {
-        symbol: 'ETH',
-        decimals: 18,
-        balance: 0n,
-        nonce: 0n,
-        active: false,
-      }
-    );
+    deepStrictEqual(await archive.accountState('0x0000000000000000000000000000000000000001'), {
+      symbol: 'ETH',
+      decimals: 18,
+      balance: 0n,
+      nonce: 0n,
+      active: false,
+    });
   });
   it('nonce', async () => {
     const archive = new RpcClient({
@@ -2651,13 +2752,19 @@ describe('Network', () => {
       const r1 = rawReceipt(hash('11'), 30, [transferLog(USDT, OTHER, B, 5000000n)]);
       const pages = {
         [ADDR]: {
-          txs: [rawTx(hash('11'), 30, ADDR, B, 10n ** 18n), rawTx(hash('22'), 20, OTHER, ADDR, 2n * 10n ** 18n)],
+          txs: [
+            rawTx(hash('11'), 30, ADDR, B, 10n ** 18n),
+            rawTx(hash('22'), 20, OTHER, ADDR, 2n * 10n ** 18n),
+          ],
           receipts: [r1, rawReceipt(hash('22'), 20)],
           firstPage: true,
           lastPage: true,
         },
         [B]: {
-          txs: [rawTx(hash('11'), 30, ADDR, B, 10n ** 18n), rawTx(hash('33'), 10, B, OTHER, 3n * 10n ** 18n)],
+          txs: [
+            rawTx(hash('11'), 30, ADDR, B, 10n ** 18n),
+            rawTx(hash('33'), 10, B, OTHER, 3n * 10n ** 18n),
+          ],
           receipts: [r1, rawReceipt(hash('33'), 10)],
           firstPage: true,
           lastPage: true,
@@ -3154,33 +3261,30 @@ describe('Network', () => {
       deepStrictEqual(calls.filter((m) => m === 'ots_searchTransactionsBefore').length, 2);
       deepStrictEqual(calls.filter((m) => m === 'eth_getLogs').length, 14);
     });
-    it(
-      'logs fallback marks partial rows, limits pages, and deduplicates tx lookups',
-      async () => {
-        const a = normalizedTransferLog(hash('11'), 100, OTHER, ADDR, 5n);
-        const b = normalizedTransferLog(hash('22'), 90, ADDR, OTHER, 2n);
-        let logCalls = 0;
-        const txCalls = [];
-        const provider = {
-          capabilities: async () => ({ eth: true, trace: false, ots: false }),
-          ethLogs: async () => (++logCalls === 1 ? [a, b] : logCalls === 2 ? [a] : []),
-          txInfo: async (h) => {
-            txCalls.push(h);
-            return h === a.transactionHash
-              ? normalizedTx(h, 100, OTHER, ADDR, [a])
-              : normalizedTx(h, 90, ADDR, OTHER, [b]);
-          },
-        };
-        const rows = await collectHistory(provider, ADDR, { pageSize: 1 });
-        deepStrictEqual(
-          rows.map((row) => row.hash),
-          [a.transactionHash]
-        );
-        deepStrictEqual(rows[0].partial, 'tokens-only');
-        deepStrictEqual(rows[0].tokenTransfers[0].tokens, new Map([[1n, 5n]]));
-        deepStrictEqual(txCalls.sort(), [a.transactionHash, b.transactionHash].sort());
-      }
-    );
+    it('logs fallback marks partial rows, limits pages, and deduplicates tx lookups', async () => {
+      const a = normalizedTransferLog(hash('11'), 100, OTHER, ADDR, 5n);
+      const b = normalizedTransferLog(hash('22'), 90, ADDR, OTHER, 2n);
+      let logCalls = 0;
+      const txCalls = [];
+      const provider = {
+        capabilities: async () => ({ eth: true, trace: false, ots: false }),
+        ethLogs: async () => (++logCalls === 1 ? [a, b] : logCalls === 2 ? [a] : []),
+        txInfo: async (h) => {
+          txCalls.push(h);
+          return h === a.transactionHash
+            ? normalizedTx(h, 100, OTHER, ADDR, [a])
+            : normalizedTx(h, 90, ADDR, OTHER, [b]);
+        },
+      };
+      const rows = await collectHistory(provider, ADDR, { pageSize: 1 });
+      deepStrictEqual(
+        rows.map((row) => row.hash),
+        [a.transactionHash]
+      );
+      deepStrictEqual(rows[0].partial, 'tokens-only');
+      deepStrictEqual(rows[0].tokenTransfers[0].tokens, new Map([[1n, 5n]]));
+      deepStrictEqual(txCalls.sort(), [a.transactionHash, b.transactionHash].sort());
+    });
     it('logs source returns all rows at full depth', async () => {
       const a = normalizedTransferLog(hash('11'), 100, OTHER, ADDR, 5n);
       const b = normalizedTransferLog(hash('22'), 90, ADDR, OTHER, 2n);
@@ -3326,46 +3430,43 @@ describe('Network', () => {
         false
       );
     });
-    it(
-      'yields prefetched windows in order even when an older window resolves first',
-      async () => {
-        const newer = normalizedTransferLog(hash('11'), 3, OTHER, ADDR, 5n);
-        const older = normalizedTransferLog(hash('22'), 1, OTHER, ADDR, 2n);
-        const txLookups = [];
-        const ranges = [];
-        const provider = {
-          height: async () => 3,
-          ethLogs: async (topics, range) => {
-            ranges.push(range);
-            if (range.fromBlock === 2) await new Promise((resolve) => setTimeout(resolve, 5));
-            const incoming = topics[0] === TRANSFER_TOPIC && topics[2] === encodeAddress(ADDR);
-            if (!incoming) return [];
-            return range.fromBlock === 2 ? [newer] : [older];
-          },
-          txInfo: async (txHash) => {
-            txLookups.push(txHash);
-            return txHash === newer.transactionHash
-              ? normalizedTx(txHash, 3, OTHER, ADDR, [newer])
-              : normalizedTx(txHash, 1, OTHER, ADDR, [older]);
-          },
-        };
-        const rows = await collectHistory(provider, ADDR, {
-          source: 'logs',
-          depth: 'full',
-          logsWindow: 2,
-          concurrency: 2,
-        });
-        deepStrictEqual(txLookups[0], older.transactionHash);
-        deepStrictEqual(
-          rows.map((row) => row.hash),
-          [newer.transactionHash, older.transactionHash]
-        );
-        deepStrictEqual(
-          ranges.slice(0, 14).map((range) => [range.fromBlock, range.toBlock]),
-          [...Array(7).fill([2, 3]), ...Array(7).fill([0, 1])]
-        );
-      }
-    );
+    it('yields prefetched windows in order even when an older window resolves first', async () => {
+      const newer = normalizedTransferLog(hash('11'), 3, OTHER, ADDR, 5n);
+      const older = normalizedTransferLog(hash('22'), 1, OTHER, ADDR, 2n);
+      const txLookups = [];
+      const ranges = [];
+      const provider = {
+        height: async () => 3,
+        ethLogs: async (topics, range) => {
+          ranges.push(range);
+          if (range.fromBlock === 2) await new Promise((resolve) => setTimeout(resolve, 5));
+          const incoming = topics[0] === TRANSFER_TOPIC && topics[2] === encodeAddress(ADDR);
+          if (!incoming) return [];
+          return range.fromBlock === 2 ? [newer] : [older];
+        },
+        txInfo: async (txHash) => {
+          txLookups.push(txHash);
+          return txHash === newer.transactionHash
+            ? normalizedTx(txHash, 3, OTHER, ADDR, [newer])
+            : normalizedTx(txHash, 1, OTHER, ADDR, [older]);
+        },
+      };
+      const rows = await collectHistory(provider, ADDR, {
+        source: 'logs',
+        depth: 'full',
+        logsWindow: 2,
+        concurrency: 2,
+      });
+      deepStrictEqual(txLookups[0], older.transactionHash);
+      deepStrictEqual(
+        rows.map((row) => row.hash),
+        [newer.transactionHash, older.transactionHash]
+      );
+      deepStrictEqual(
+        ranges.slice(0, 14).map((range) => [range.fromBlock, range.toBlock]),
+        [...Array(7).fill([2, 3]), ...Array(7).fill([0, 1])]
+      );
+    });
     it('logsWindow zero keeps one unbounded full-depth logs query', async () => {
       const ranges = [];
       const progress = [];
@@ -3480,8 +3581,7 @@ describe('Network', () => {
         },
       });
       await rejects(
-        () =>
-          collectHistory(archive, ADDR, { source: 'ots', internal: true, signal: ctrl.signal }),
+        () => collectHistory(archive, ADDR, { source: 'ots', internal: true, signal: ctrl.signal }),
         /stopped during trace/
       );
     });
@@ -3704,10 +3804,7 @@ describe('Network', () => {
         ])
       );
       // participation filter: OTHER-only logs are dropped for ME
-      deepStrictEqual(
-        detectTokenContracts([erc20Log(UNKNOWN, OTHER, OTHER, 5n)], ME),
-        new Map()
-      );
+      deepStrictEqual(detectTokenContracts([erc20Log(UNKNOWN, OTHER, OTHER, 5n)], ME), new Map());
       deepStrictEqual(
         detectTokenContracts([erc20Log(UNKNOWN, OTHER, ME, 5n)], ME),
         new Map([[UNKNOWN, 'ERC20']])
@@ -3737,7 +3834,9 @@ describe('Network', () => {
       });
       const res = await tokenInfos(prov, [UNKNOWN, UNKNOWN.toUpperCase().replace('0X', '0x')]);
       deepStrictEqual(getCode, 1); // deduped by lowercased contract
-      deepStrictEqual(res, { [UNKNOWN]: { contract: UNKNOWN, error: 'not contract or destructed' } });
+      deepStrictEqual(res, {
+        [UNKNOWN]: { contract: UNKNOWN, error: 'not contract or destructed' },
+      });
       await rejects(() => tokenInfos(prov, [], { concurrency: 0 }), /wrong concurrency/);
     });
 
@@ -3761,8 +3860,23 @@ describe('Network', () => {
         },
       });
       const holdings = await nftHoldings(prov, ME, [
-        { contract: nft, abi: 'ERC721', tokens: new Map([[1n, 1n], [2n, 1n], [3n, 1n]]) },
-        { contract: game, abi: 'ERC1155', tokens: new Map([[5n, 3n], [6n, 1n]]) },
+        {
+          contract: nft,
+          abi: 'ERC721',
+          tokens: new Map([
+            [1n, 1n],
+            [2n, 1n],
+            [3n, 1n],
+          ]),
+        },
+        {
+          contract: game,
+          abi: 'ERC1155',
+          tokens: new Map([
+            [5n, 3n],
+            [6n, 1n],
+          ]),
+        },
         { contract: USDT, abi: 'ERC20', tokens: new Map([[1n, 10n]]) }, // ignored
       ]);
       deepStrictEqual(holdings, {
@@ -3806,14 +3920,29 @@ describe('Network', () => {
       const rows = [
         {
           tokenTransfers: [
-            { contract: USDT, abi: 'ERC20', symbol: 'USDT', from: OTHER, to: ME, tokens: new Map([[1n, 5n]]) },
+            {
+              contract: USDT,
+              abi: 'ERC20',
+              symbol: 'USDT',
+              from: OTHER,
+              to: ME,
+              tokens: new Map([[1n, 5n]]),
+            },
             { contract: nft, abi: 'ERC721', from: OTHER, to: ME, tokens: new Map([[7n, 1n]]) },
           ],
         },
         {
           tokenTransfers: [
             // first symbol seen wins; its provenance flag travels along
-            { contract: nft.toLowerCase(), abi: 'ERC721', symbol: 'PUNK', verified: false, from: ME, to: OTHER, tokens: new Map([[9n, 1n]]) },
+            {
+              contract: nft.toLowerCase(),
+              abi: 'ERC721',
+              symbol: 'PUNK',
+              verified: false,
+              from: ME,
+              to: OTHER,
+              tokens: new Map([[9n, 1n]]),
+            },
             { contract: game, abi: 'ERC1155', symbol: 'GAME', to: ME, tokens: new Map([[5n, 3n]]) },
           ],
         },
@@ -3824,7 +3953,10 @@ describe('Network', () => {
           abi: 'ERC721',
           symbol: 'PUNK',
           verified: false,
-          tokens: new Map([[7n, 1n], [9n, 1n]]),
+          tokens: new Map([
+            [7n, 1n],
+            [9n, 1n],
+          ]),
         },
         // token values are placeholders (1n): amounts come from nftHoldings
         { contract: game, abi: 'ERC1155', symbol: 'GAME', tokens: new Map([[5n, 1n]]) },
@@ -3854,7 +3986,10 @@ describe('Network', () => {
       deepStrictEqual(ipfsToHttp('ipfs://Qm1/1.png'), 'https://ipfs.io/ipfs/Qm1/1.png');
       deepStrictEqual(ipfsToHttp('ipfs://ipfs/Qm1'), 'https://ipfs.io/ipfs/Qm1'); // legacy form
       deepStrictEqual(ipfsToHttp('https://x/y.png'), 'https://x/y.png'); // passthrough
-      deepStrictEqual(ipfsToHttp('ipfs://Qm1', 'https://gw.example/base'), 'https://gw.example/base/Qm1');
+      deepStrictEqual(
+        ipfsToHttp('ipfs://Qm1', 'https://gw.example/base'),
+        'https://gw.example/base/Qm1'
+      );
       throws(() => ipfsToHttp(1), /wrong uri/);
       deepStrictEqual(
         nftMetadata({
@@ -3864,7 +3999,12 @@ describe('Network', () => {
           animation_url: 'javascript:alert(1)', // dropped: not http(s)/ipfs
           external_url: 'https://cats.example',
         }),
-        { name: 'Cat #1', description: 'meow', image: 'ipfs://Qm2', externalUrl: 'https://cats.example' }
+        {
+          name: 'Cat #1',
+          description: 'meow',
+          image: 'ipfs://Qm2',
+          externalUrl: 'https://cats.example',
+        }
       );
       deepStrictEqual(nftMetadata({ image: 'data:text/html,x', name: 42 }), {});
       deepStrictEqual(nftMetadata('nope'), {});
@@ -4046,11 +4186,12 @@ describe('Network', () => {
           }
         const all = [...pairs.values()];
         let seed = 0xdecafbad;
-        const rand = () =>
-          ((seed ^= seed << 13),
+        const rand = () => (
+          (seed ^= seed << 13),
           (seed ^= seed >>> 17),
           (seed ^= seed << 5),
-          (seed >>> 0) / 2 ** 32);
+          (seed >>> 0) / 2 ** 32
+        );
         for (let i = all.length - 1; i > 0; i--) {
           const j = Math.floor(rand() * (i + 1));
           [all[i], all[j]] = [all[j], all[i]];

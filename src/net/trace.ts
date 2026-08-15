@@ -36,6 +36,20 @@ export type TraceOpts = {
   limitTrace?: number;
 };
 
+const TRACE_FILTER_CONCURRENCY = 8;
+const MAX_BLOCK_RANGE_CHUNKS = 4096;
+
+function traceRangeChunks(fromBlock: number, toBlock: number, limitTrace: number): number {
+  if (fromBlock > toBlock) return 0;
+  const chunks = Math.floor((toBlock - fromBlock) / (limitTrace + 1)) + 1;
+  if (chunks > MAX_BLOCK_RANGE_CHUNKS) {
+    throw new RangeError(
+      `internalTransactions: block range requires ${chunks} chunks, limit is ${MAX_BLOCK_RANGE_CHUNKS}`
+    );
+  }
+  return chunks;
+}
+
 function validateTraceOpts(opts: Record<string, unknown>) {
   for (const i of ['fromBlock', 'toBlock']) {
     const val = opts[i];
@@ -94,16 +108,35 @@ export async function internalTransactions(
   if (typeof address !== 'string') throw new Error('internalTransactions: wrong address');
   validateTraceOpts(opts);
   if (opts.limitTrace) {
-    const promises = [];
-    for (let i = opts.fromBlock!; i <= opts.toBlock!; i += opts.limitTrace + 1)
-      promises.push(
-        traceFilterSingle(prov, address, {
-          fromBlock: i,
-          toBlock: Math.min(i + opts.limitTrace, opts.toBlock!),
-        })
-      );
-    const out = [];
-    for (const i of await Promise.all(promises)) out.push(...i);
+    const { fromBlock, toBlock, limitTrace } = opts as Required<
+      Pick<TraceOpts, 'fromBlock' | 'toBlock' | 'limitTrace'>
+    >;
+    const chunks = traceRangeChunks(fromBlock, toBlock, limitTrace);
+    const batches: Action[][] = new Array(chunks);
+    let next = 0;
+    let stopped = false;
+    const worker = async () => {
+      try {
+        for (;;) {
+          if (stopped) return;
+          const index = next++;
+          if (index >= chunks) return;
+          const batchFrom = fromBlock + index * (limitTrace + 1);
+          batches[index] = await traceFilterSingle(prov, address, {
+            fromBlock: batchFrom,
+            toBlock: Math.min(batchFrom + limitTrace, toBlock),
+          });
+        }
+      } catch (error) {
+        stopped = true;
+        throw error;
+      }
+    };
+    await Promise.all(
+      Array.from({ length: Math.min(TRACE_FILTER_CONCURRENCY, chunks) }, () => worker())
+    );
+    const out: Action[] = [];
+    for (const batch of batches) out.push(...batch);
     return out;
   }
   let lastBlock = opts.fromBlock || 0;

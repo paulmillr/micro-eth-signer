@@ -478,6 +478,21 @@ async function ethLogsSingle(
 }
 
 const ETH_LOGS_CONCURRENCY = 8;
+// A caller can cover a larger span by increasing limitLogs. Bounding the number
+// of chunks prevents a tiny limit over a huge safe-integer range from allocating
+// millions of batch slots or scheduling an effectively unbounded crawl.
+const MAX_BLOCK_RANGE_CHUNKS = 4096;
+
+function blockRangeChunks(fromBlock: number, toBlock: number, step: number, name: string): number {
+  if (fromBlock > toBlock) return 0;
+  const chunks = Math.floor((toBlock - fromBlock) / step) + 1;
+  if (chunks > MAX_BLOCK_RANGE_CHUNKS) {
+    throw new RangeError(
+      `${name}: block range requires ${chunks} chunks, limit is ${MAX_BLOCK_RANGE_CHUNKS}`
+    );
+  }
+  return chunks;
+}
 
 function txInfoRaw(info: TxInfo, receipt: TxReceipt | undefined, verify: boolean): TxInfoFull {
   const type = Object.keys(TxVersions)[info.type] as keyof typeof TxVersions;
@@ -845,20 +860,29 @@ export class RpcClient implements IWeb3Provider {
     validateLogOpts(opts);
     const fromBlock = opts.fromBlock || 0;
     if (!('limitLogs' in opts)) return ethLogsSingle(this, topics, opts);
-    const ranges: { fromBlock: number; toBlock: number }[] = [];
-    for (let i = fromBlock; i <= opts.toBlock; i += opts.limitLogs)
-      ranges.push({ fromBlock: i, toBlock: Math.min(i + opts.limitLogs, opts.toBlock) });
-    const batches: Log[][] = new Array(ranges.length);
+    const chunks = blockRangeChunks(fromBlock, opts.toBlock, opts.limitLogs, 'ethLogs');
+    const batches: Log[][] = new Array(chunks);
     let next = 0;
+    let stopped = false;
     const worker = async () => {
-      for (;;) {
-        const index = next++;
-        if (index >= ranges.length) return;
-        batches[index] = await ethLogsSingle(this, topics, ranges[index]);
+      try {
+        for (;;) {
+          if (stopped) return;
+          const index = next++;
+          if (index >= chunks) return;
+          const batchFrom = fromBlock + index * opts.limitLogs;
+          batches[index] = await ethLogsSingle(this, topics, {
+            fromBlock: batchFrom,
+            toBlock: Math.min(batchFrom + opts.limitLogs, opts.toBlock),
+          });
+        }
+      } catch (error) {
+        stopped = true;
+        throw error;
       }
     };
     await Promise.all(
-      Array.from({ length: Math.min(ETH_LOGS_CONCURRENCY, ranges.length) }, () => worker())
+      Array.from({ length: Math.min(ETH_LOGS_CONCURRENCY, chunks) }, () => worker())
     );
     const out = [];
     const seen = new Set<string>();

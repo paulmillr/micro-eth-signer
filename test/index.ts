@@ -14,6 +14,7 @@ import './message.test.ts';
 import './net.test.ts';
 import './peerdas.test.ts';
 import './resolver.test.ts';
+import './ssz-progressive.test.ts';
 import './ssz.test.ts';
 import './uniswap.test.ts';
 

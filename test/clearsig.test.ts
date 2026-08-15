@@ -158,11 +158,11 @@ const UNREAD_BYTE_VECTORS = new Set([
   'registry/okx/tests/calldata-OkxDexRouterV1.0.7-multi-commission.tests.json#6',
   'registry/weth/tests/calldata-weth.tests.json#0',
 ]);
-const STRICT_CONTEXT_VECTORS = new Set([
-  // ERC-7730 says eip712.deployments require domain.chainId + verifyingContract.
-  // This fixture has verifyingContract plus salt, but no chainId, so strict matching rejects it.
-  'registry/rarible/tests/eip712-rarible-exchange-v2-meta-tx.tests.json#0',
-]);
+const INFERRED_CHAIN_IDS: Record<string, number> = {
+  // This copied Rarible fixture omits chainId, but its bytes32 salt is Polygon's 137.
+  // Supply the missing runtime context without changing the EIP-712 schema or signature.
+  'registry/rarible/tests/eip712-rarible-exchange-v2-meta-tx.tests.json': 137,
+};
 const registryOpt = (item: { file: string; index: number }) => {
   const opt: any = {
     async resolveToken(req: any) {
@@ -176,7 +176,10 @@ const registryOpt = (item: { file: string; index: number }) => {
 };
 const registryInput = (path: string, test: any) => {
   const input = test.rawTx || test.data;
-  if (typeof input !== 'string') return input;
+  if (typeof input !== 'string') {
+    const chainId = INFERRED_CHAIN_IDS[path];
+    return chainId === undefined ? input : { ...input, domain: { ...input.domain, chainId } };
+  }
   if (test.rawTx) {
     let tx: ReturnType<typeof Transaction.fromHex> | undefined;
     try {
@@ -2821,7 +2824,6 @@ describe('ERC-7730 clear signing', () => {
   it('matches copied ERC-7730 registry display vectors', async () => {
     deepStrictEqual(registry.testCount, registry.tests.length);
     for (const item of registry.tests) {
-      if (STRICT_CONTEXT_VECTORS.has(`${item.file}#${item.index}`)) continue;
       const test = json(item.file).tests[item.index];
       let result;
       try {
@@ -2841,7 +2843,6 @@ describe('ERC-7730 clear signing', () => {
     }
     deepStrictEqual(registry.compareCount, registry.cases.length);
     for (const item of registry.cases) {
-      if (STRICT_CONTEXT_VECTORS.has(`${item.file}#${item.index}`)) continue;
       const test = json(item.file).tests[item.index];
       const expected = registryExpected(test.expectedTexts);
       let result;

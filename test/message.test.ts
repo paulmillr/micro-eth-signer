@@ -464,6 +464,52 @@ describe('typedData (EIP-712)', () => {
         '0xf2cee375fa42b42143804025fc449deafd50cc031ca257e0b194a650a912090f'
       );
     });
+    it('bounds EIP712 schema and message complexity', () => {
+      const tooManyTypes = Object.fromEntries(Array.from({ length: 257 }, (_, i) => [`T${i}`, []]));
+      throws(() => getDependencies(tooManyTypes), /EIP712: too many types, limit is 256/);
+      const tooManyFields = Array.from({ length: 1025 }, (_, i) => ({
+        name: `field${i}`,
+        type: 'uint256',
+      }));
+      throws(
+        () => getDependencies({ Big: tooManyFields }),
+        /EIP712: too many schema fields, limit is 1024/
+      );
+
+      const recursive = encoder(
+        {
+          EIP712Domain: [],
+          Node: [{ name: 'next', type: 'Node' }],
+        },
+        {}
+      );
+      const chain = (depth) => {
+        let node = {};
+        for (let i = 0; i < depth; i++) node = { next: node };
+        return node;
+      };
+      deepStrictEqual(recursive.encodeData('Node', chain(64)).length, 130);
+      throws(
+        () => recursive.encodeData('Node', chain(65)),
+        /EIP712: message too deep, limit is 64/
+      );
+
+      const arrays = encoder(
+        {
+          EIP712Domain: [],
+          Bag: [{ name: 'values', type: 'uint256[]' }],
+        },
+        {}
+      );
+      const values = Array.from({ length: 4094 }, (_, i) => BigInt(i));
+      deepStrictEqual(arrays.encodeData('Bag', { values }).length, 130);
+      // Each call gets a fresh budget; reusing an encoder must not accumulate nodes.
+      deepStrictEqual(arrays.encodeData('Bag', { values }).length, 130);
+      throws(
+        () => arrays.encodeData('Bag', { values: [...values, 4094n] }),
+        /EIP712: message too large, limit is 4096 nodes/
+      );
+    });
   });
   describe('eip191Signer', () => {
     it('Basic', () => {
@@ -522,10 +568,7 @@ describe('typedData (EIP-712)', () => {
         const sig = typed.eip191Signer.sign(t.message, t.key, false);
         deepStrictEqual(sig, t.signature);
         deepStrictEqual(typed.eip191Signer.verify(sig, t.message, t.address), true);
-        deepStrictEqual(
-          typed.eip191Signer.recoverAddress(sig, t.message).toLowerCase(),
-          t.address
-        );
+        deepStrictEqual(typed.eip191Signer.recoverAddress(sig, t.message).toLowerCase(), t.address);
       }
     });
   });
@@ -672,22 +715,22 @@ describe('typedData (EIP-712)', () => {
         },
         sig: '0xa74d8aa1ff14231fedeaf7a929e86ac55d80256bee24e1f8ebba9bd092a9351651b6669da7f5d0a7209243f8dee1026b018ed03dd5ce01b7ecb75a8880deeeb01b',
       },
-      // domain_salt: {
-      //   t: {
-      //     ...typedData.complex,
-      //     domain: {
-      //       salt: hexToBytes('123512315aaaa1231313b1231b23b13b123aa12312211b1b1b111bbbb1affafa'),
-      //     },
-      //     primaryType: 'Mail',
-      //   },
-      //   sig: '0xa74d8aa1ff14231fedeaf7a929e86ac55d80256bee24e1f8ebba9bd092a9351651b6669da7f5d0a7209243f8dee1026b018ed03dd5ce01b7ecb75a8880deeeb01b',
-      // },
+      domain_salt: {
+        t: {
+          ...typedData.complex,
+          domain: {
+            salt: hexToBytes('123512315aaaa1231313b1231b23b13b123aa12312211b1b1b111bbbb1affafa'),
+          },
+          primaryType: 'Mail',
+        },
+        sig: '0x4b193383278fd3dcaa084952ea282cb9c8889c26c6caaa3f48aca7bde78c6e72028bd98c0328e40d067dbbab53733f99f241d8cf91a32580883f65264c2b72581b',
+      },
     };
     for (const k in VECTORS) {
       it(k, () => {
         const { t, sig } = VECTORS[k];
         deepStrictEqual(typed.signTyped(t, privateKey, false), sig);
-        deepStrictEqual(typed.recoverAddressTyped(sig, t).toLocaleLowerCase(), address);
+        deepStrictEqual(typed.recoverAddressTyped(sig, t).toLowerCase(), address);
       });
     }
   });

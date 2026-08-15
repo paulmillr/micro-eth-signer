@@ -2,7 +2,11 @@ import { bytesToHex, hexToBytes } from '@noble/hashes/utils.js';
 import { describe, it } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual, rejects } from 'node:assert';
 import { addr } from '../src/core/address.ts';
-import { privFromLegacyKeystore, privFromLegacySaleKeystore, privToLegacyKeystore } from '../src/keystore.ts';
+import {
+  privFromLegacyKeystore,
+  privFromLegacySaleKeystore,
+  privToLegacyKeystore,
+} from '../src/keystore.ts';
 import WALLET_VECTORS from './keystore_vectors.json' with { type: 'json' };
 
 const fixturePrivateKey = '0xefca4cdd31923b50f4214af5d2ae10e7ac45a5019e9431cc195482d707485378';
@@ -59,7 +63,10 @@ describe('keystore', () => {
       uuid,
     });
     deepStrictEqual(pbkdf2Store.crypto.kdfparams.salt, salt);
-    deepStrictEqual(privateKeyHex(await privFromLegacyKeystore(pbkdf2Store, password)), fixturePrivateKey);
+    deepStrictEqual(
+      privateKeyHex(await privFromLegacyKeystore(pbkdf2Store, password)),
+      fixturePrivateKey
+    );
     const saltBytesStore = await privToLegacyKeystore(fixturePrivateKey, password, {
       kdf: 'pbkdf2',
       c: 2,
@@ -84,7 +91,10 @@ describe('keystore', () => {
     });
     deepStrictEqual(scryptStore.crypto.kdfparams.salt, salt);
     deepStrictEqual(scryptStore.crypto.cipherparams.iv, iv);
-    deepStrictEqual(privateKeyHex(await privFromLegacyKeystore(scryptStore, password)), fixturePrivateKey);
+    deepStrictEqual(
+      privateKeyHex(await privFromLegacyKeystore(scryptStore, password)),
+      fixturePrivateKey
+    );
 
     // Empty salt is rejected on creation, but files created with one still decrypt.
     for (const emptySalt of ['', '0x', hexToBytes('')]) {
@@ -101,7 +111,10 @@ describe('keystore', () => {
       fixturePrivateKey
     );
 
-    await rejects(() => privToLegacyKeystore(hexToBytes('001122'), password), /invalid private key/);
+    await rejects(
+      () => privToLegacyKeystore(hexToBytes('001122'), password),
+      /invalid private key/
+    );
     await rejects(
       () => privToLegacyKeystore(fixturePrivateKey, password, { kdf: 'superkey' }),
       /Unsupported kdf/
@@ -117,6 +130,22 @@ describe('keystore', () => {
     await rejects(
       () => privToLegacyKeystore(fixturePrivateKey, password, { uuid: 'ff' }),
       /invalid uuid: expected non-empty string or Uint8Array of length 32/
+    );
+    await rejects(
+      () =>
+        privToLegacyKeystore(fixturePrivateKey, password, {
+          kdf: 'pbkdf2',
+          c: 2 ** 22 + 1,
+        }),
+      /Invalid KDF pbkdf2 c/
+    );
+    await rejects(
+      () =>
+        privToLegacyKeystore(fixturePrivateKey, password, {
+          kdf: 'scrypt',
+          n: 2 ** 21,
+        }),
+      /Invalid KDF scrypt n/
     );
   });
 
@@ -135,10 +164,30 @@ describe('keystore', () => {
       '0x2f91eb73a6cd5620d7abb50889f24eea7a6a4feb'
     );
 
-    await rejects(() => privFromLegacyKeystore(JSON.parse(pbkdf2Store), 'wrongtestpassword'), /Key derivation failed/);
-    await rejects(() => privFromLegacyKeystore(JSON.parse('{"version":2}'), 'testpassword'), /Not a V3 keystore/);
+    const excessiveIterations = JSON.parse(pbkdf2Store);
+    excessiveIterations.crypto.kdfparams.c = 2 ** 22 + 1;
     await rejects(
-      () => privFromLegacyKeystore(JSON.parse('{"crypto":{"kdf":"superkey"},"version":3}'), 'testpassword'),
+      () => privFromLegacyKeystore(excessiveIterations, 'testpassword'),
+      /Invalid KDF pbkdf2 c/
+    );
+    const excessiveDklen = JSON.parse(scryptStore);
+    excessiveDklen.crypto.kdfparams.dklen = 65;
+    await rejects(() => privFromLegacyKeystore(excessiveDklen, 'testtest'), /Invalid KDF dklen/);
+
+    await rejects(
+      () => privFromLegacyKeystore(JSON.parse(pbkdf2Store), 'wrongtestpassword'),
+      /Key derivation failed/
+    );
+    await rejects(
+      () => privFromLegacyKeystore(JSON.parse('{"version":2}'), 'testpassword'),
+      /Not a V3 keystore/
+    );
+    await rejects(
+      () =>
+        privFromLegacyKeystore(
+          JSON.parse('{"crypto":{"kdf":"superkey"},"version":3}'),
+          'testpassword'
+        ),
       /Unsupported key derivation scheme/
     );
     await rejects(
@@ -150,8 +199,9 @@ describe('keystore', () => {
       /Unsupported parameters to PBKDF2/
     );
 
-    const mixedCase =
-      JSON.parse('{"Crypto":{"cipher":"aes-128-ctr","cipherparams":{"iv":"6087dab2f9fdbbfaddc31a909735c1e6"},"ciphertext":"5318b4d5bcd28de64ee5559e671353e16f075ecae9f99c7a79a38af5f869aa46","kdf":"pbkdf2","kdfparams":{"c":262144,"dklen":32,"prf":"hmac-sha256","salt":"ae3cd4e7013836a3df6bd7241b12db061dbe2c6785853cce422d148a624ce0bd"},"mac":"517ead924a9d0dc3124507e3393d175ce3ff7c1e96529c6c555ce9e51205e9b2"},"id":"3198bc9c-6672-5ab3-d995-4942343ae5b6","version":3}');
+    const mixedCase = JSON.parse(
+      '{"Crypto":{"cipher":"aes-128-ctr","cipherparams":{"iv":"6087dab2f9fdbbfaddc31a909735c1e6"},"ciphertext":"5318b4d5bcd28de64ee5559e671353e16f075ecae9f99c7a79a38af5f869aa46","kdf":"pbkdf2","kdfparams":{"c":262144,"dklen":32,"prf":"hmac-sha256","salt":"ae3cd4e7013836a3df6bd7241b12db061dbe2c6785853cce422d148a624ce0bd"},"mac":"517ead924a9d0dc3124507e3393d175ce3ff7c1e96529c6c555ce9e51205e9b2"},"id":"3198bc9c-6672-5ab3-d995-4942343ae5b6","version":3}'
+    );
     deepStrictEqual(
       addressOf(await privFromLegacyKeystore(mixedCase, 'testpassword', true)),
       '0x008aeeda4d805471df9b2a5b0f38a0c3bcba786b'
@@ -166,9 +216,8 @@ describe('keystore', () => {
       valid.filter((v) => v.source === 'generated-pyethsaletool-compatible').length,
       10
     );
-    for (const [i, vector] of valid.entries()) {
-      const input = i % 2 === 0 ? vector.wallet : (vector.wallet);
-      const privateKey = await privFromLegacySaleKeystore(input, vector.password);
+    for (const vector of valid) {
+      const privateKey = await privFromLegacySaleKeystore(vector.wallet, vector.password);
       deepStrictEqual(addressOf(privateKey), vector.expectedAddress, vector.id);
       deepStrictEqual(privateKeyHex(privateKey), vector.expectedPrivateKey, vector.id);
     }
@@ -179,9 +228,17 @@ describe('keystore', () => {
     for (const vector of WALLET_VECTORS.edgeCases) {
       const error = new RegExp(escapeRe(vector.expectedError));
       if (vector.method === 'fromLegacySale') {
-        await rejects(() => privFromLegacySaleKeystore(vector.wallet, vector.password), new RegExp(''), vector.id);
+        await rejects(
+          () => privFromLegacySaleKeystore(vector.wallet, vector.password),
+          error,
+          vector.id
+        );
       } else if (vector.method === 'fromLegacy') {
-        await rejects(() => privFromLegacyKeystore(vector.keystore, vector.password), error, vector.id);
+        await rejects(
+          () => privFromLegacyKeystore(vector.keystore, vector.password),
+          error,
+          vector.id
+        );
       } else {
         throw new Error(`Unknown wallet vector method: ${vector.method}`);
       }

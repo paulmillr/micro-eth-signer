@@ -28,6 +28,10 @@ const ERC1155_SINGLE = /* @__PURE__ */ (() => events(ERC1155).TransferSingle)();
 const ERC1155_BATCH = /* @__PURE__ */ (() => events(ERC1155).TransferBatch)();
 const _0n = /* @__PURE__ */ BigInt(0);
 const _1n = /* @__PURE__ */ BigInt(1);
+// Full ERC-721 enumeration is a wallet convenience, not a bulk-indexing API.
+// The balance is returned by an untrusted contract, so cap it before allocating
+// indexes or issuing tokenOfOwnerByIndex calls.
+const MAX_ERC721_ENUMERABLE_BALANCE = BigInt(4096);
 
 const ERC165 = [
   {
@@ -259,10 +263,19 @@ async function tokenBalanceSingle(
         ids.map((i, j) => [i, owners[j]?.toLowerCase() === address.toLowerCase() ? _1n : _0n])
       );
     }
-    const p = [];
-    for (let i = 0; i < balance; i++)
-      p.push(c.tokenOfOwnerByIndex.call({ owner: address, index: BigInt(i) }));
-    tokenIds = new Set(await Promise.all(p));
+    if (balance > MAX_ERC721_ENUMERABLE_BALANCE) {
+      return {
+        contract: token.contract,
+        error: `erc721 enumerable balance ${balance} exceeds limit ${MAX_ERC721_ENUMERABLE_BALANCE}`,
+      };
+    }
+    const indexes = Array.from({ length: Number(balance) }, (_, i) => BigInt(i));
+    tokenIds = new Set(
+      await mapPool(indexes, (index) => c.tokenOfOwnerByIndex.call({ owner: address, index }), {
+        concurrency: 10,
+        name: 'tokenBalanceSingle',
+      })
+    );
     const ids = Array.from(tokenIds!);
     return new Map(ids.map((i) => [i, _1n]));
   } else if (token.abi === 'ERC1155') {

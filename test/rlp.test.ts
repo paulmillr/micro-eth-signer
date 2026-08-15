@@ -118,16 +118,14 @@ describe('RLP', () => {
     describe('ethers', () => {
       const mapEthers = (t) => (Array.isArray(t) ? t.map(mapEthers) : ethHex.decode(t));
 
-      it('all vectors', () => {
-        for (const i of getEthersVectors('rlp.json.gz')) {
-          // it(i.name, () => {
+      for (const i of getEthersVectors('rlp.json.gz')) {
+        it(i.name, () => {
           const encoded = ethHex.decode(i.encoded);
           const decoded = mapEthers(i.decoded);
           deepStrictEqual(RLP.encode(i.decoded), encoded, 'encode');
           deepStrictEqual(RLP.decode(encoded), decoded, 'decode');
-          // });
-        }
-      });
+        });
+      }
     });
     // 60 MB of gzipped json
     it('viem rlp tests', async () => {
@@ -202,7 +200,22 @@ describe('RLP', () => {
       };
       const tree = deep(1000);
       deepStrictEqual(RLP.decode(RLP.encode(tree)), tree);
-      throws(() => RLP.encode(deep(100000)), RangeError);
+      const boundary = RLP.encode(deep(1024));
+      deepStrictEqual(RLP.encode(RLP.decode(boundary)), boundary);
+      throws(() => RLP.encode(deep(1025)), {
+        name: 'RangeError',
+        message: 'RLP.encode: too deep',
+      });
+      const wrapList = (payload) => {
+        const length = [];
+        for (let n = payload.length; n; n = Math.floor(n / 256)) length.push(n & 0xff);
+        length.reverse();
+        return Uint8Array.of(0xf7 + length.length, ...length, ...payload);
+      };
+      throws(() => RLP.decode(wrapList(boundary)), {
+        name: 'RangeError',
+        message: 'RLP.decode: too deep',
+      });
     });
   });
 });

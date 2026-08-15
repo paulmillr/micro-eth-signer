@@ -626,7 +626,7 @@ export function txDataV3(
   if (!isValidEthAddr(to)) throw new Error(err + 'invalid to address');
   // Fee recipient is encoded as an ABI address; the `eth` alias only belongs to swap tokens.
   if (opt.fee && !isValidEthAddr(opt.fee.to))
-    throw new Error(err + 'invalid fee recepient addresss');
+    throw new Error(err + 'invalid fee recipient address');
   if (input === 'eth' && output === 'eth')
     throw new Error(err + 'both input and output cannot be eth');
   if ((amountIn && amountOut) || (!amountIn && !amountOut))

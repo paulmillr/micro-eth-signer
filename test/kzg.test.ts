@@ -313,7 +313,6 @@ function run(setup) {
   });
 }
 
-// Comment-out until package is published
 describe('KZG', () => {
   describe('trusted_setups/index.js', () => {
     run('small');

@@ -27,7 +27,7 @@ import {
   utf8ToBytes,
 } from '@noble/hashes/utils.js';
 import { addr } from './index.ts';
-import { deepFreeze, isBytes, strip0x, type TArg, type TRet } from './utils.ts';
+import { deepFreeze, isBytes, isObject, strip0x, type TArg, type TRet } from './utils.ts';
 
 // treeshake: single helpers should not keep the full longSignatures/fields objects live.
 const _0n = /* @__PURE__ */ BigInt(0);
@@ -332,6 +332,56 @@ const KDFS = {
   pbkdf2: { dklen: 32, c: 262144, prf: 'hmac-sha256' },
 };
 
+// Keystore KDF parameters are serialized attacker-controlled input during import.
+// Keep the ceilings above the standard defaults while preventing a small JSON file
+// from requesting effectively unlimited CPU or memory. Low work factors remain valid
+// on import so old/weak keystores can still be recovered.
+const KDF_LIMITS = {
+  dklen: 64,
+  pbkdf2Iterations: 2 ** 22,
+  scryptN: 2 ** 20,
+  scryptR: 32,
+  scryptP: 8,
+  scryptMemory: 512 * 1024 ** 2,
+  scryptWork: 2 ** 24,
+} as const;
+
+function assertKDFInteger(name: string, value: unknown, min: number, max: number): number {
+  if (!Number.isSafeInteger(value) || (value as number) < min || (value as number) > max) {
+    throw new RangeError(`Invalid KDF ${name}, expected integer in range ${min}..${max}`);
+  }
+  return value as number;
+}
+
+function assertKDFParams(kdf: KDFType | string, params: unknown): void {
+  if (!isObject(params)) throw new TypeError('Invalid KDF params, expected object');
+  const p = params as Record<string, unknown>;
+  assertKDFInteger('dklen', p.dklen, 32, KDF_LIMITS.dklen);
+  if (kdf === 'pbkdf2') {
+    assertKDFInteger('pbkdf2 c', p.c, 1, KDF_LIMITS.pbkdf2Iterations);
+    return;
+  }
+  if (kdf !== 'scrypt') return;
+  const N = assertKDFInteger('scrypt n', p.n, 2, KDF_LIMITS.scryptN);
+  if ((N & (N - 1)) !== 0) throw new RangeError('Invalid KDF scrypt n, expected power of two');
+  const r = assertKDFInteger('scrypt r', p.r, 1, KDF_LIMITS.scryptR);
+  const parallel = assertKDFInteger('scrypt p', p.p, 1, KDF_LIMITS.scryptP);
+  // Mirrors noble-hashes' actual temporary allocation: 128*r*(N+p+1).
+  const memory = 128 * r * (N + parallel + 1);
+  if (memory > KDF_LIMITS.scryptMemory) {
+    throw new RangeError(
+      `Invalid KDF scrypt parameters, memory requirement exceeds ${KDF_LIMITS.scryptMemory} bytes`
+    );
+  }
+  // Memory alone does not bound CPU: p repeats the expensive mixing operation.
+  const work = N * r * parallel;
+  if (work > KDF_LIMITS.scryptWork) {
+    throw new RangeError(
+      `Invalid KDF scrypt parameters, work factor exceeds ${KDF_LIMITS.scryptWork}`
+    );
+  }
+}
+
 type KDFParams<T extends KDFType> = (typeof KDFS)[T];
 type KDFType = keyof typeof KDFS;
 
@@ -401,14 +451,7 @@ function validateKeystore<T extends KDFType>(store: Keystore<T>, strict = true) 
       throw new Error('keystore: only aes-128-ctr cipher supported in version 4');
     const kdf = crypto.kdf.params;
     if (typeof kdf.salt !== 'string') throw new Error(`keystore.crypto.kdf.salt should be string`);
-    // Not sure if we need this validation, if encryption key was derived using insecure params,
-    // we cannot do much here (it already happened!), I don't see reasons not to decrypt
-    // const expKdf = KDFS[crypto.kdf.function];
-    // for (const k in expKdf) {
-    //   if (kdf[k] !== expKdf[k]) {
-    //     throw new Error(`keystore.crypto.kdf.params.${k} should be ${expKdf[k]}`);
-    //   }
-    // }
+    assertKDFParams(crypto.kdf.function, kdf);
     if (typeof crypto.cipher.params.iv !== 'string')
       throw new Error(`keystore.crypto.cipher.params.iv should be string`);
   }
@@ -423,16 +466,14 @@ function deriveEIP2335Key(
   params: KDFParams<KDFType> = KDFS[kdf]
 ): TRet<Uint8Array> {
   const pass = utf8ToBytes(normalizePassword(password));
-  // EIP-2335 password verification reads decryption_key[16:32] and AES-128-CTR
-  // uses [0:16], so require at least 32 bytes.
-  if (!Number.isSafeInteger(params.dklen) || params.dklen < 32)
-    throw new RangeError('Expected KDF dklen to be at least 32 bytes');
   if (kdf === 'scrypt') {
+    assertKDFParams(kdf, params);
     const { n: N, r, p, dklen: dkLen } = params as KDFParams<'scrypt'>;
     return scrypt(pass, salt, { N, r, p, dkLen });
   } else if (kdf === 'pbkdf2') {
     const { c, dklen: dkLen, prf } = params as KDFParams<'pbkdf2'>;
     if (prf !== 'hmac-sha256') throw new Error('Unsupported PBKDF2 PRF');
+    assertKDFParams(kdf, params);
     return pbkdf2(sha256, pass, salt, { c, dkLen });
   } else {
     throw new Error(`Unsupported KDF: ${kdf}`);
@@ -463,17 +504,23 @@ export function decryptEIP2335Keystore<T extends KDFType>(
 ): TRet<Uint8Array> {
   validateKeystore(store);
   const c = store.crypto;
-  // Serialized hex may be 0x-prefixed or uppercase; normalize before comparing.
-  const checksumProvided = strip0x(c.checksum.message).toLowerCase();
+  // Serialized hex may be 0x-prefixed or uppercase. Parse and validate before
+  // running the expensive KDF so malformed checksums fail cheaply.
+  const checksumProvided = abytes(hexToBytes(strip0x(c.checksum.message)), 32, 'keystore checksum');
   const ciphertext = hexToBytes(c.cipher.message);
   const salt = hexToBytes(c.kdf.params.salt);
   const iv = hexToBytes(c.cipher.params.iv);
   const key = deriveEIP2335Key(password, salt, c.kdf.function, c.kdf.params);
   try {
     // verify checksum
-    const checksum = bytesToHex(sha256(concatBytes(key.subarray(16, 32), ciphertext)));
-    if (checksum !== checksumProvided)
-      throw new Error(`Checksum ${checksum} does not match ${checksumProvided}`);
+    const checksum = sha256(concatBytes(key.subarray(16, 32), ciphertext));
+    let checksumMatches = false;
+    try {
+      checksumMatches = equalBytes(checksum, checksumProvided);
+    } finally {
+      clean(checksum);
+    }
+    if (!checksumMatches) throw new Error('Invalid password or checksum');
     // decrypt
     const secret = ctr(key.subarray(0, 16), iv).decrypt(ciphertext);
     // verify pubkey
@@ -616,8 +663,12 @@ export class EIP2335Keystore<T extends KDFType> {
     description: string = ''
   ): Keystore<T> {
     const { key: privKey, path } = deriveEIP2334Key(seed, keyType, index);
-    const pubkey = bls12_381.longSignatures.getPublicKey(privKey).toBytes();
-    return this.create(privKey, path, description, pubkey);
+    try {
+      const pubkey = bls12_381.longSignatures.getPublicKey(privKey).toBytes();
+      return this.create(privKey, path, description, pubkey);
+    } finally {
+      clean(privKey);
+    }
   }
 
   /**
@@ -822,12 +873,6 @@ function initCipher(
   return cipher === 'aes-128-ctr' ? ctr(key, iv) : cbc(key, iv, { disablePadding: !pkcs7Padding });
 }
 
-function assertDklen(dklen: number): void {
-  if (!Number.isSafeInteger(dklen) || dklen < 32) {
-    throw new Error('Invalid kdf dklen, must be at least 32');
-  }
-}
-
 async function deriveKey(
   password: string,
   kdf: string,
@@ -835,14 +880,14 @@ async function deriveKey(
 ): Promise<TRet<Uint8Array>> {
   const pass = utf8ToBytes(password);
   if (kdf === 'scrypt') {
+    assertKDFParams(kdf, params);
     const { salt, n: N, r, p, dklen: dkLen } = params as EncryptedJsonScryptParams;
-    assertDklen(dkLen);
     return scryptAsync(pass, fromHex(salt), { N, r, p, dkLen });
   }
   if (kdf === 'pbkdf2') {
     const { salt, c, dklen: dkLen, prf } = params as EncryptedJsonPBKDFParams;
     if (prf !== 'hmac-sha256') throw new Error('Unsupported parameters to PBKDF2');
-    assertDklen(dkLen);
+    assertKDFParams(kdf, params);
     return pbkdf2Async(sha256, pass, fromHex(salt), { c, dkLen });
   }
   throw new Error('Unsupported key derivation scheme');
