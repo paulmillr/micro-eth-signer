@@ -1,0 +1,541 @@
+<!doctype html>
+<!--
+  Web version of tx-cli.js: create (but NEVER broadcast) an ETH or ERC-20
+  transfer. Takes a private key, shows the account explorer-style (balances
+  including every token seen in history, recent transactions with all token
+  movements), lets the user pick an asset from their balances, then builds and
+  signs the transaction locally and displays the raw hex.
+  Requires built artifacts (`npm run build`) and a static server at the repo root:
+    npx serve .   # or: python3 -m http.server
+  Then open http://localhost:8000/examples/tx.html
+  Override defaults with query params: tx.html?rpc=http://…&network=sepolia
+  The RPC endpoint must allow CORS requests from this page's origin.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!-- resizes-visual: the virtual keyboard overlays instead of reflowing the layout -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-visual" />
+    <title>Ethereum tx creator</title>
+    <script type="importmap">
+      {
+        "imports": {
+          "micro-ftch": "../node_modules/micro-ftch/index.js",
+          "micro-packed": "../node_modules/micro-packed/index.js",
+          "@scure/base": "../node_modules/@scure/base/index.js",
+          "@noble/hashes/": "../node_modules/@noble/hashes/",
+          "@noble/curves/": "../node_modules/@noble/curves/",
+          "micro-eth-signer": "../index.js",
+          "micro-eth-signer/utils.js": "../utils.js",
+          "micro-eth-signer/abi.js": "../abi/index.js",
+          "micro-eth-signer/net.js": "../net.js"
+        }
+      }
+    </script>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --muted: #808080;
+        --line: #80808040;
+        --accent: #2563eb;
+        --ok: #16a34a;
+      }
+      body {
+        position: relative; /* anchors the absolute sign-out button */
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 13px;
+        line-height: 1.5;
+        max-width: 640px;
+        margin: 1.5rem auto;
+        padding: 0 1rem;
+      }
+      h1 {
+        font-size: 1rem;
+        font-weight: 600;
+        margin: 0;
+      }
+      .subtitle {
+        color: var(--muted);
+        margin-bottom: 1rem;
+      }
+      h2 {
+        font-size: 0.85rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--muted);
+        margin: 1.5rem 0 0.5rem;
+      }
+      label {
+        display: block;
+        color: var(--muted);
+        margin: 0.75rem 0 0.25rem;
+      }
+      input,
+      select {
+        width: 100%;
+        box-sizing: border-box;
+        font: inherit;
+        /* >=16px stops mobile browsers from zooming in on focus */
+        font-size: 16px;
+        padding: 0.5rem 0.6rem;
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        background: transparent;
+        color: inherit;
+      }
+      button {
+        font: inherit;
+        font-size: 16px;
+        padding: 0.5rem 0.9rem;
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        background: transparent;
+        color: inherit;
+        cursor: pointer;
+      }
+      button:hover:not(:disabled) {
+        border-color: var(--accent);
+        color: var(--accent);
+      }
+      button:disabled {
+        color: var(--muted);
+        cursor: default;
+      }
+      /* touch-friendly stacked controls on narrow screens */
+      .row {
+        display: flex;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+      }
+      .row > input,
+      .row > select {
+        flex: 1 1 12rem;
+      }
+      .row > button {
+        flex: 0 0 auto;
+      }
+      @media (max-width: 480px) {
+        .row:not(.pair) > button {
+          flex: 1 1 100%;
+        }
+      }
+      .row.pair > button {
+        flex: 1 1 0;
+      }
+      .primary {
+        width: 100%;
+        margin-top: 0.75rem;
+        border-color: var(--accent);
+        color: var(--accent);
+      }
+      .danger,
+      .danger:hover:not(:disabled) {
+        border-color: #dc2626;
+        color: #dc2626;
+      }
+      /* upper right, where the network switch sits before signing in;
+         the header text yields the corner while signed in */
+      .signout {
+        position: absolute;
+        top: 0;
+        right: 1rem;
+      }
+      body.signed-in h1,
+      body.signed-in .subtitle {
+        padding-right: 8rem;
+      }
+      /* the network switch is two segmented buttons */
+      .segment {
+        display: inline-flex;
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        overflow: hidden;
+      }
+      .segment button {
+        border: 0;
+        border-radius: 0;
+      }
+      .segment button.active {
+        background: var(--accent);
+        color: #fff;
+      }
+      .address-line {
+        word-break: break-all;
+      }
+      pre {
+        margin: 0;
+        white-space: pre-wrap;
+        word-break: break-all;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      td,
+      th {
+        text-align: left;
+        padding: 0.25rem 0.75rem 0.25rem 0;
+        border-bottom: 1px solid var(--line);
+        white-space: nowrap;
+      }
+      /* taller rows: touch-friendly on mobile */
+      tbody td {
+        padding-top: 0.6rem;
+        padding-bottom: 0.6rem;
+      }
+      td.amount,
+      td.time {
+        white-space: pre-line;
+        word-break: break-word;
+      }
+      th {
+        color: var(--muted);
+        font-weight: 400;
+      }
+      .muted {
+        color: var(--muted);
+      }
+      .error {
+        color: #dc2626;
+      }
+      .card {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 0.75rem 1rem 1rem;
+        margin: 0.75rem 0;
+      }
+      .banner {
+        border: 1px solid var(--ok);
+        color: var(--ok);
+        border-radius: 6px;
+        padding: 0.5rem 0.75rem;
+        margin-bottom: 0.75rem;
+      }
+      #result dt {
+        float: left;
+        width: 8rem;
+        clear: left;
+        color: var(--muted);
+      }
+      #result dd {
+        margin: 0 0 0.15rem 8rem;
+        word-break: break-all;
+        white-space: pre-line;
+      }
+      #result dd.muted {
+        color: var(--muted);
+      }
+      #tx-hex {
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 0.5rem 0.75rem;
+        margin-top: 0.5rem;
+        max-height: 12rem;
+        overflow-y: auto;
+      }
+      .hidden {
+        display: none;
+      }
+      footer {
+        margin-top: 2rem;
+        color: var(--muted);
+      }
+    </style>
+  </head>
+  <body>
+    <button type="button" id="signout-button" class="danger signout hidden">Sign out</button>
+    <h1>Ethereum tx creator</h1>
+    <div class="subtitle">Builds and signs locally — never broadcasts.</div>
+
+    <div id="signin">
+      <span class="segment" id="network-switch">
+        <button type="button" id="network-mainnet">Mainnet</button>
+        <button type="button" id="network-sepolia">Sepolia</button>
+      </span>
+
+      <form id="key-form">
+        <label for="rpc-input">RPC address</label>
+        <input id="rpc-input" placeholder="RPC URL" autocomplete="off" spellcheck="false" />
+        <!-- the module script below waits for the whole library import graph
+             before it runs; fill the field synchronously at parse time so it
+             does not flash empty on load (default mirrors NETWORKS rpcUrl) -->
+        <script>
+          document.getElementById('rpc-input').value =
+            new URLSearchParams(location.search).get('rpc') || 'http://127.0.0.1';
+        </script>
+        <label for="key-input">Private key</label>
+        <input
+          id="key-input"
+          type="password"
+          placeholder="64 hex characters"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <!-- pair: stays one row even in portrait -->
+        <div class="row pair">
+          <button type="button" id="show-key">Show</button>
+          <button type="button" id="random-button">Random</button>
+        </div>
+        <button type="submit" class="primary" id="signin-button">Sign in</button>
+      </form>
+    </div>
+    <div id="status" class="muted"></div>
+
+    <div id="account" class="hidden">
+      <h2>Account</h2>
+      <div id="address-line" class="address-line"></div>
+      <h2>Balances</h2>
+      <pre id="balances"></pre>
+
+      <div class="card">
+        <h2>Send</h2>
+        <form id="tx-form">
+          <label for="asset-select">Asset</label>
+          <select id="asset-select"></select>
+          <label for="to-input">To address</label>
+          <input id="to-input" placeholder="0x…" autocomplete="off" spellcheck="false" />
+          <label for="amount-input">Amount</label>
+          <div class="row">
+            <input id="amount-input" inputmode="decimal" autocomplete="off" spellcheck="false" />
+            <button type="button" id="max-button">Max</button>
+          </div>
+          <button type="submit" class="primary" id="create-button">Create transaction</button>
+        </form>
+        <div id="tx-status" class="error"></div>
+      </div>
+
+      <div id="result" class="hidden">
+        <h2>Created transaction</h2>
+        <div class="banner" id="no-broadcast">
+          ✓ Signed locally. This transaction was NOT broadcast.
+        </div>
+        <dl id="result-fields"></dl>
+        <h2>Raw signed hex</h2>
+        <pre id="tx-hex"></pre>
+        <button type="button" id="copy-button">Copy hex</button>
+      </div>
+
+      <h2>Transactions</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Time</th>
+            <th>Dir</th>
+            <th>Amount</th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+      <div id="empty" class="muted hidden">No transactions found.</div>
+    </div>
+
+    <footer>Demo only: keys stay in this page; nothing is ever sent to the network.</footer>
+
+    <template id="tx-row-template">
+      <tr>
+        <td></td>
+        <td class="time"></td>
+        <td></td>
+        <td class="amount"></td>
+      </tr>
+    </template>
+    <template id="result-template"><dt></dt><dd></dd></template>
+
+    <script type="module">
+      import {
+        balanceLine,
+        createTxWallet,
+        formatUnits,
+        NETWORKS,
+        randomKey,
+        rowSummary,
+      } from './tx-core.js';
+
+      const $ = (id) => document.getElementById(id);
+      const params = new URLSearchParams(location.search);
+      // per-network RPC endpoints from the NETWORKS table;
+      // ?rpc= overrides the one for ?network= (default mainnet)
+      const rpcFor = Object.fromEntries(
+        Object.entries(NETWORKS).map(([key, network]) => [key, network.rpcUrl])
+      );
+      let networkKey = NETWORKS[params.get('network')] ? params.get('network') : 'mainnet';
+      if (params.get('rpc')) rpcFor[networkKey] = params.get('rpc');
+
+      let wallet;
+      let walletFor; // "network rpc" the wallet was created for
+      let account; // last successful load: { address, assets, rows, … }
+      let busy = false;
+
+      function renderNetwork() {
+        for (const key of Object.keys(NETWORKS))
+          $(`network-${key}`).classList.toggle('active', key === networkKey);
+        $('rpc-input').value = rpcFor[networkKey];
+      }
+      function switchNetwork(key) {
+        if (key === networkKey) return;
+        rpcFor[networkKey] = $('rpc-input').value.trim() || rpcFor[networkKey];
+        networkKey = key;
+        renderNetwork();
+        // a different chain invalidates everything shown: require a reload
+        account = undefined;
+        wallet = undefined;
+        walletFor = undefined;
+        $('account').classList.add('hidden');
+        $('status').textContent = '';
+      }
+      $('network-mainnet').onclick = () => switchNetwork('mainnet');
+      $('network-sepolia').onclick = () => switchNetwork('sepolia');
+
+      $('show-key').onclick = () => {
+        const input = $('key-input');
+        const hide = input.type === 'password';
+        input.type = hide ? 'text' : 'password';
+        $('show-key').textContent = hide ? 'Hide' : 'Show';
+      };
+      $('random-button').onclick = () => {
+        // fills the field only — a throwaway key the user can inspect first
+        $('key-input').value = randomKey();
+      };
+
+      function renderRows(rows, address) {
+        const body = $('rows');
+        body.textContent = '';
+        rows.forEach((row, index) => {
+          const tr = $('tx-row-template').content.firstElementChild.cloneNode(true);
+          const [num, time, dir, amount] = tr.cells;
+          const summary = rowSummary(row, address);
+          num.textContent = index + 1;
+          time.textContent = summary.time;
+          dir.textContent = summary.direction;
+          amount.textContent = summary.amounts.join('\n'); // one line per token movement
+          body.append(tr);
+        });
+        $('empty').classList.toggle('hidden', rows.length > 0);
+      }
+
+      function renderAccount() {
+        $('address-line').textContent = account.address;
+        $('balances').textContent = account.assets.map(balanceLine).join('\n');
+        const select = $('asset-select');
+        select.textContent = '';
+        account.assets.forEach((asset, index) => {
+          const option = document.createElement('option');
+          option.value = String(index);
+          option.textContent = `${asset.symbol || 'TOKEN'} · ${formatUnits(asset.balance, asset.decimals)}`;
+          select.append(option);
+        });
+        renderRows(account.rows, account.address);
+        $('account').classList.remove('hidden');
+      }
+
+      $('key-form').onsubmit = async (event) => {
+        event.preventDefault();
+        if (busy) return;
+        const status = $('status');
+        status.className = 'muted';
+        busy = true;
+        $('signin-button').disabled = true;
+        $('account').classList.add('hidden');
+        $('result').classList.add('hidden');
+        status.textContent = 'Loading account…';
+        try {
+          // reuse the wallet (its RpcClient and discovery cache) unless the
+          // endpoint or network changed — reloads then skip re-probing
+          const rpc = $('rpc-input').value.trim() || rpcFor[networkKey];
+          if (walletFor !== `${networkKey} ${rpc}`) {
+            wallet = createTxWallet(rpc, networkKey);
+            walletFor = `${networkKey} ${rpc}`;
+          }
+          account = await wallet.load($('key-input').value.trim());
+          status.textContent = '';
+          $('tx-status').textContent = '';
+          renderAccount();
+          // signed in: the form gives way to the account view + sign out
+          $('signin').classList.add('hidden');
+          $('signout-button').classList.remove('hidden');
+          document.body.classList.add('signed-in');
+        } catch (error) {
+          status.textContent = error.message;
+          status.className = 'error';
+        } finally {
+          busy = false;
+          $('signin-button').disabled = false;
+        }
+      };
+
+      $('signout-button').onclick = () => {
+        if (busy) return;
+        // forget the session: the key never outlives it
+        account = undefined;
+        $('key-input').value = '';
+        $('account').classList.add('hidden');
+        $('result').classList.add('hidden');
+        $('status').textContent = '';
+        $('signout-button').classList.add('hidden');
+        $('signin').classList.remove('hidden');
+        document.body.classList.remove('signed-in');
+      };
+
+      const selectedAsset = () => account.assets[Number($('asset-select').value)];
+
+      $('max-button').onclick = async () => {
+        if (!account || busy) return;
+        try {
+          $('amount-input').value = await wallet.maxAmount(selectedAsset(), account.address);
+        } catch (error) {
+          $('tx-status').textContent = error.message;
+        }
+      };
+
+      $('tx-form').onsubmit = async (event) => {
+        event.preventDefault();
+        if (!account || busy) return;
+        busy = true;
+        const button = $('create-button');
+        button.disabled = true;
+        $('tx-status').textContent = '';
+        $('result').classList.add('hidden');
+        try {
+          // build + sign only: tx-core has no broadcast path at all
+          const created = await wallet.build({
+            privateKey: $('key-input').value.trim(),
+            asset: selectedAsset(),
+            to: $('to-input').value,
+            amount: $('amount-input').value,
+          });
+          const list = $('result-fields');
+          list.textContent = '';
+          for (const [kind, pairs] of [
+            ['', created.normal],
+            ['muted', created.muted],
+          ])
+            for (const [label, value] of pairs) {
+              const pair = $('result-template').content.cloneNode(true);
+              pair.querySelector('dt').textContent = label;
+              const dd = pair.querySelector('dd');
+              dd.textContent = value;
+              dd.className = kind;
+              list.append(pair);
+            }
+          $('tx-hex').textContent = created.hex;
+          $('result').classList.remove('hidden');
+          $('result').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        } catch (error) {
+          $('tx-status').textContent = error.message;
+        } finally {
+          busy = false;
+          button.disabled = false;
+        }
+      };
+
+      $('copy-button').onclick = async () => {
+        await navigator.clipboard.writeText($('tx-hex').textContent);
+        $('copy-button').textContent = 'Copied';
+        setTimeout(() => ($('copy-button').textContent = 'Copy hex'), 1500);
+      };
+
+      renderNetwork();
+    </script>
+  </body>
+</html>
