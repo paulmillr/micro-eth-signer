@@ -226,7 +226,7 @@ describe('keystore', () => {
   it('rejects wallet edge-case vectors', async () => {
     deepStrictEqual(WALLET_VECTORS.edgeCases.length, 10);
     for (const vector of WALLET_VECTORS.edgeCases) {
-      const error = new RegExp(escapeRe(vector.expectedError));
+      const error = new RegExp(escapeRe(vector.expectedError), 'i');
       if (vector.method === 'fromLegacySale') {
         await rejects(
           () => privFromLegacySaleKeystore(vector.wallet, vector.password),

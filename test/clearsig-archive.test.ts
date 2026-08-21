@@ -10,7 +10,7 @@ import {
 } from '../src/abi/index.ts';
 import { Transaction } from '../src/index.ts';
 import { RpcClient } from '../src/net.ts';
-import { clearSigCallbacks, discoverTx } from '../src/net/clearsig.ts';
+import { clearSigCallbacks, discoverTx, txIntent } from '../src/net/clearsig.ts';
 import { tokenInfo, tokenURI } from '../src/net/tokens.ts';
 import { ethHex } from '../src/utils.ts';
 
@@ -508,6 +508,70 @@ describe('ERC-7730 archive callbacks', () => {
       },
     });
     deepStrictEqual(calls.includes('eth_call'), true);
+  });
+
+  it('discoverTx previews an unsigned transaction before signing', async () => {
+    // the confirmation-screen case: fields are prepared but nothing is signed
+    // yet, and the wallet wants the ERC-7730 intent for the approval prompt
+    const { archive } = rpc();
+    const unsigned = Transaction.prepare({
+      to: TOKEN,
+      chainId: 1n,
+      nonce: 0n,
+      maxFeePerGas: 10_000_000_000n,
+      value: 0n,
+      data: ethHex.encode(
+        createContract(ERC20_ABI).transfer.encodeInput({ to: ACCOUNT, value: 123456n })
+      ),
+    });
+    deepStrictEqual(unsigned.isSigned, false);
+    const decoded = await discoverTx(archive, unsigned, {
+      'erc20.json': OURS['ercs/calldata-erc20-tokens.json'],
+    });
+    if (!decoded || Array.isArray(decoded) || !decoded.clearSig)
+      throw new Error('missing discovered clearSig');
+    deepStrictEqual(decoded.signature, 'transfer(address,uint256)');
+    deepStrictEqual(
+      (await decoded.clearSig).interpolatedIntent,
+      `Transfer 0.123456 MTK to ${ACCOUNT}`
+    );
+  });
+
+  it('txIntent collapses discovery and resolution into one display string', async () => {
+    const { archive } = rpc();
+    const unsigned = Transaction.prepare({
+      to: TOKEN,
+      chainId: 1n,
+      nonce: 0n,
+      maxFeePerGas: 10_000_000_000n,
+      value: 0n,
+      data: ethHex.encode(
+        createContract(ERC20_ABI).transfer.encodeInput({ to: ACCOUNT, value: 123456n })
+      ),
+    });
+    deepStrictEqual(
+      await txIntent(archive, unsigned, { 'erc20.json': OURS['ercs/calldata-erc20-tokens.json'] }),
+      `Transfer 0.123456 MTK to ${ACCOUNT}`
+    );
+    // nothing to clear-sign: plain ETH transfer, empty calldata
+    const plain = Transaction.prepare({
+      to: ACCOUNT,
+      chainId: 1n,
+      nonce: 0n,
+      maxFeePerGas: 10_000_000_000n,
+      value: 1n,
+    });
+    deepStrictEqual(await txIntent(archive, plain), undefined);
+    // decorative by contract: provider failures yield undefined, not a throw
+    const broken = new RpcClient({
+      call: async () => {
+        throw new Error('node down');
+      },
+    });
+    deepStrictEqual(
+      await txIntent(broken, unsigned, { 'erc20.json': OURS['ercs/calldata-erc20-tokens.json'] }),
+      undefined
+    );
   });
 
   it('decodes raw transaction hex before rendering clear signing', async () => {

@@ -66,6 +66,16 @@ export function gnsRegistrationFee(label: string): bigint {
   return BigInt('500000000000000'); // 0.0005 ETH
 }
 
+/**
+ * Looks like a name `nameToAddress` could resolve ('vitalik.eth',
+ * 'alice.gwei'): dot-separated printable-ASCII labels, not a 0x address.
+ * The search-input router for UIs that accept both addresses and names.
+ */
+export const isResolvableName = (value: string): boolean =>
+  typeof value === 'string' &&
+  /^[\x21-\x7f]+(\.[\x21-\x7f]+)+$/.test(value) &&
+  !value.startsWith('0x');
+
 /** Which name service a reverse (address → name) lookup should use. */
 export type ResolverMode = 'ens' | 'gns';
 

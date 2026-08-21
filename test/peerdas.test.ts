@@ -32,10 +32,11 @@ function readFunctionVectors(name) {
   return res;
 }
 
-function firstValidFunctionVector(name) {
-  const t = readFunctionVectorCases(name, false).next().value;
-  if (!t) throw new Error(`missing valid vector for ${name}`);
-  return t;
+function firstValidFunctionVector(name, predicate = () => true) {
+  for (const t of readFunctionVectorCases(name, false)) {
+    if (predicate(t)) return t;
+  }
+  throw new Error(`missing suitable valid vector for ${name}`);
 }
 
 function replaceFirstIndex(indices, idx) {
@@ -173,7 +174,10 @@ function run(setup) {
   });
   it('verifyCellKzgProofBatch rejects invalid cell indices', async () => {
     const kzg = await getKzg(setup);
-    const t = firstValidFunctionVector('verify_cell_kzg_proof_batch');
+    const t = firstValidFunctionVector(
+      'verify_cell_kzg_proof_batch',
+      (t) => t.input.cell_indices.length > 0
+    );
     for (const idx of [-1, 1.5, NaN]) {
       throws(
         () =>

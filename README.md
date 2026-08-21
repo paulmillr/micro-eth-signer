@@ -719,7 +719,7 @@ const [name, symbol] = await prov.multicall([
 `partial: 'tokens-only'` since plain/internal ETH-only transactions are invisible in logs.
 `order: 'newest'` (default) pages backward with the `before` cursor; `order: 'oldest'` walks
 forward with `after` — the direction for resumable sync (persist the last row's `block`).
-`internal: true` adds per-transaction traces. `historyMulti()` merges several addresses into one
+`internal: true` adds per-transaction traces. Passing an address array merges several addresses into one
 deduplicated stream, re-deriving every row for the set as one wallet. Full option and row
 semantics live in the `HistoryOpts`/`HistoryTx` JSDoc; range-crawled `trace_filter` helpers in
 `micro-eth-signer/net/trace.js`.
