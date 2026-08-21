@@ -93,8 +93,9 @@ export type HistoryOpts = {
   onProgress?: (progress: ScanProgress) => void;
   signal?: AbortSignal;
   /**
-   * Probe unknown transfer-shaped contracts with tokenInfo() and decode their
-   * movements too (one shared cache per scan). Rows become EnrichedTx.
+   * Probe unknown transfer-shaped contracts with tokenInfo() so their decoded
+   * movements carry symbol/decimals (one shared cache per scan); without it
+   * they decode from log shape alone, metadata undefined. Rows become EnrichedTx.
    */
   discover?: boolean;
   /** Fired once per contract discovered by this scan; persist as a registry. */
@@ -280,7 +281,7 @@ function pageLogsRange(page: HistoryPage, opts: HistoryOpts): EthLogsOpts | unde
   const range = logsRange(opts);
   if (!range) return;
   const blocks = page.txs
-    .map((tx) => tx.block ?? tx.info.info.blockNumber)
+    .map((tx) => tx.block ?? tx.info.blockNumber)
     .filter(
       (block): block is number =>
         typeof block === 'number' && Number.isSafeInteger(block) && block >= 0
@@ -514,7 +515,7 @@ export function newestFirst(a: HistoryTx, b: HistoryTx): number {
   const aBlock = a.block ?? Infinity;
   const bBlock = b.block ?? Infinity;
   if (aBlock !== bBlock) return aBlock < bBlock ? 1 : -1;
-  return newestFirstInfo(a.info.info, b.info.info);
+  return newestFirstInfo(a.info, b.info);
 }
 
 /** Mirror of newestFirst for order: 'oldest' consumers merging history passes. */
@@ -541,6 +542,20 @@ export function oldestFirst(a: HistoryTx, b: HistoryTx): number {
  * bound to the OTS page's far edge. A done or empty OTS page instead scans the
  * whole remaining range; an empty OTS page is capped to `pageSize` rows.
  *
+ * An address array (multi-account wallets, favorites pages) merges several
+ * addresses into one hash-deduplicated MultiHistoryTx stream in `order`,
+ * k-way merged from per-address streams. Rows are re-derived for the whole
+ * set as one wallet: `diff` sums every watched address (a transfer between
+ * two owned accounts nets to just the fee) and `tokenTransfers` keeps
+ * movements touching any of them; `addresses` lists the participants (never
+ * empty — participation only via internal transfers falls back to the
+ * discovering address), checksummed. All options apply to each underlying
+ * stream with one shared discovery cache. Merged ordering is as good as the
+ * streams': exact for single-pass sources (`ots`, `logs`), per-pass for
+ * `ots+logs`. With `internal: true`, `internal` transfers are those of the
+ * address whose stream discovered the row. Page depth yields up to
+ * `addresses.length * pageSize` rows; slice as needed.
+ *
  * @example Collect rows when buffering is useful; sort afterward (newestFirst
  * or oldestFirst) for one merged order across the OTS and logs passes.
  * ```ts
@@ -551,8 +566,25 @@ export function oldestFirst(a: HistoryTx, b: HistoryTx): number {
 export function history(
   prov: RpcClient,
   address: string,
+  opts?: HistoryOpts
+): AsyncGenerator<HistoryTx, void>;
+export function history(
+  prov: RpcClient,
+  address: string[],
+  opts?: HistoryOpts
+): AsyncGenerator<MultiHistoryTx, void>;
+export function history(
+  prov: RpcClient,
+  address: string | string[],
   opts: HistoryOpts = {}
-): AsyncGenerator<HistoryTx, void> {
+): AsyncGenerator<HistoryTx | MultiHistoryTx, void> {
+  if (Array.isArray(address)) {
+    if (address.length === 0 || address.some((a) => typeof a !== 'string'))
+      throw new Error('history: wrong addresses');
+    validateHistoryOpts(opts);
+    // Keep the canonical RPC-facing form checksummed; lowercase only values used for comparisons.
+    return historyMultiInner(prov, [...new Set(address.map((a) => addChecksum(a)))], opts);
+  }
   if (typeof address !== 'string') throw new Error('history: wrong address');
   validateHistoryOpts(opts);
   return historyInner(prov, address, opts);
@@ -600,15 +632,7 @@ async function* historyInner(
       discover: opts.discover ?? false,
       clearSig: opts.clearSig ?? false,
     };
-    return enrichCore(
-      prov,
-      address,
-      row.info.info,
-      row.info.receipt,
-      enrichOpts,
-      enrichmentCache,
-      row
-    );
+    return enrichCore(prov, address, row.info, row.receipt, enrichOpts, enrichmentCache, row);
   };
   if (source === 'logs') {
     if ((opts.depth ?? 'page') === 'full') {
@@ -805,7 +829,7 @@ function multiRow(
   opts: HistoryOpts,
   discoverer: string
 ): MultiHistoryTx {
-  const { info, receipt } = row.info;
+  const { info, receipt } = row;
   const watched = new Set(addresses.map((address) => address.toLowerCase()));
   let diff = _0n;
   for (const address of watched) diff += txDiff(address, info, receipt);
@@ -841,39 +865,7 @@ function multiRow(
   };
 }
 
-/**
- * Merged history across several addresses (multi-account wallets, favorites
- * pages): one hash-deduplicated stream in `order`, k-way merged from
- * per-address history() streams. Rows are re-derived for the whole set as one
- * wallet: `diff` sums every watched address (a transfer between two owned
- * accounts nets to just the fee) and `tokenTransfers` keeps movements touching
- * any of them; `addresses` lists the participants (when participation is only
- * via internal transfers — invisible without `internal` — it falls back to the
- * discovering address, so it is never empty); these output addresses are
- * checksummed. All options apply to each
- * underlying stream, with one shared discovery cache. Merged ordering is as
- * good as the streams': exact for single-pass sources (`ots`, `logs`),
- * per-pass for `ots+logs`. With `internal: true`, `internal` transfers are
- * those of the address whose stream discovered the row. Page depth yields up
- * to `addresses.length * pageSize` rows; slice as needed.
- */
-export function historyMulti(
-  prov: RpcClient,
-  addresses: string[],
-  opts: HistoryOpts = {}
-): AsyncGenerator<MultiHistoryTx, void> {
-  if (
-    !Array.isArray(addresses) ||
-    addresses.length === 0 ||
-    addresses.some((address) => typeof address !== 'string')
-  )
-    throw new Error('historyMulti: wrong addresses');
-  validateHistoryOpts(opts);
-  // Keep the canonical RPC-facing form checksummed; lowercase only values used for comparisons.
-  const unique = [...new Set(addresses.map((address) => addChecksum(address)))];
-  return historyMultiInner(prov, unique, opts);
-}
-
+// The multi-address (string[]) form of history(); semantics documented there.
 async function* historyMultiInner(
   prov: RpcClient,
   addresses: string[],
@@ -893,7 +885,7 @@ async function* historyMultiInner(
     for (let i = 0; i < streams.length; i++) await advance(i);
     const seen = new Set<string>();
     for (;;) {
-      throwIfAborted(opts.signal, 'historyMulti');
+      throwIfAborted(opts.signal, 'history');
       let best = -1;
       for (let i = 0; i < heads.length; i++) {
         if (heads[i] === undefined) continue;
@@ -951,4 +943,168 @@ export function calcTransfersDiff<T extends TransfersLike>(transfers: T[]): (T &
     });
   }
   return transfers as (T & Balances)[];
+}
+
+/** JSON-safe resume cursor for tokenScanner; persist it and pass back as `opts.state`. */
+export type ScannerState = {
+  /** Chain head at the first step: the baseline for the overall percent. */
+  top?: number;
+  /** The next step scans blocks [0, toBlock]. */
+  toBlock?: number;
+  done?: boolean;
+};
+export type ScannerProgress = {
+  phase: 'prepare' | 'logs' | 'complete';
+  /** Percent of the current step's block range, 0..total. */
+  completed: number;
+  total: number;
+  /** Rows discovered by the current step so far. */
+  scannedTxs: number;
+  /** Token movements consumed by this scanner instance. */
+  found: number;
+  /** Seconds since the step started. */
+  elapsed: number;
+};
+export type ScannerStepOpts = {
+  /** Wall-clock budget for one step; the scan pauses at a window boundary once exceeded. Default 120s. */
+  budgetMs?: number;
+  onProgress?: (progress: ScannerProgress) => void;
+  /** Aborting rejects the running step; the scanner stays resumable. */
+  signal?: AbortSignal;
+};
+
+/**
+ * Resumable full-history token scan over `history` in
+ * time-budgeted steps, newest era first. Each step consumes whole logs
+ * windows until the budget runs out, then pauses at the boundary of the last
+ * fully consumed window; the next step resumes exactly below it, so nothing
+ * is missed and nothing is scanned twice. Ordinary addresses finish inside
+ * the first step and never see the pause.
+ *
+ * `state` is a JSON-safe cursor: persist `scanner.state` and pass it back via
+ * `opts.state` to continue in a later session (rows must be re-merged by the
+ * caller — dedupe by hash; a resumed multi-address scan may repeat rows, as
+ * its interleaved windows share no resume boundary and retry the whole
+ * remaining range).
+ *
+ * Rows are delivered through `step(onRow)`; the caller owns storage (slim
+ * them for tables — full receipts of a busy address add up to gigabytes).
+ */
+export function tokenScanner(
+  prov: RpcClient,
+  address: string | string[],
+  opts: HistoryOpts & { state?: ScannerState } = {}
+): {
+  readonly done: boolean;
+  readonly percent: number;
+  readonly state: ScannerState;
+  step(
+    onRow: (row: HistoryTx | MultiHistoryTx) => void,
+    stepOpts?: ScannerStepOpts
+  ): Promise<{ done: boolean; percent: number }>;
+} {
+  const { state: initial, ...historyOpts } = opts;
+  const multi = Array.isArray(address);
+  const state: ScannerState = { done: false, ...initial };
+  const seen = new Set<string>(); // dedupes within this instance (multi retries ranges)
+  let found = 0;
+  const percent = () => {
+    if (state.done) return 100;
+    if (!state.top || state.toBlock === undefined) return 0;
+    return Math.min(99, Math.round(((state.top - state.toBlock) / state.top) * 100));
+  };
+  return {
+    get done() {
+      return !!state.done;
+    },
+    get percent() {
+      return percent();
+    },
+    get state() {
+      return { ...state };
+    },
+    async step(onRow, stepOpts = {}) {
+      const { budgetMs = 120_000, onProgress = () => {}, signal } = stepOpts;
+      if (typeof onRow !== 'function') throw new Error('tokenScanner: wrong onRow');
+      if (state.done) return { done: true, percent: 100 };
+      if (state.top === undefined)
+        state.top = state.toBlock = historyOpts.toBlock ?? (await prov.height());
+      const started = Date.now();
+      const progress: Omit<ScannerProgress, 'elapsed'> = {
+        phase: 'prepare',
+        completed: 0,
+        total: 100,
+        scannedTxs: 0,
+        found,
+      };
+      const notify = () =>
+        onProgress({ ...progress, elapsed: Math.round((Date.now() - started) / 1000) });
+      notify();
+      progress.phase = 'logs';
+      notify();
+      let stop = false;
+      let paused = false;
+      let consumed: number | undefined; // fromBlock of the last window whose rows were fully consumed
+      let pending: number | undefined; // fromBlock of the window whose rows are streaming now
+      // aborting on pause stops the prefetched windows' leftover requests,
+      // so a paused scan doesn't keep loading the node between steps
+      const aborter = new AbortController();
+      const onAbort = () => aborter.abort();
+      signal?.addEventListener('abort', onAbort);
+      try {
+        // window size × concurrency bounds peak memory: every in-flight
+        // window buffers its full rows (receipts included) until consumed
+        const stream = history(prov, address as any, {
+          depth: 'full',
+          source: 'logs',
+          discover: true,
+          logsWindow: 200_000,
+          concurrency: 4,
+          ...historyOpts,
+          toBlock: state.toBlock,
+          signal: aborter.signal,
+          onProgress: (p) => {
+            // a progress event fires when a window completes, before its rows
+            // are yielded — so the previously pending window is now consumed
+            consumed = pending;
+            pending = p.currentBlock;
+            if (Date.now() - started > budgetMs) stop = true;
+            progress.completed = p.percent;
+            progress.scannedTxs = p.scannedTxs;
+            notify();
+          },
+        });
+        for await (const row of stream) {
+          if (stop) {
+            // pause before the next window's rows; the resume range covers them
+            paused = true;
+            break;
+          }
+          const key = row.hash.toLowerCase();
+          if (!seen.has(key)) {
+            seen.add(key);
+            found = progress.found += row.tokenTransfers.length;
+            onRow(row);
+          }
+          notify();
+        }
+      } finally {
+        signal?.removeEventListener('abort', onAbort);
+      }
+      if (!paused) state.done = true;
+      else {
+        aborter.abort();
+        // paused with nothing consumed (one window outran the budget): keep
+        // the same range, the next step retries it with a fresh budget.
+        // Multi streams interleave their windows, so no shared resume
+        // boundary exists: retry the whole remaining range (dedupe by hash
+        // makes the overlap harmless, just slower).
+        if (!multi && consumed !== undefined && consumed > 0) state.toBlock = consumed - 1;
+      }
+      progress.phase = 'complete';
+      progress.completed = progress.total;
+      notify();
+      return { done: !!state.done, percent: percent() };
+    },
+  };
 }

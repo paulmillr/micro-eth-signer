@@ -8,8 +8,9 @@ import {
   createContract,
   events,
 } from '../abi/index.ts';
-import { parseAddress } from '../core/address.ts';
+import { addChecksum, isValidAddress, parseAddress } from '../core/address.ts';
 import { ethHex } from '../utils.ts';
+import type { PreparedTx } from '../net.ts';
 import {
   isReverted,
   mapPool,
@@ -83,8 +84,9 @@ export type TxAllowances = Record<string, Record<string, bigint>>;
 /**
  * Offline token registry used by the OTS history helpers and
  * tokenTransferFromCalldata: contract address (lowercase) -> minimal metadata.
- * Defaults to the built-in TOKENS registry; unknown contracts are skipped
- * (use tokenInfo() when discovery of arbitrary tokens is needed).
+ * Defaults to the built-in TOKENS registry; receipt-log decoding falls back to
+ * the log shape for unknown contracts (use tokenInfo() when their
+ * symbol/decimals are needed).
  */
 export type TokenRegistry = Record<
   string,
@@ -370,9 +372,12 @@ export function nftMetadata(json: unknown): NftMetadata {
  * Balances for a list of tokens. Contract-address strings cost one
  * `tokenInfo()` metadata probe each; pass `TokenInfo` objects (e.g. from the
  * offline registry) to skip those extra requests.
+ * When the provider exposes `multicall` (RpcClient does), plain ERC-20
+ * `balanceOf` reads are batched into one Multicall3 round instead of one
+ * `eth_call` each; chains without the deployment fall back per-token.
  */
 export async function tokenBalances(
-  prov: TokenProvider,
+  prov: TokenProvider & { multicall?: RpcClient['multicall'] },
   address: string,
   tokens: (string | TokenInfo)[],
   tokenIds?: Record<string, Set<bigint>>
@@ -384,10 +389,190 @@ export async function tokenBalances(
     const token = _tokens[i];
     if (!isTokenError(token)) _tokens[i] = validateToken(token, 'tokenBalances');
   }
-  const balances = await Promise.all(
-    _tokens.map((i) => tokenBalanceSingle(prov, address, i, tokenIds && tokenIds[i.contract]))
+  const balances: (TokenBalanceSingle | TokenError)[] = new Array(_tokens.length);
+  // per-id NFT reads and error entries keep the per-token path; a single
+  // ERC-20 gains nothing from the aggregate indirection
+  let batch =
+    typeof prov.multicall === 'function'
+      ? _tokens.flatMap((t, i) =>
+          !isTokenError(t) && t.abi === 'ERC20' && !(tokenIds && tokenIds[t.contract]) ? [i] : []
+        )
+      : [];
+  if (batch.length > 1) {
+    const balanceOf = createContract(ERC20).balanceOf;
+    try {
+      const res = await prov.multicall!(
+        batch.map((i) => ({
+          to: _tokens[i].contract,
+          data: ethHex.encode(balanceOf.encodeInput(address)),
+          allowFailure: true,
+        }))
+      );
+      for (let j = 0; j < batch.length; j++) {
+        const contract = _tokens[batch[j]].contract;
+        try {
+          if (!res[j].success) throw new Error('call failed');
+          balances[batch[j]] = new Map([[_1n, balanceOf.decodeOutput(ethHex.decode(res[j].data))]]);
+        } catch (e) {
+          balances[batch[j]] = { contract, error: `balanceOf: ${(e as Error).message}` };
+        }
+      }
+    } catch {
+      batch = []; // no Multicall3 on this chain: per-token below
+    }
+  } else batch = [];
+  const batched = new Set(batch);
+  await Promise.all(
+    _tokens.map(async (t, i) => {
+      if (batched.has(i)) return;
+      balances[i] = await tokenBalanceSingle(prov, address, t, tokenIds && tokenIds[t.contract]);
+    })
   );
   return Object.fromEntries(_tokens.map((i, j) => [i.contract, balances[j]])) as any;
+}
+
+/**
+ * ERC-20 amount out of a per-token result: tokenBalances() entries and
+ * TokenTransfer.tokens both key ERC-20 movements as `map[1n]` (the shape that
+ * unifies them with per-id NFT balances). Returns the amount (0n for an empty
+ * map), or undefined for a TokenError / missing entry.
+ */
+export function erc20Amount(
+  value: Map<bigint, bigint> | TokenError | undefined
+): bigint | undefined {
+  if (!(value instanceof Map)) return undefined;
+  return value.get(_1n) ?? _0n;
+}
+
+/**
+ * Signed per-id movement of one decoded transfer for the given address(es):
+ * the token analogue of txDiff. Positive = received, negative = sent,
+ * zero = a self-transfer within the watched set. ERC-20 amounts sit under
+ * id 1n (unwrap with erc20Amount).
+ */
+export function tokenDiff(
+  transfer: Pick<DecodedTokenTransfer, 'from' | 'to' | 'tokens'>,
+  address: string | string[]
+): Map<bigint, bigint> {
+  const watched = new Set(
+    (Array.isArray(address) ? address : [address]).map((a) => a.toLowerCase())
+  );
+  const out = new Map<bigint, bigint>();
+  for (const [id, value] of transfer.tokens) {
+    let diff = _0n;
+    if (watched.has(transfer.to.toLowerCase())) diff += value;
+    if (transfer.from !== undefined && watched.has(transfer.from.toLowerCase())) diff -= value;
+    out.set(id, diff);
+  }
+  return out;
+}
+
+const tokenContract = (token: string | { contract: string } | undefined, name: string) => {
+  if (token === undefined) return undefined;
+  const contract = typeof token === 'string' ? token : token.contract;
+  if (typeof contract !== 'string' || !isValidAddress(contract))
+    throw new Error(`${name}: wrong token contract`);
+  return addChecksum(contract);
+};
+
+export type TransferTxArgs = {
+  from: string;
+  to: string;
+  /** Amount in base units (wei / token units); parse UI strings with createDecimal. */
+  amount: bigint;
+  /** ERC-20 contract address (or a TokenInfo-like object); omitted = plain ETH transfer. */
+  token?: string | { contract: string };
+  /** Throw when the node is on another chain; see RpcClient.prepare. */
+  expectedChainId?: bigint;
+  /** Verify the amount and the worst-case fee (gas is ETH even for tokens) against on-chain balances. Default true. */
+  checkBalance?: boolean;
+};
+
+/**
+ * Builds the fields of an ETH or ERC-20 transfer, ready for
+ * `Transaction.prepare(fields).signBy(key)`: encodes `transfer(to, amount)`
+ * calldata for tokens, fetches nonce/fees/gas limit/chain id in one round via
+ * `prov.prepare`, and (by default) verifies the transfer is affordable
+ * on-chain: the amount against the spent balance, and the worst-case fee
+ * (`gasLimit * maxFeePerGas`, the mempool's reservation rule) against the
+ * sender's ETH — gas is paid in ETH even for token transfers.
+ * Nothing is signed or broadcast here.
+ */
+export async function transferTx(
+  prov: Pick<RpcClient, 'prepare' | 'call' | 'ethCall' | 'estimateGas'>,
+  args: TransferTxArgs
+): Promise<PreparedTx> {
+  const { checkBalance = true } = args;
+  if (typeof args.from !== 'string' || !isValidAddress(args.from))
+    throw new Error('transferTx: wrong from');
+  if (typeof args.to !== 'string' || !isValidAddress(args.to))
+    throw new Error('transferTx: wrong to');
+  if (typeof args.amount !== 'bigint' || args.amount <= _0n)
+    throw new Error('transferTx: wrong amount');
+  const to = addChecksum(args.to);
+  const token = tokenContract(args.token, 'transferTx');
+  let ethBalance: bigint | undefined;
+  if (checkBalance) {
+    // gas is paid in ETH either way, so token transfers read both balances
+    // (one batched round); the fee affordability itself is checked after
+    // prepare, once the gas limit and fees are known
+    const [eth, tokenBalance] = await Promise.all([
+      prov.call('eth_getBalance', args.from, 'latest').then(BigInt),
+      token ? createContract(ERC20, prov, token).balanceOf.call(args.from) : undefined,
+    ]);
+    ethBalance = eth;
+    const available = token ? tokenBalance! : eth; // tokenBalance is set iff token is
+    if (args.amount > available)
+      throw new Error(`transferTx: amount ${args.amount} exceeds balance of ${available}`);
+  }
+  const call = token
+    ? {
+        from: args.from,
+        to: token,
+        data: ethHex.encode(createContract(ERC20).transfer.encodeInput({ to, value: args.amount })),
+      }
+    : { from: args.from, to, value: args.amount };
+  const fields = await prov.prepare({ ...call, expectedChainId: args.expectedChainId });
+  if (ethBalance !== undefined) {
+    // the mempool rule: balance must cover value plus gasLimit * maxFeePerGas.
+    // eth_estimateGas and eth_call run without fee fields and never check
+    // this, so without the guard an unaffordable transfer builds "fine" and
+    // only fails at broadcast
+    const perGas = fields.type === 'legacy' ? fields.gasPrice : fields.maxFeePerGas;
+    const maxFee = fields.gasLimit * perGas;
+    if (token ? maxFee > ethBalance : args.amount + maxFee > ethBalance)
+      throw new Error(
+        token
+          ? `transferTx: the worst-case fee of ${maxFee} exceeds the ETH balance of ${ethBalance} ` +
+              '(gas is paid in ETH, not in the token)'
+          : `transferTx: amount plus the worst-case fee of ${maxFee} exceeds balance of ${ethBalance} ` +
+              '(use maxSpendable to reserve the fee)'
+      );
+  }
+  return fields;
+}
+
+/**
+ * Largest transferable amount in base units: the full token balance for
+ * ERC-20s; for ETH, the balance minus a plain-transfer (21000 gas) reserve at
+ * the current worst-case gas price — sends into contracts may need a larger
+ * reserve.
+ */
+export async function maxSpendable(
+  prov: Pick<RpcClient, 'fees' | 'call' | 'ethCall' | 'estimateGas'>,
+  args: { from: string; token?: string | { contract: string } }
+): Promise<bigint> {
+  if (typeof args.from !== 'string' || !isValidAddress(args.from))
+    throw new Error('maxSpendable: wrong from');
+  const token = tokenContract(args.token, 'maxSpendable');
+  if (token) return createContract(ERC20, prov, token).balanceOf.call(args.from);
+  const [balance, fees] = await Promise.all([
+    prov.call('eth_getBalance', args.from, 'latest'),
+    prov.fees(),
+  ]);
+  const perGas = fees.type === 'legacy' ? fees.gasPrice : fees.maxFeePerGas;
+  const spendable = BigInt(balance) - BigInt(21000) * perGas;
+  return spendable > _0n ? spendable : _0n;
 }
 
 export function decodeTokenTransfer(
@@ -463,8 +648,10 @@ export function decodeTokenTransfer(
 
 /**
  * All token movements in a receipt, including between third parties, decoded
- * against a registry. Offline; unknown contracts are skipped (pair with
- * detectTokenContracts + tokenInfos when discovery is needed).
+ * against a registry. Offline. Contracts outside the registry still decode:
+ * the log's topic shape pins the standard and the raw movement, with
+ * symbol/decimals left undefined and `verified: false` (pair with
+ * detectTokenContracts + tokenInfos when metadata is needed).
  */
 export function decodeReceiptAllTokenTransfers(
   receipt: { logs: Log[] } | undefined,
@@ -474,8 +661,12 @@ export function decodeReceiptAllTokenTransfers(
   for (const log of (receipt && receipt.logs) || []) {
     if (!log.address) continue;
     const contract = log.address.toLowerCase();
-    const def = tokens[contract];
-    if (!def) continue;
+    let def = tokens[contract];
+    if (!def) {
+      const shape = logTransferShape(log);
+      if (!shape) continue;
+      def = { abi: shape.abi, verified: false };
+    }
     const tt = decodeTokenTransfer({ contract, ...def } as TokenInfo, log);
     if (!tt) continue;
     // no explicit undefined keys: decoded rows must survive JSON round-trips
@@ -495,8 +686,9 @@ export function decodeReceiptAllTokenTransfers(
 }
 
 /**
- * Known-token movements involving `address`, decoded from receipt logs already
- * in hand. Registry-based and offline; unknown contracts are skipped.
+ * Token movements involving `address`, decoded from receipt logs already in
+ * hand. Registry-based and offline; unknown transfer-shaped contracts decode
+ * without metadata (see decodeReceiptAllTokenTransfers).
  */
 export function decodeReceiptTokenTransfers(
   receipt: { logs: Log[] } | undefined,
@@ -539,6 +731,25 @@ const transferHints = /* @__PURE__ */ (() => {
   };
 })();
 
+// The standard a transfer-shaped log implies (ERC-20/721/1155 Transfer topics
+// plus WETH Deposit/Withdrawal), with the indexed slots that can hold a
+// participating address; undefined when the log is not transfer-shaped.
+function logTransferShape(
+  log: Log
+): { abi: 'ERC20' | 'ERC721' | 'ERC1155'; at: number[] } | undefined {
+  if (!log.address || !log.topics.length) return;
+  const hint = transferHints()[log.topics[0].toLowerCase()];
+  if (!hint) return;
+  let abi: 'ERC20' | 'ERC721' | 'ERC1155' | undefined = hint.abi;
+  if (!abi) {
+    // shared Transfer signature: ERC-20 indexes from/to, ERC-721 also tokenId
+    if (log.topics.length === 3) abi = 'ERC20';
+    else if (log.topics.length === 4) abi = 'ERC721';
+    else return;
+  }
+  return { abi, at: hint.at };
+}
+
 /**
  * Contracts whose logs look like token transfers, with the standard implied by
  * the log shape: ERC-20/721/1155 Transfer topics plus WETH Deposit/Withdrawal.
@@ -560,20 +771,13 @@ export function detectTokenContracts(
   const out = new Map<string, 'ERC20' | 'ERC721' | 'ERC1155'>();
   const items = Array.isArray(logs) ? logs : logs?.logs || [];
   for (const log of items) {
-    if (!log.address || !log.topics.length) continue;
-    const hint = transferHints()[log.topics[0].toLowerCase()];
-    if (!hint) continue;
-    if (account && !hint.at.some((i) => log.topics[i]?.toLowerCase().endsWith(account))) continue;
-    let abi = hint.abi;
-    if (!abi) {
-      // shared Transfer signature: ERC-20 indexes from/to, ERC-721 also tokenId
-      if (log.topics.length === 3) abi = 'ERC20';
-      else if (log.topics.length !== 4) continue;
-    }
+    const shape = logTransferShape(log);
+    if (!shape) continue;
+    if (account && !shape.at.some((i) => log.topics[i]?.toLowerCase().endsWith(account))) continue;
     const contract = log.address.toLowerCase();
     const prev = out.get(contract);
     // a 4-topic Transfer or an 1155 event is more specific than an ERC-20 guess
-    if (prev === undefined || prev === 'ERC20') out.set(contract, abi || 'ERC721');
+    if (prev === undefined || prev === 'ERC20') out.set(contract, shape.abi);
   }
   return out;
 }
@@ -599,6 +803,120 @@ export async function tokenInfos(
     { ...opts, name: 'tokenInfos' }
   );
   return Object.fromEntries(unique.map((contract, i) => [contract, infos[i]]));
+}
+
+/** One ERC-20 contract an address's history has touched; see erc20Candidates(). */
+export type Erc20Candidate = {
+  /** Lowercased contract address. */
+  contract: string;
+  abi: 'ERC20';
+  /** First symbol seen among the source transfers; display-grade if verified is false. */
+  symbol?: string;
+  /** First decimals seen; missing for shape-decoded unknown tokens (probe with tokenInfos). */
+  decimals?: number;
+  /** Mirrors DecodedTokenTransfer.verified for the transfer the metadata came from. */
+  verified?: boolean;
+};
+
+/**
+ * Collects the ERC-20 contracts an address's history has touched: the bridge
+ * from history() rows to tokenBalances(), and the fungible twin of
+ * nftCandidates(). One entry per contract with first-seen metadata; NFT
+ * movements are ignored. History is only discovery — pass the result to
+ * tokenBalances() for current holdings.
+ */
+export function erc20Candidates(
+  rows: Iterable<{ tokenTransfers: DecodedTokenTransfer[] }>
+): Erc20Candidate[] {
+  const byContract = new Map<string, Erc20Candidate>();
+  for (const row of rows) {
+    if (!Array.isArray(row?.tokenTransfers)) throw new Error('erc20Candidates: wrong rows');
+    for (const transfer of row.tokenTransfers) {
+      if (transfer.abi !== 'ERC20') continue;
+      const key = transfer.contract.toLowerCase();
+      let entry = byContract.get(key);
+      if (!entry) byContract.set(key, (entry = { contract: key, abi: 'ERC20' }));
+      if (entry.symbol === undefined && transfer.symbol !== undefined) {
+        entry.symbol = transfer.symbol;
+        if (transfer.verified !== undefined) entry.verified = transfer.verified;
+      }
+      if (entry.decimals === undefined && transfer.decimals !== undefined)
+        entry.decimals = transfer.decimals;
+    }
+  }
+  return [...byContract.values()];
+}
+
+/** One spendable balance; `contract` is absent for the native asset (ETH). */
+export type SpendableAsset = {
+  symbol?: string;
+  decimals: number;
+  balance: bigint;
+  contract?: string;
+  /** Mirrors the provenance of discovered metadata; absent for curated/native entries. */
+  verified?: boolean;
+};
+
+/**
+ * What the account can actually spend: its native balance plus every ERC-20
+ * with a non-zero balance among `opts.tokens` (a curated list) and the tokens
+ * its history has touched (`opts.rows` via erc20Candidates). The asset list a
+ * wallet's send screen offers — entries feed transferTx/maxSpendable as-is.
+ * Discovered candidates without decimals are skipped (their amounts could not
+ * be rendered); probe them with tokenInfos and pass via `opts.tokens` to
+ * include them. Pass `opts.ethBalance` when the native balance is already in
+ * hand to skip the extra read.
+ */
+export async function spendableAssets(
+  prov: TokenProvider & { multicall?: RpcClient['multicall'] },
+  address: string,
+  opts: {
+    rows?: Iterable<{ tokenTransfers: DecodedTokenTransfer[] }>;
+    tokens?: { contract: string; symbol?: string; decimals: number }[];
+    ethBalance?: bigint;
+  } = {}
+): Promise<SpendableAsset[]> {
+  if (typeof address !== 'string') throw new Error('spendableAssets: wrong address');
+  const byContract = new Map<string, Omit<SpendableAsset, 'balance'> & { contract: string }>();
+  for (const token of opts.tokens ?? []) {
+    if (typeof token?.contract !== 'string' || typeof token.decimals !== 'number')
+      throw new Error('spendableAssets: wrong token entry');
+    byContract.set(token.contract.toLowerCase(), {
+      contract: token.contract,
+      symbol: token.symbol,
+      decimals: token.decimals,
+    });
+  }
+  for (const candidate of erc20Candidates(opts.rows ?? [])) {
+    if (typeof candidate.decimals !== 'number' || byContract.has(candidate.contract)) continue;
+    const entry: Omit<SpendableAsset, 'balance'> & { contract: string } = {
+      contract: addChecksum(candidate.contract),
+      symbol: candidate.symbol,
+      decimals: candidate.decimals,
+    };
+    if (candidate.verified !== undefined) entry.verified = candidate.verified;
+    byContract.set(candidate.contract, entry);
+  }
+  const tokens = [...byContract.values()];
+  const [ethBalance, balances] = await Promise.all([
+    opts.ethBalance !== undefined
+      ? opts.ethBalance
+      : prov.call('eth_getBalance', address, 'latest').then(BigInt),
+    tokens.length
+      ? tokenBalances(
+          prov,
+          address,
+          tokens.map((t) => ({ ...t, abi: 'ERC20' }) as TokenInfo)
+        )
+      : ({} as TokenBalances),
+  ]);
+  const assets: SpendableAsset[] = [{ symbol: 'ETH', decimals: 18, balance: ethBalance }];
+  for (const token of tokens) {
+    // per-token errors read as empty: the asset just doesn't appear
+    const balance = erc20Amount(balances[token.contract]) ?? _0n;
+    if (balance > _0n) assets.push({ ...token, balance });
+  }
+  return assets;
 }
 
 /** One NFT contract an address's history has touched; see nftCandidates(). */

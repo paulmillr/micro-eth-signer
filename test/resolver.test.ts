@@ -5,6 +5,7 @@ import { addr } from '../src/index.ts';
 import NameResolver, {
   gnsRegistrationFee,
   gnsTokenId,
+  isResolvableName,
   namehash,
 } from '../src/net/resolver.ts';
 import type { IWeb3Provider } from '../src/utils.ts';
@@ -49,6 +50,16 @@ const mockGns = (handler: (selector: string, data: string) => string): IWeb3Prov
 });
 
 describe('resolver', () => {
+  it('isResolvableName routes search input between names and addresses', () => {
+    deepStrictEqual(isResolvableName('vitalik.eth'), true);
+    deepStrictEqual(isResolvableName('alice.gwei'), true);
+    deepStrictEqual(isResolvableName('sub.domain.eth'), true);
+    deepStrictEqual(isResolvableName('nodots'), false);
+    deepStrictEqual(isResolvableName('0xd8da6bf26964af9d7eed9e03e53415d37aa96045'), false);
+    deepStrictEqual(isResolvableName('0x.eth'), false); // 0x-prefixed is address-like
+    deepStrictEqual(isResolvableName('has space.eth'), false);
+    deepStrictEqual(isResolvableName(''), false);
+  });
   describe('ENS', () => {
     it('namehash', () => {
       deepStrictEqual(

@@ -1,4 +1,4 @@
-import { bytesToHex } from '@noble/hashes/utils.js';
+import { bytesToHex, hexToBytes } from '@noble/hashes/utils.js';
 import { describe, it } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual, throws } from 'node:assert';
 import { deployContract } from '../src/abi/decoder.ts';
@@ -11,7 +11,9 @@ import {
   createDecimal,
   deepFreeze,
   ethHex,
+  formatUnits,
   formatters,
+  parseUnits,
   initSig,
   omit,
   recoverPublicKey,
@@ -649,6 +651,31 @@ describe('Transactions', () => {
     });
     it('generate correct address with Address.fromPublicKey()', () => {
       deepStrictEqual(addr.fromPublicKey(pub), addr_);
+    });
+    it('formatUnits/parseUnits round-trip with cached coders', () => {
+      deepStrictEqual(formatUnits(1500000n, 6), '1.5');
+      deepStrictEqual(formatUnits(1000000000000000000n, 18), '1');
+      deepStrictEqual(parseUnits('1.5', 6), 1500000n);
+      deepStrictEqual(parseUnits(' 0.000001 ', 6), 1n); // input is trimmed
+      // a lone comma is the decimal separator; never a thousands grouping
+      deepStrictEqual(parseUnits('0,02', 18), 20000000000000000n);
+      deepStrictEqual(parseUnits('1,234', 6), 1234000n);
+      throws(() => parseUnits('1,234.5', 6)); // mixed separators
+      throws(() => parseUnits('1,2,3', 6)); // repeated separators
+      throws(() => parseUnits('nope', 6));
+    });
+    it('isValidPrivateKey', () => {
+      deepStrictEqual(addr.isValidPrivateKey(priv), true);
+      deepStrictEqual(addr.isValidPrivateKey(`0x${priv}`), true);
+      deepStrictEqual(addr.isValidPrivateKey(hexToBytes(priv)), true);
+      // format problems
+      deepStrictEqual(addr.isValidPrivateKey(''), false);
+      deepStrictEqual(addr.isValidPrivateKey('0xzz'), false);
+      deepStrictEqual(addr.isValidPrivateKey(priv.slice(2)), false);
+      // out-of-range scalars pass a hex-format check but cannot sign
+      deepStrictEqual(addr.isValidPrivateKey('00'.repeat(32)), false);
+      deepStrictEqual(addr.isValidPrivateKey('ff'.repeat(32)), false);
+      deepStrictEqual(addr.isValidPrivateKey(new Uint8Array(32)), false);
     });
     it('getCreateAddress', () => {
       // Cross-checked with ethers getCreateAddress

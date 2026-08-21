@@ -217,7 +217,17 @@ const ERC4626_ABI = [
 ] as const;
 
 export type RateDirection = 'forward' | 'reverse' | 'Forward' | 'Reverse';
-export type QuoterInit = { tokens?: Record<string, TokenDef> };
+export type QuoterInit = {
+  tokens?: Record<string, TokenDef>;
+  /**
+   * Memoize default-provider coinPrice/tokenPrice results for this long:
+   * oracle quotes are stable second-to-second, so views re-rendering every
+   * few seconds shouldn't re-query per render. Failures are not cached (the
+   * next call retries); explicit-provider calls bypass the cache. Default 0
+   * (no caching).
+   */
+  ttlMs?: number;
+};
 export type QuoterOpt = { tag?: Web3CallArgs['tag']; tokens?: Record<string, TokenDef> };
 export type UniswapPriceOpt = QuoterOpt & { quoteSymbols?: string[] };
 export type UniswapPriceInOpt = {
@@ -1141,10 +1151,30 @@ export class Quoter {
   readonly net: IWeb3Provider;
   private readonly tokens: TokenRegistry;
   private readonly routeCache: RouteCache = new Map();
+  private readonly ttlMs: number;
+  private readonly priceCache = new Map<string, { at: number; promise: Promise<number> }>();
 
   constructor(net: IWeb3Provider, opt: QuoterInit = {}) {
     this.net = net;
     this.tokens = tokenRegistry(opt.tokens);
+    if (opt.ttlMs !== undefined && (!Number.isFinite(opt.ttlMs) || opt.ttlMs < 0))
+      throw new Error('quoter: wrong ttlMs');
+    this.ttlMs = opt.ttlMs ?? 0;
+  }
+
+  // Only the default-provider path memoizes: explicit provider/params are not
+  // part of the key and bypass the cache.
+  private cachedPrice(key: string, fetch: () => Promise<number>): Promise<number> {
+    if (this.ttlMs <= 0) return fetch();
+    const entry = this.priceCache.get(key);
+    if (entry && Date.now() - entry.at < this.ttlMs) return entry.promise;
+    const promise = fetch();
+    this.priceCache.set(key, { at: Date.now(), promise });
+    promise.catch(() => {
+      // failed quotes are not held for the TTL; the next call retries
+      if (this.priceCache.get(key)?.promise === promise) this.priceCache.delete(key);
+    });
+    return promise;
   }
 
   async coinPrice(symbol: string): Promise<number>;
@@ -1155,15 +1185,9 @@ export class Quoter {
     params?: unknown
   ): Promise<number> {
     astring(symbol, 'symbol');
-    return await quoterPrice(
-      this.net,
-      symbol,
-      'coin',
-      provider,
-      params,
-      this.tokens,
-      this.routeCache
-    );
+    const fetch = () =>
+      quoterPrice(this.net, symbol, 'coin', provider, params, this.tokens, this.routeCache);
+    return provider === undefined ? await this.cachedPrice(`coin ${symbol}`, fetch) : await fetch();
   }
 
   async tokenPrice(symbol: string): Promise<number>;
@@ -1174,15 +1198,11 @@ export class Quoter {
     params?: unknown
   ): Promise<number> {
     astring(symbol, 'symbol');
-    return await quoterPrice(
-      this.net,
-      symbol,
-      'token',
-      provider,
-      params,
-      this.tokens,
-      this.routeCache
-    );
+    const fetch = () =>
+      quoterPrice(this.net, symbol, 'token', provider, params, this.tokens, this.routeCache);
+    return provider === undefined
+      ? await this.cachedPrice(`token ${symbol}`, fetch)
+      : await fetch();
   }
 
   async rate<P extends QuoterRateParams>(

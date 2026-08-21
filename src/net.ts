@@ -3,7 +3,7 @@ The network transport layer: RpcClient over an injected IWeb3Provider (never a
 bundled HTTP client), plus the shared fan-out/resilience primitives (mapPool,
 withRetry) built on it. Higher-level modules ship as their own entry points:
 
-- micro-eth-signer/net/history.js — address history scanner (history, historyMulti)
+- micro-eth-signer/net/history.js — address history scanner (history, tokenScanner)
 - micro-eth-signer/net/enrich.js — row enrichment and clear signing (enrichTx, rowCodec)
 - micro-eth-signer/net/tokens.js — token metadata, balances, transfers, NFTs
 - micro-eth-signer/net/quoter.js — asset price quoting (Chainlink, Uniswap, ERC-4626)
@@ -12,8 +12,8 @@ withRetry) built on it. Higher-level modules ship as their own entry points:
 - micro-eth-signer/net/clearsig.js — ERC-7730 resolver callbacks
 - micro-eth-signer/net/trace.js — trace_filter-based scanning (archive nodes)
 */
-import { createContract } from './abi/index.ts';
-import type { ContractType, FnArg } from './abi/decoder.ts';
+import { createContract, decodeError } from './abi/index.ts';
+import type { ContractType, DecodedError, FnArg } from './abi/decoder.ts';
 import type { ArrLike, Writable } from './abi/mapper.ts';
 import { MULTICALL3, MULTICALL3_ABI } from './abi/multicall.ts';
 import { TxVersions, legacySig, type AccessList } from './core/tx-internal.ts';
@@ -40,6 +40,7 @@ const ethTag = (tag: Web3CallArgs['tag'] | undefined) => {
   throw new Error('ethCall: wrong tag');
 };
 const txHashRe = /^0x[0-9a-fA-F]{64}$/;
+const addressRe = /^0x[0-9a-fA-F]{40}$/;
 const _0n = /* @__PURE__ */ BigInt(0);
 
 export type BlockInfo = {
@@ -198,11 +199,21 @@ export type OtsSearch = {
 
 export type Topics = (string | null | (string | null)[])[];
 export type EthLogsOpts =
-  | { fromBlock?: number; toBlock?: number }
   | {
+      /** Contract address(es) to scope the query to; unset matches every contract. */
+      address?: string | string[];
+      fromBlock?: number;
+      toBlock?: number;
+    }
+  | {
+      /** Contract address(es) to scope the query to; unset matches every contract. */
+      address?: string | string[];
       fromBlock: number;
       toBlock: number;
+      /** Blocks per eth_getLogs batch; the range is fanned out in disjoint batches. */
       limitLogs: number;
+      /** Concurrent batch requests (default 8); tune to the node's useful parallelism. */
+      concurrency?: number;
     };
 
 export type RpcTransport = {
@@ -311,6 +322,18 @@ function validateLogOpts(opts: Record<string, unknown>) {
   if (opts.limitLogs !== undefined) {
     if (opts.fromBlock === undefined || opts.toBlock === undefined)
       throw new Error('validateLogOpts: fromBlock/toBlock required if limitLogs is present');
+  }
+  if (opts.address !== undefined) {
+    const list = Array.isArray(opts.address) ? opts.address : [opts.address];
+    if (!list.length || list.some((a) => typeof a !== 'string' || !addressRe.test(a)))
+      throw new Error(`validateLogOpts: wrong address=${opts.address}`);
+  }
+  if (opts.concurrency !== undefined) {
+    const val = opts.concurrency;
+    if (typeof val !== 'number' || !Number.isSafeInteger(val) || val <= 0)
+      throw new Error(`validateLogOpts: wrong concurrency=${val}`);
+    if (opts.limitLogs === undefined)
+      throw new Error('validateLogOpts: limitLogs required if concurrency is present');
   }
 }
 
@@ -473,6 +496,7 @@ async function ethLogsSingle(
   validateLogOpts(opts);
   const req: Record<string, any> = { topics, fromBlock: ethNum(opts.fromBlock || 0) };
   if (opts.toBlock !== undefined) req.toBlock = ethNum(opts.toBlock);
+  if (opts.address !== undefined) req.address = opts.address;
   const res = await prov.call('eth_getLogs', req);
   return res.map((i: any) => fixLog(i));
 }
@@ -565,6 +589,51 @@ export class RpcClient implements IWeb3Provider {
     const { tag: _tag, ...callArgs } = args;
     return ethHexNum.decode(await this.transport.call('eth_estimateGas', callArgs, ethTag(tag)));
   }
+  /**
+   * Simulates a call/transfer with `eth_call`, without broadcasting anything:
+   * a pre-flight "would this revert?" for a transaction about to be signed.
+   * On revert, the reason is decoded with `decodeError` when the node's revert
+   * data is reachable; transports that drop `error.data` (or nodes that embed
+   * it in the message) degrade to the raw node message.
+   */
+  async dryRun(args: {
+    from?: string;
+    to: string;
+    value?: bigint;
+    data?: string;
+    tag?: Web3CallArgs['tag'];
+  }): Promise<
+    | { success: true; returnData: string }
+    | { success: false; reason: string; data?: string; decoded?: DecodedError }
+  > {
+    if (typeof args.to !== 'string') throw new Error('dryRun: wrong to');
+    const callArgs: Web3CallArgs = { to: args.to };
+    if (args.from !== undefined) callArgs.from = args.from;
+    if (args.value !== undefined) callArgs.value = ethNum(args.value);
+    if (args.data !== undefined) callArgs.data = args.data;
+    try {
+      return { success: true, returnData: await this.ethCall(callArgs, args.tag) };
+    } catch (e) {
+      const err = e as Error & { data?: unknown };
+      const hex =
+        typeof err.data === 'string' && err.data.startsWith('0x')
+          ? err.data
+          : /(0x[0-9a-fA-F]{8,})/.exec(err.message)?.[1];
+      let decoded: DecodedError | undefined;
+      if (hex) {
+        try {
+          decoded = decodeError(hex);
+        } catch {}
+      }
+      const out: { success: false; reason: string; data?: string; decoded?: DecodedError } = {
+        success: false,
+        reason: decoded?.message || err.message,
+      };
+      if (hex) out.data = hex;
+      if (decoded) out.decoded = decoded;
+      return out;
+    }
+  }
 
   async blockInfo(block: number): Promise<BlockInfo> {
     const res = await this.call('eth_getBlockByNumber', ethNum(block), false);
@@ -588,6 +657,39 @@ export class RpcClient implements IWeb3Provider {
       // RPC quantities are bigint; comparing 0n with numeric zero marks an unused account active.
       active: balance > _0n || nonce !== _0n,
     };
+  }
+  /**
+   * ETH balances of many addresses in one Multicall3 `getEthBalance` round —
+   * one RPC instead of one `eth_getBalance` per address. Chains without the
+   * deployment (the aggregate call fails) fall back to per-address calls.
+   */
+  async ethBalances(
+    addresses: string[],
+    opts: { contract?: string } = {}
+  ): Promise<Record<string, bigint>> {
+    if (!Array.isArray(addresses) || addresses.some((a) => typeof a !== 'string'))
+      throw new Error('ethBalances: wrong addresses');
+    if (!addresses.length) return {};
+    const m = createContract(MULTICALL3_ABI).getEthBalance;
+    const contract = opts.contract === undefined ? MULTICALL3 : opts.contract;
+    try {
+      const res = await this.multicall(
+        addresses.map((address) => ({
+          to: contract,
+          data: ethHex.encode(m.encodeInput(address)),
+          allowFailure: false,
+        })),
+        opts
+      );
+      return Object.fromEntries(
+        addresses.map((address, i) => [address, m.decodeOutput(ethHex.decode(res[i].data))])
+      );
+    } catch {
+      const balances = await Promise.all(
+        addresses.map((address) => this.call('eth_getBalance', address, 'latest'))
+      );
+      return Object.fromEntries(addresses.map((address, i) => [address, BigInt(balances[i])]));
+    }
   }
   async height(): Promise<number> {
     return Number.parseInt(await this.call('eth_blockNumber'));
@@ -741,18 +843,27 @@ export class RpcClient implements IWeb3Provider {
       if (opts.signal) opts.signal.removeEventListener('abort', onAbort);
     }
   }
+  /** Chain id the node is on. */
+  async chainId(): Promise<bigint> {
+    return BigInt(await this.call('eth_chainId'));
+  }
   /**
    * Fetches nonce, fees, gas limit and chain id in one parallel round and returns
    * the fields `Transaction.prepare` expects.
+   * `expectedChainId` guards against signing for the wrong network (a stale RPC
+   * URL, a UI network switch): prepare throws when the node reports another chain.
    */
   async prepare(args: {
     from: string;
     to: string;
     value?: bigint;
     data?: string;
+    expectedChainId?: bigint;
   }): Promise<PreparedTx> {
     if (typeof args.from !== 'string') throw new Error('prepare: wrong from');
     if (typeof args.to !== 'string') throw new Error('prepare: wrong to');
+    if (args.expectedChainId !== undefined && typeof args.expectedChainId !== 'bigint')
+      throw new Error('prepare: wrong expectedChainId');
     const callArgs: Web3CallArgs = { from: args.from, to: args.to };
     if (args.value !== undefined) callArgs.value = ethNum(args.value);
     if (args.data !== undefined) callArgs.data = args.data;
@@ -762,6 +873,10 @@ export class RpcClient implements IWeb3Provider {
       this.estimateGas(callArgs),
       this.call('eth_chainId'),
     ]);
+    if (args.expectedChainId !== undefined && BigInt(chainId) !== args.expectedChainId)
+      throw new Error(
+        `prepare: node reports chain id ${BigInt(chainId)}, expected ${args.expectedChainId}`
+      );
     const common = {
       nonce,
       gasLimit,
@@ -856,6 +971,11 @@ export class RpcClient implements IWeb3Provider {
     }
   }
 
+  /**
+   * eth_getLogs, optionally scoped to contract address(es). With `limitLogs`
+   * the range fans out as disjoint `limitLogs`-block batches with capped
+   * concurrency (default 8); results are deduplicated across batches.
+   */
   async ethLogs(topics: Topics, opts: EthLogsOpts = {}): Promise<Log[]> {
     validateLogOpts(opts);
     const fromBlock = opts.fromBlock || 0;
@@ -872,8 +992,10 @@ export class RpcClient implements IWeb3Provider {
           if (index >= chunks) return;
           const batchFrom = fromBlock + index * opts.limitLogs;
           batches[index] = await ethLogsSingle(this, topics, {
+            address: opts.address,
             fromBlock: batchFrom,
-            toBlock: Math.min(batchFrom + opts.limitLogs, opts.toBlock),
+            // limitLogs blocks per batch, inclusive: batches partition the range
+            toBlock: Math.min(batchFrom + opts.limitLogs - 1, opts.toBlock),
           });
         }
       } catch (error) {
@@ -882,7 +1004,10 @@ export class RpcClient implements IWeb3Provider {
       }
     };
     await Promise.all(
-      Array.from({ length: Math.min(ETH_LOGS_CONCURRENCY, chunks) }, () => worker())
+      Array.from(
+        { length: Math.min(opts.concurrency ?? ETH_LOGS_CONCURRENCY, chunks) },
+        () => worker()
+      )
     );
     const out = [];
     const seen = new Set<string>();

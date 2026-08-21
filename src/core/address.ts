@@ -31,6 +31,7 @@ type AddressUtils = {
   fromPrivateKey: (key: TArg<string | Uint8Array>) => string;
   random: () => { privateKey: string; address: string };
   isValid: (checksummedAddress: string) => boolean;
+  isValidPrivateKey: (key: string | Uint8Array) => boolean;
   getCreateAddress: (from: string, nonce: bigint | number) => string;
   getCreate2Address: (
     from: string,
@@ -145,6 +146,22 @@ export const addr: TRet<AddressUtils> = /* @__PURE__ */ deepFreeze({
    * Always returns true when the address is not checksummed.
    */
   isValid: (checksummedAddress: string): boolean => isValidAddress(checksummedAddress),
+
+  /**
+   * Checks whether the value can be used as a secp256k1 private key:
+   * 32 bytes (64 hex chars, `0x` optional) inside the valid scalar range.
+   * Unlike a plain hex-format check, rejects out-of-range scalars
+   * (zero, >= curve order) that `fromPrivateKey` / `signBy` would throw on.
+   */
+  isValidPrivateKey: (key: string | Uint8Array): boolean => {
+    try {
+      return secp256k1.utils.isValidSecretKey(
+        typeof key === 'string' ? hexToBytes(strip0x(key)) : key
+      );
+    } catch {
+      return false;
+    }
+  },
 
   /**
    * Computes the address of a contract deployed with CREATE (a regular deployment tx):

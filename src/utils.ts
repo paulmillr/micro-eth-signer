@@ -616,6 +616,35 @@ export function zip<A, B>(a: A[], b: B[]): [A, B][] {
  */
 export const createDecimal = (precision: number, round?: boolean): Coder<bigint, string> =>
   coders.decimal(precision, round);
+// createDecimal per render is wasteful — every wallet UI ends up writing this
+// cache, so it ships here once
+const decimalCoders = /* @__PURE__ */ new Map<number, Coder<bigint, string>>();
+const cachedDecimal = (precision: number): Coder<bigint, string> => {
+  let coder = decimalCoders.get(precision);
+  if (!coder) decimalCoders.set(precision, (coder = createDecimal(precision)));
+  return coder;
+};
+/**
+ * Formats base units (wei / token units) as a decimal string for the given
+ * precision: `formatUnits(1500000n, 6)` -> `'1.5'`. Coders are cached per
+ * precision, so calling in render loops is fine.
+ */
+export const formatUnits = (value: bigint, precision: number): string =>
+  cachedDecimal(precision).encode(value);
+/**
+ * Parses a decimal input string into base units for the given precision:
+ * `parseUnits('1.5', 6)` -> `1500000n`. Trims surrounding whitespace, and a
+ * lone comma with no dot is accepted as the decimal separator (`'0,02'` ->
+ * `0.02` — note this reads `'1,234'` as 1.234, never as a thousands
+ * grouping); mixed or repeated separators throw, as does any other malformed
+ * input. The cached counterpart of {@link formatUnits}.
+ */
+export const parseUnits = (value: string, precision: number): bigint => {
+  let s = value.trim();
+  if (s.includes(',') && !s.includes('.') && s.indexOf(',') === s.lastIndexOf(','))
+    s = s.replace(',', '.');
+  return cachedDecimal(precision).decode(s);
+};
 /**
  * Decimal coder for ether strings.
  * @example

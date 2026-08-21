@@ -2,19 +2,27 @@ import { describe, it } from '@paulmillr/jsbt/test.js';
 import * as mftch from 'micro-ftch';
 import { deepStrictEqual, rejects, throws } from 'node:assert';
 import { readFile } from 'node:fs/promises';
-import { DEFAULT_TOKENS, ERC1155, ERC20, events, tokenFromSymbol } from '../src/abi/index.ts';
+import { createContract, DEFAULT_TOKENS, ERC1155, ERC20, events, tokenFromSymbol } from '../src/abi/index.ts';
 import { Transaction } from '../src/index.ts';
 import { mapPool, RpcClient, Web3Error, withRetry } from '../src/net.ts';
-import { enrichTx, rowCodec } from '../src/net/enrich.ts';
-import { calcTransfersDiff, history, historyMulti, newestFirst } from '../src/net/history.ts';
+import { MULTICALL3 } from '../src/abi/multicall.ts';
+import { enrichTx, rowCodec, slimRow } from '../src/net/enrich.ts';
+import { calcTransfersDiff, history, newestFirst, tokenScanner } from '../src/net/history.ts';
 import { Quoter } from '../src/net/quoter.ts';
 import { NameResolver } from '../src/net/resolver.ts';
 import {
   approvalTopics,
   calcAllowances,
   contractCapabilities,
+  decodeReceiptAllTokenTransfers,
   decodeReceiptTokenTransfers,
   detectTokenContracts,
+  erc20Amount,
+  erc20Candidates,
+  maxSpendable,
+  spendableAssets,
+  tokenDiff,
+  transferTx as buildTransferTx,
   ipfsToHttp,
   nftCandidates,
   nftHoldings,
@@ -28,7 +36,7 @@ import {
 
 import { internalTransactions, traceFilterSingle } from '../src/net/trace.ts';
 import { awaitDeep, UniswapAbstract, UniswapV3 } from '../src/net/uniswap.ts';
-import { ethHexNum, numberTo0xHex, weieth } from '../src/utils.ts';
+import { ethHex, ethHexNum, numberTo0xHex, weieth } from '../src/utils.ts';
 
 // These real network responses from real nodes, captured by replayable
 const NODE_URL = 'https://NODE_URL/';
@@ -112,6 +120,25 @@ describe('Network', () => {
     deepStrictEqual(await quoter.coinPrice('BTC'), 1234.56);
     deepStrictEqual(await quoter.coinPrice('BTC'), 1234.56);
     deepStrictEqual(calls.length, 2);
+  });
+  it('Quoter ttlMs memoizes default-provider quotes, retries failures', async () => {
+    const latestRoundData = encodeWords(1n, 123456000000n, 0n, 1n, 1n);
+    const { calls, provider } = mockEthCallProvider([latestRoundData, latestRoundData]);
+    const quoter = new Quoter(provider, { ttlMs: 60_000 });
+    deepStrictEqual(await quoter.coinPrice('BTC'), 1234.56);
+    deepStrictEqual(await quoter.coinPrice('BTC'), 1234.56);
+    deepStrictEqual(calls.length, 1, 'second read served from the TTL cache');
+    // explicit-provider calls bypass the cache
+    deepStrictEqual(await quoter.coinPrice('BTC', 'chainlink'), 1234.56);
+    deepStrictEqual(calls.length, 2);
+    // failures are not held for the TTL: the next call retries
+    const bad = encodeWords(1n, 0n, 0n, 1n, 1n);
+    const failing = mockEthCallProvider([bad, latestRoundData]);
+    const retrying = new Quoter(failing.provider, { ttlMs: 60_000 });
+    await rejects(() => retrying.coinPrice('BTC'), /invalid price data/);
+    deepStrictEqual(await retrying.coinPrice('BTC'), 1234.56);
+    deepStrictEqual(failing.calls.length, 2);
+    throws(() => new Quoter(failing.provider, { ttlMs: -1 }), /wrong ttlMs/);
   });
   it('Quoter passes block tags to Chainlink reads', async () => {
     const latestRoundData = encodeWords(1n, 123456000000n, 0n, 1n, 1n);
@@ -1173,6 +1200,88 @@ describe('Network', () => {
     await archive.ethLogs([], { fromBlock: 0, toBlock: 20, limitLogs: 1 });
     deepStrictEqual(calls, 21);
     deepStrictEqual(maxActive, 8);
+  });
+  it('passes address through to eth_getLogs', async () => {
+    const addr = '0x12d66f87a04a9e220743712ce6d9bb1b5616b8fc';
+    const addr2 = '0x0000000000000000000000000000000000000001';
+    const calls = [];
+    const archive = new RpcClient({
+      call: async (method, ...args) => {
+        calls.push([method, args]);
+        return [];
+      },
+    });
+    await archive.ethLogs(['0x1234'], { fromBlock: 1, toBlock: 2, address: addr });
+    deepStrictEqual(calls, [
+      ['eth_getLogs', [{ topics: ['0x1234'], fromBlock: '0x1', toBlock: '0x2', address: addr }]],
+    ]);
+    calls.length = 0;
+    await archive.ethLogs([], { fromBlock: 1, toBlock: 2, address: [addr, addr2] });
+    deepStrictEqual(calls[0][1][0].address, [addr, addr2]);
+    calls.length = 0;
+    // chunked fan-out scopes every batch
+    await archive.ethLogs([], { fromBlock: 0, toBlock: 5, limitLogs: 2, address: addr });
+    deepStrictEqual(calls.length, 3);
+    for (const [, args] of calls) deepStrictEqual(args[0].address, addr);
+  });
+  it('validates eth_getLogs address', async () => {
+    const archive = new RpcClient({
+      call: async () => {
+        throw new Error('unexpected rpc call');
+      },
+    });
+    for (const address of ['0x1234', 12, [], ['0x12d66f87a04a9e220743712ce6d9bb1b5616b8fc', '0xnope']])
+      await rejects(
+        () => archive.ethLogs([], { fromBlock: 1, toBlock: 2, address }),
+        /validateLogOpts: wrong address/
+      );
+  });
+  it('honors eth_getLogs concurrency option', async () => {
+    let active = 0;
+    let maxActive = 0;
+    const archive = new RpcClient({
+      call: async () => {
+        active++;
+        maxActive = Math.max(maxActive, active);
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        active--;
+        return [];
+      },
+    });
+    await archive.ethLogs([], { fromBlock: 0, toBlock: 20, limitLogs: 1, concurrency: 3 });
+    deepStrictEqual(maxActive, 3);
+  });
+  it('validates eth_getLogs concurrency', async () => {
+    const archive = new RpcClient({
+      call: async () => {
+        throw new Error('unexpected rpc call');
+      },
+    });
+    for (const concurrency of [0, -1, 1.5])
+      await rejects(
+        () => archive.ethLogs([], { fromBlock: 0, toBlock: 20, limitLogs: 1, concurrency }),
+        /validateLogOpts: wrong concurrency/
+      );
+    await rejects(
+      () => archive.ethLogs([], { fromBlock: 0, toBlock: 20, concurrency: 2 }),
+      /validateLogOpts: limitLogs required if concurrency is present/
+    );
+  });
+  it('splits eth_getLogs batches into disjoint inclusive ranges', async () => {
+    const ranges = [];
+    const archive = new RpcClient({
+      call: async (_method, req) => {
+        ranges.push([req.fromBlock, req.toBlock]);
+        return [];
+      },
+    });
+    await archive.ethLogs([], { fromBlock: 0, toBlock: 10, limitLogs: 4 });
+    ranges.sort((a, b) => parseInt(a[0], 16) - parseInt(b[0], 16));
+    deepStrictEqual(ranges, [
+      ['0x0', '0x3'],
+      ['0x4', '0x7'],
+      ['0x8', '0xa'],
+    ]);
   });
   it('rebuilds zero-fee EIP-1559 transaction info', async () => {
     const tx = Transaction.prepare(
@@ -2347,6 +2456,145 @@ describe('Network', () => {
     const tx = Transaction.prepare(fields);
     deepStrictEqual(tx.raw.nonce, 5n);
   });
+  it('prepare verifies expectedChainId against the node', async () => {
+    const to = '0x0000000000000000000000000000000000000001';
+    const from = '0xd8da6bf26964af9d7eed9e03e53415d37aa96045';
+    const archive = new RpcClient({
+      call: async (method) => {
+        if (method === 'eth_getTransactionCount') return '0x5';
+        if (method === 'eth_feeHistory')
+          return { baseFeePerGas: ['0x64'], gasUsedRatio: [], reward: [['0x2']] };
+        if (method === 'eth_estimateGas') return '0x5208';
+        if (method === 'eth_chainId') return '0x1';
+        throw new Error(`unexpected rpc call ${method}`);
+      },
+    });
+    const fields = await archive.prepare({ from, to, value: 1n, expectedChainId: 1n });
+    deepStrictEqual(fields.chainId, 1n);
+    await rejects(
+      () => archive.prepare({ from, to, value: 1n, expectedChainId: 11155111n }),
+      /node reports chain id 1, expected 11155111/
+    );
+    await rejects(
+      () => archive.prepare({ from, to, value: 1n, expectedChainId: 1 as any }),
+      /wrong expectedChainId/
+    );
+  });
+  it('chainId reads the node chain id', async () => {
+    const archive = new RpcClient({
+      call: async (method) => {
+        if (method === 'eth_chainId') return '0xaa36a7';
+        throw new Error(`unexpected rpc call ${method}`);
+      },
+    });
+    deepStrictEqual(await archive.chainId(), 11155111n);
+  });
+  it('dryRun simulates without broadcasting and decodes revert reasons', async () => {
+    const ok = new RpcClient({
+      call: async (method, ...args) => {
+        if (method !== 'eth_call') throw new Error(`unexpected rpc call ${method}`);
+        deepStrictEqual(args[1], 'latest');
+        deepStrictEqual(args[0], {
+          from: '0x0000000000000000000000000000000000000002',
+          to: '0x0000000000000000000000000000000000000001',
+          value: '0x1',
+        });
+        return '0x';
+      },
+    });
+    deepStrictEqual(
+      await ok.dryRun({
+        from: '0x0000000000000000000000000000000000000002',
+        to: '0x0000000000000000000000000000000000000001',
+        value: 1n,
+      }),
+      { success: true, returnData: '0x' }
+    );
+    // Error(string) revert data on the error object (node-attached `data`)
+    const reasonData =
+      '0x08c379a0' +
+      '0000000000000000000000000000000000000000000000000000000000000020' +
+      '000000000000000000000000000000000000000000000000000000000000001a' +
+      '4e6f7420656e6f7567682045746865722070726f76696465642e000000000000';
+    const reverting = new RpcClient({
+      call: async () => {
+        throw Object.assign(new Error('execution reverted'), { data: reasonData });
+      },
+    });
+    const reverted = await reverting.dryRun({ to: '0x0000000000000000000000000000000000000001' });
+    if (reverted.success) throw new Error('expected revert');
+    deepStrictEqual(reverted.reason, 'Not enough Ether provided.');
+    deepStrictEqual(reverted.data, reasonData);
+    deepStrictEqual(reverted.decoded?.name, 'Error');
+    // transports that drop error.data but embed the hex in the message
+    const embedded = new RpcClient({
+      call: async () => {
+        throw new Error(`FetchProvider(3): execution reverted ${reasonData}`);
+      },
+    });
+    const fromMessage = await embedded.dryRun({ to: '0x0000000000000000000000000000000000000001' });
+    if (fromMessage.success) throw new Error('expected revert');
+    deepStrictEqual(fromMessage.reason, 'Not enough Ether provided.');
+    // no revert data anywhere: the node message is the reason
+    const plain = new RpcClient({
+      call: async () => {
+        throw new Error('insufficient funds for transfer');
+      },
+    });
+    const noData = await plain.dryRun({ to: '0x0000000000000000000000000000000000000001' });
+    deepStrictEqual(noData, { success: false, reason: 'insufficient funds for transfer' });
+    await rejects(() => plain.dryRun({} as any), /wrong to/);
+  });
+  it('ethBalances batches getBalance through Multicall3, with fallback', async () => {
+    const A = '0x0000000000000000000000000000000000000002';
+    const B = '0x0000000000000000000000000000000000000003';
+    const calls = [];
+    // aggregate3 output tuple[](bool,bytes), encoded by reusing an input
+    // coder of the same shape (selector stripped)
+    const OUT = createContract([
+      {
+        type: 'function',
+        name: 'out',
+        inputs: [
+          {
+            name: 'returnData',
+            type: 'tuple[]',
+            components: [
+              { name: 'success', type: 'bool' },
+              { name: 'returnData', type: 'bytes' },
+            ],
+          },
+        ],
+      },
+    ] as const).out;
+    const encoded = (values) =>
+      ethHex.encode(
+        OUT.encodeInput(
+          values.map((v) => ({ success: true, returnData: ethHex.decode(encodeWords(v)) }))
+        ).subarray(4)
+      );
+    const archive = new RpcClient({
+      call: async (method, ...args) => {
+        calls.push([method, ...args]);
+        if (method !== 'eth_call') throw new Error(`unexpected rpc call ${method}`);
+        deepStrictEqual(args[0].to, MULTICALL3);
+        return encoded([5n, 7n]);
+      },
+    });
+    deepStrictEqual(await archive.ethBalances([A, B]), { [A]: 5n, [B]: 7n });
+    deepStrictEqual(calls.length, 1, 'one aggregate call for two addresses');
+    deepStrictEqual(await archive.ethBalances([]), {});
+    // chains without the deployment: the aggregate call fails, per-address fallback
+    const bare = new RpcClient({
+      call: async (method, ...args) => {
+        if (method === 'eth_call') throw new Error('execution reverted');
+        if (method === 'eth_getBalance') return args[0] === A ? '0x5' : '0x7';
+        throw new Error(`unexpected rpc call ${method}`);
+      },
+    });
+    deepStrictEqual(await bare.ethBalances([A, B]), { [A]: 5n, [B]: 7n });
+    await rejects(() => archive.ethBalances([A, 5 as any]), /wrong addresses/);
+  });
   it('wraps method-not-found errors with node requirement', async () => {
     const notFound = () =>
       Object.assign(new Error('FetchProvider(-32601): the method does not exist'), {
@@ -2588,7 +2836,7 @@ describe('Network', () => {
               rawReceipt(hash('11'), 100, [
                 transferLog(USDT, OTHER, ADDR, 5000000n), // involves ADDR: kept
                 transferLog(USDT, OTHER, OTHER, 7000000n, 1), // unrelated: filtered
-                transferLog(`0x${'77'.repeat(20)}`, OTHER, ADDR, 9n, 2), // unknown token: skipped
+                transferLog(`0x${'77'.repeat(20)}`, OTHER, ADDR, 9n, 2), // unknown token: shape-decoded
               ]),
               rawReceipt(hash('22'), 90),
             ],
@@ -2635,11 +2883,20 @@ describe('Network', () => {
           to: ADDR,
           tokens: new Map([[1n, 5000000n]]),
         },
+        // outside the registry: decoded from log shape, metadata undefined
+        {
+          contract: `0x${'77'.repeat(20)}`,
+          abi: 'ERC20',
+          from: OTHER,
+          to: ADDR,
+          tokens: new Map([[1n, 9n]]),
+          verified: false,
+        },
       ]);
       deepStrictEqual(res[1].tokenTransfers, []);
       // normalized raw data is kept for detail views
-      deepStrictEqual(res[0].info.info.value, 10n ** 18n);
-      deepStrictEqual(res[0].info.receipt.status, 1);
+      deepStrictEqual(res[0].info.value, 10n ** 18n);
+      deepStrictEqual(res[0].receipt.status, 1);
       deepStrictEqual(Object.hasOwn(res[0], 'partial'), false);
     });
     it('history passes OTS cursor and page size through', async () => {
@@ -2745,7 +3002,7 @@ describe('Network', () => {
       });
       await rejects(() => collectHistory(broken, ADDR, opts), /method handler crashed/);
     });
-    it('historyMulti merges accounts as one wallet', async () => {
+    it('history merges an address array as one wallet', async () => {
       const B = '0x0000000000000000000000000000000000000004';
       const FEE = 21000n * 10n ** 9n; // helpers: gasUsed * effectiveGasPrice
       // T1: owned -> owned 1 ETH, plus a token movement to B from a third party
@@ -2780,7 +3037,7 @@ describe('Network', () => {
         },
       });
       const rows = [];
-      for await (const row of historyMulti(archive, [ADDR, B], { source: 'ots' })) rows.push(row);
+      for await (const row of history(archive, [ADDR, B], { source: 'ots' })) rows.push(row);
       deepStrictEqual(
         rows.map((row) => [row.hash, row.block, row.diff, row.addresses]),
         [
@@ -2798,7 +3055,7 @@ describe('Network', () => {
 
       // oldest order merges ascending over the same pages
       const oldest = [];
-      for await (const row of historyMulti(archive, [ADDR, B], { source: 'ots', order: 'oldest' }))
+      for await (const row of history(archive, [ADDR, B], { source: 'ots', order: 'oldest' }))
         oldest.push(row);
       deepStrictEqual(
         oldest.map((row) => row.hash),
@@ -2808,17 +3065,16 @@ describe('Network', () => {
       // watched set is deduplicated; casing of the first occurrence is kept
       calls.length = 0;
       const deduped = [];
-      for await (const row of historyMulti(archive, [ADDR, ADDR], { source: 'ots' }))
+      for await (const row of history(archive, [ADDR, ADDR], { source: 'ots' }))
         deduped.push(row);
       deepStrictEqual(calls.length, 1);
       deepStrictEqual(deduped.length, 2);
       deepStrictEqual(deduped[0].addresses, [ADDR]);
 
-      throws(() => historyMulti(archive, [], {}), /historyMulti: wrong addresses/);
-      throws(() => historyMulti(archive, [ADDR, 5], {}), /historyMulti: wrong addresses/);
-      throws(() => historyMulti(archive, ADDR, {}), /historyMulti: wrong addresses/);
+      throws(() => history(archive, [], {}), /history: wrong addresses/);
+      throws(() => history(archive, [ADDR, 5 as any], {}), /history: wrong addresses/);
     });
-    it('historyMulti yields a ready row before fetching its next page', async () => {
+    it('multi-address history yields a ready row before fetching its next page', async () => {
       let calls = 0;
       const provider = {
         ots_searchBefore: async () => {
@@ -2831,7 +3087,7 @@ describe('Network', () => {
           };
         },
       };
-      const iterator = historyMulti(provider as any, [ADDR], {
+      const iterator = history(provider as any, [ADDR], {
         source: 'ots',
         depth: 'full',
       });
@@ -2843,7 +3099,7 @@ describe('Network', () => {
       await rejects(() => iterator.next(), /next page failed/);
       deepStrictEqual(calls, 2);
     });
-    it('historyMulti uses checksummed canonical addresses', async () => {
+    it('multi-address history uses checksummed canonical addresses', async () => {
       const lower = '0x8ba1f109551bd432803012645ac136ddd64dba72';
       const checksum = '0x8ba1f109551bD432803012645Ac136ddd64DBA72';
       const upper = `0x${lower.slice(2).toUpperCase()}`;
@@ -2859,7 +3115,7 @@ describe('Network', () => {
         },
       };
       const rows = await Array.fromAsync(
-        historyMulti(provider as any, [checksum, upper], { source: 'ots' })
+        history(provider as any, [checksum, upper], { source: 'ots' })
       );
       deepStrictEqual(
         { calls, addresses: rows.map((row) => row.addresses) },
@@ -2926,6 +3182,89 @@ describe('Network', () => {
           currentBlock: 100,
         },
       ]);
+    });
+    it('tokenScanner scans the whole chain in budgeted, resumable steps', async () => {
+      // one incoming transfer at block 100: only the oldest of four 100k
+      // windows (chain head 399_999) contains anything
+      const incoming = transferLog(USDT, OTHER, ADDR, 5000000n);
+      const provider = () =>
+        new RpcClient({
+          call: async (method, ...args) => {
+            if (method === 'eth_blockNumber') return numberTo0xHex(399_999);
+            if (method === 'eth_getLogs')
+              return BigInt(args[0].fromBlock) === 0n ? [incoming] : [];
+            if (method === 'eth_getTransactionByHash')
+              return rawTx(hash('11'), 100, OTHER, USDT, 0n);
+            if (method === 'eth_getTransactionReceipt')
+              return rawReceipt(hash('11'), 100, [incoming]);
+            throw new Error(`unexpected rpc call ${method}`);
+          },
+        });
+      const scanner = tokenScanner(provider(), ADDR, { logsWindow: 100_000, discover: false });
+      deepStrictEqual({ done: scanner.done, percent: scanner.percent }, { done: false, percent: 0 });
+      const rows = [];
+      const progress = [];
+      const result = await scanner.step(
+        (row) => rows.push(row),
+        { onProgress: (p) => progress.push(p) }
+      );
+      deepStrictEqual(result, { done: true, percent: 100 });
+      deepStrictEqual(scanner.state, { done: true, top: 399_999, toBlock: 399_999 });
+      deepStrictEqual(
+        rows.map((row) => [row.hash, row.tokenTransfers.length]),
+        [[hash('11'), 1]]
+      );
+      deepStrictEqual(progress[0].phase, 'prepare');
+      deepStrictEqual(progress.at(-1), {
+        ...progress.at(-1),
+        phase: 'complete',
+        completed: 100,
+        total: 100,
+        found: 1,
+      });
+      deepStrictEqual(
+        progress.filter((p) => p.phase === 'logs').length > 0,
+        true,
+        'per-window progress reported'
+      );
+      // stepping a finished scanner is a no-op
+      deepStrictEqual(
+        await scanner.step(() => {
+          throw new Error('no rows expected');
+        }),
+        { done: true, percent: 100 }
+      );
+
+      // an exhausted budget pauses the step; the serialized cursor resumes it
+      // in a fresh instance, as if in a later session
+      const paused = tokenScanner(provider(), ADDR, { logsWindow: 100_000, discover: false });
+      const rows1 = [];
+      const r1 = await paused.step((row) => rows1.push(row), { budgetMs: -1 });
+      deepStrictEqual(r1.done, false, 'paused mid-scan');
+      const saved = JSON.parse(JSON.stringify(paused.state));
+      const resumed = tokenScanner(provider(), ADDR, {
+        logsWindow: 100_000,
+        discover: false,
+        state: saved,
+      });
+      const rows2 = [];
+      const r2 = await resumed.step((row) => rows2.push(row));
+      deepStrictEqual(r2, { done: true, percent: 100 });
+      // dedupe across steps is the caller's job (merge by hash)
+      const merged = new Map([...rows1, ...rows2].map((row) => [row.hash, row]));
+      deepStrictEqual([...merged.keys()], [hash('11')]);
+
+      // multi-address scans stream through the array form and keep attribution
+      const multi = tokenScanner(provider(), [ADDR], { logsWindow: 100_000, discover: false });
+      const multiRows = [];
+      deepStrictEqual(await multi.step((row) => multiRows.push(row)), {
+        done: true,
+        percent: 100,
+      });
+      deepStrictEqual(
+        multiRows.map((row) => [row.hash, row.addresses]),
+        [[hash('11'), [ADDR]]]
+      );
     });
     it('ots+logs deduplicates log discoveries in favor of the OTS row', async () => {
       const transfer = transferLog(USDT, OTHER, ADDR, 5000000n);
@@ -3170,10 +3509,10 @@ describe('Network', () => {
       );
       deepStrictEqual(
         {
-          blockHash: res[1].info.info.blockHash,
-          blockNumber: res[1].info.info.blockNumber,
-          transactionIndex: res[1].info.info.transactionIndex,
-          receipt: res[1].info.receipt,
+          blockHash: res[1].info.blockHash,
+          blockNumber: res[1].info.blockNumber,
+          transactionIndex: res[1].info.transactionIndex,
+          receipt: res[1].receipt,
         },
         {
           blockHash: undefined,
@@ -3188,7 +3527,7 @@ describe('Network', () => {
       const row = (name, block) => ({
         hash: name,
         block,
-        info: { info: { blockNumber: block, transactionIndex: 0 } },
+        info: { blockNumber: block, transactionIndex: 0 },
       });
       const pending = row('pending', undefined);
       const mined = row('mined', 100);
@@ -3821,6 +4160,272 @@ describe('Network', () => {
       throws(() => detectTokenContracts([], 123), /wrong address/);
     });
 
+    it('decodes transfers of unregistered contracts from log shape alone', () => {
+      // outside any registry: the topic shape pins the standard and amount,
+      // metadata stays undefined and the row is marked unverified
+      deepStrictEqual(
+        decodeReceiptTokenTransfers({ logs: [erc20Log(UNKNOWN, OTHER, ME, 5n)] }, ME, {}),
+        [
+          {
+            contract: UNKNOWN,
+            abi: 'ERC20',
+            from: OTHER,
+            to: ME,
+            tokens: new Map([[1n, 5n]]),
+            verified: false,
+          },
+        ]
+      );
+      // the participation filter still applies; non-transfer logs stay skipped
+      deepStrictEqual(
+        decodeReceiptTokenTransfers({ logs: [erc20Log(UNKNOWN, OTHER, OTHER, 5n)] }, ME, {}),
+        []
+      );
+      deepStrictEqual(
+        decodeReceiptAllTokenTransfers(
+          { logs: [{ address: UNKNOWN, topics: [`0x${'ff'.repeat(32)}`], data: '0x' }] },
+          {}
+        ),
+        []
+      );
+      // registry entries still win: metadata attached, nothing marked unverified
+      deepStrictEqual(
+        decodeReceiptTokenTransfers({ logs: [erc20Log(USDT, OTHER, ME, 5n)] }, ME, {
+          [USDT.toLowerCase()]: { abi: 'ERC20', symbol: 'USDT', decimals: 6 },
+        }),
+        [
+          {
+            contract: USDT.toLowerCase(),
+            abi: 'ERC20',
+            symbol: 'USDT',
+            decimals: 6,
+            from: OTHER,
+            to: ME,
+            tokens: new Map([[1n, 5n]]),
+          },
+        ]
+      );
+    });
+
+    it('erc20Amount unwraps per-token results', () => {
+      deepStrictEqual(erc20Amount(new Map([[1n, 7n]])), 7n);
+      deepStrictEqual(erc20Amount(new Map()), 0n);
+      deepStrictEqual(erc20Amount({ contract: UNKNOWN, error: 'nope' }), undefined);
+      deepStrictEqual(erc20Amount(undefined), undefined);
+    });
+
+    it('tokenDiff signs token movements for the watched addresses', () => {
+      const transfer = { from: OTHER, to: ME, tokens: new Map([[1n, 5n]]) };
+      deepStrictEqual(tokenDiff(transfer, ME), new Map([[1n, 5n]]));
+      deepStrictEqual(tokenDiff(transfer, OTHER), new Map([[1n, -5n]]));
+      // a transfer within the watched set nets to zero, like txDiff
+      deepStrictEqual(tokenDiff(transfer, [ME, OTHER]), new Map([[1n, 0n]]));
+      deepStrictEqual(tokenDiff(transfer, UNKNOWN), new Map([[1n, 0n]]));
+      // calldata-decoded transfers may lack `from`
+      deepStrictEqual(
+        tokenDiff({ to: ME, tokens: new Map([[7n, 1n]]) }, [ME.toUpperCase()]),
+        new Map([[7n, 1n]])
+      );
+    });
+
+    it('tokenBalances batches ERC-20 reads through provider multicall', async () => {
+      const usdt = tokenFromSymbol('USDT');
+      const dai = tokenFromSymbol('DAI');
+      const wbtc = tokenFromSymbol('WBTC');
+      const tokens = [usdt, dai, wbtc].map((t) => ({ ...t, abi: 'ERC20' }));
+      const aggregates = [];
+      const prov = {
+        call: async () => {
+          throw new Error('unexpected call');
+        },
+        ethCall: async () => {
+          throw new Error('unexpected ethCall');
+        },
+        estimateGas: async () => 0n,
+        ethLogs: async () => [],
+        multicall: async (calls) => {
+          aggregates.push(calls);
+          // last token's read fails; the rest return balances
+          return calls.map((call, i) => ({
+            success: i !== calls.length - 1,
+            data: i !== calls.length - 1 ? encodeWords(BigInt(5 + i)) : '0x',
+          }));
+        },
+      };
+      const res = await tokenBalances(prov, ME, tokens);
+      deepStrictEqual(aggregates.length, 1, 'one aggregate round for three tokens');
+      deepStrictEqual(
+        aggregates[0].map((call) => call.to),
+        [usdt.contract, dai.contract, wbtc.contract]
+      );
+      deepStrictEqual(res[usdt.contract], new Map([[1n, 5n]]));
+      deepStrictEqual(res[dai.contract], new Map([[1n, 6n]]));
+      deepStrictEqual(res[wbtc.contract], {
+        contract: wbtc.contract,
+        error: 'balanceOf: call failed',
+      });
+      // whole aggregate failing (no Multicall3 on this chain): per-token fallback
+      let single = 0;
+      const bare = {
+        ...prov,
+        ethCall: async () => (single++, encodeWords(9n)),
+        multicall: async () => {
+          throw new Error('execution reverted');
+        },
+      };
+      const fallback = await tokenBalances(bare, ME, tokens);
+      deepStrictEqual(single, 3);
+      deepStrictEqual(fallback[usdt.contract], new Map([[1n, 9n]]));
+    });
+
+    it('transferTx builds validated ETH and ERC-20 transfer fields', async () => {
+      const FROM = '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045';
+      const TO = '0x8ba1f109551bD432803012645Ac136ddd64DBA72';
+      const usdt = tokenFromSymbol('USDT');
+      const calls = [];
+      const archive = new RpcClient({
+        call: async (method, ...args) => {
+          calls.push(method);
+          if (method === 'eth_getBalance') return numberTo0xHex(10n ** 18n);
+          if (method === 'eth_getTransactionCount') return '0x5';
+          if (method === 'eth_feeHistory')
+            return { baseFeePerGas: ['0x64'], gasUsedRatio: [], reward: [['0x2']] };
+          if (method === 'eth_estimateGas') return '0x5208';
+          if (method === 'eth_chainId') return '0x1';
+          if (method === 'eth_call') return encodeWords(1000000n); // balanceOf
+          throw new Error(`unexpected rpc call ${method}`);
+        },
+      });
+      const eth = await buildTransferTx(archive, { from: FROM, to: TO, amount: 10n ** 17n });
+      deepStrictEqual(eth, {
+        type: 'eip1559',
+        nonce: 5n,
+        gasLimit: 21000n,
+        chainId: 1n,
+        to: TO,
+        value: 10n ** 17n,
+        data: '0x',
+        maxFeePerGas: 202n,
+        maxPriorityFeePerGas: 2n,
+      });
+      // round-trips into a signable transaction
+      deepStrictEqual(Transaction.prepare(eth).raw.value, 10n ** 17n);
+      const erc20 = await buildTransferTx(archive, {
+        from: FROM,
+        to: TO,
+        amount: 500000n,
+        token: usdt.contract,
+        expectedChainId: 1n,
+      });
+      deepStrictEqual(erc20.to.toLowerCase(), usdt.contract.toLowerCase(), 'token contract, checksummed');
+      deepStrictEqual(erc20.value, 0n);
+      deepStrictEqual(
+        erc20.data,
+        ethHex.encode(createContract(ERC20).transfer.encodeInput({ to: TO, value: 500000n }))
+      );
+      // balance guards
+      await rejects(
+        () => buildTransferTx(archive, { from: FROM, to: TO, amount: 2n * 10n ** 18n }),
+        /exceeds balance/
+      );
+      await rejects(
+        () =>
+          buildTransferTx(archive, { from: FROM, to: TO, amount: 2000000n, token: usdt.contract }),
+        /exceeds balance/
+      );
+      // the whole balance leaves nothing for the fee
+      await rejects(
+        () => buildTransferTx(archive, { from: FROM, to: TO, amount: 10n ** 18n }),
+        /worst-case fee/
+      );
+      // token transfers pay gas in ETH: an ETH-less sender must fail too,
+      // since eth_estimateGas/eth_call never check fee affordability
+      const broke = new RpcClient({
+        call: async (method) => {
+          if (method === 'eth_getBalance') return '0x0'; // no ETH, plenty of tokens
+          if (method === 'eth_getTransactionCount') return '0x5';
+          if (method === 'eth_feeHistory')
+            return { baseFeePerGas: ['0x64'], gasUsedRatio: [], reward: [['0x2']] };
+          if (method === 'eth_estimateGas') return '0x5208';
+          if (method === 'eth_chainId') return '0x1';
+          if (method === 'eth_call') return encodeWords(1000000n); // balanceOf
+          throw new Error(`unexpected rpc call ${method}`);
+        },
+      });
+      await rejects(
+        () => buildTransferTx(broke, { from: FROM, to: TO, amount: 1n, token: usdt.contract }),
+        /worst-case fee .* exceeds the ETH balance .*gas is paid in ETH/
+      );
+      // checkBalance: false still skips it
+      deepStrictEqual(
+        (
+          await buildTransferTx(broke, {
+            from: FROM,
+            to: TO,
+            amount: 1n,
+            token: usdt.contract,
+            checkBalance: false,
+          })
+        ).value,
+        0n
+      );
+      // checkBalance: false skips the reads and the fee guard
+      const before = calls.length;
+      const unchecked = await buildTransferTx(archive, {
+        from: FROM,
+        to: TO,
+        amount: 10n ** 18n,
+        checkBalance: false,
+      });
+      deepStrictEqual(unchecked.value, 10n ** 18n);
+      deepStrictEqual(calls.slice(before).includes('eth_getBalance'), false);
+      // wrong-chain guard bubbles from prepare
+      await rejects(
+        () =>
+          buildTransferTx(archive, { from: FROM, to: TO, amount: 1n, expectedChainId: 11155111n }),
+        /node reports chain id 1, expected 11155111/
+      );
+      // validation
+      await rejects(() => buildTransferTx(archive, { from: FROM, to: 'nope', amount: 1n }), /wrong to/);
+      await rejects(() => buildTransferTx(archive, { from: 'nope', to: TO, amount: 1n }), /wrong from/);
+      await rejects(() => buildTransferTx(archive, { from: FROM, to: TO, amount: 0n }), /wrong amount/);
+      await rejects(
+        () => buildTransferTx(archive, { from: FROM, to: TO, amount: 1 as any }),
+        /wrong amount/
+      );
+      await rejects(
+        () => buildTransferTx(archive, { from: FROM, to: TO, amount: 1n, token: '0x1' }),
+        /wrong token contract/
+      );
+    });
+
+    it('maxSpendable reserves a plain-transfer fee for ETH', async () => {
+      const FROM = '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045';
+      const usdt = tokenFromSymbol('USDT');
+      const archive = new RpcClient({
+        call: async (method) => {
+          if (method === 'eth_getBalance') return numberTo0xHex(10n ** 18n);
+          if (method === 'eth_feeHistory')
+            return { baseFeePerGas: ['0x64'], gasUsedRatio: [], reward: [['0x2']] };
+          if (method === 'eth_call') return encodeWords(123n);
+          throw new Error(`unexpected rpc call ${method}`);
+        },
+      });
+      // maxFeePerGas = 2 * 100 + 2 = 202; reserve = 21000 * 202
+      deepStrictEqual(await maxSpendable(archive, { from: FROM }), 10n ** 18n - 21000n * 202n);
+      deepStrictEqual(await maxSpendable(archive, { from: FROM, token: usdt.contract }), 123n);
+      // dust below the reserve clamps to zero
+      const dust = new RpcClient({
+        call: async (method) => {
+          if (method === 'eth_getBalance') return '0x1';
+          if (method === 'eth_feeHistory')
+            return { baseFeePerGas: ['0x64'], gasUsedRatio: [], reward: [['0x2']] };
+          throw new Error(`unexpected rpc call ${method}`);
+        },
+      });
+      deepStrictEqual(await maxSpendable(dust, { from: FROM }), 0n);
+    });
+
     it('tokenInfos pools, dedupes and never rejects', async () => {
       let getCode = 0;
       const prov = new RpcClient({
@@ -3965,6 +4570,141 @@ describe('Network', () => {
       throws(() => nftCandidates([{}]), /wrong rows/);
     });
 
+    it('erc20Candidates bridges history rows to tokenBalances', () => {
+      const shady = '0x00000000000000000000000000000000000BEEF4'; // mixed casing folds
+      const rows = [
+        {
+          tokenTransfers: [
+            {
+              contract: USDT,
+              abi: 'ERC20',
+              symbol: 'USDT',
+              decimals: 6,
+              from: OTHER,
+              to: ME,
+              tokens: new Map([[1n, 5n]]),
+            },
+            // shape-decoded unknown token: no metadata yet
+            { contract: shady, abi: 'ERC20', verified: false, from: OTHER, to: ME, tokens: new Map([[1n, 9n]]) },
+            // NFT movements are ignored
+            { contract: shady, abi: 'ERC721', symbol: 'PUNK', to: ME, tokens: new Map([[7n, 1n]]) },
+          ],
+        },
+        {
+          tokenTransfers: [
+            // first-seen metadata fills in later, provenance flag travels along
+            {
+              contract: shady.toLowerCase(),
+              abi: 'ERC20',
+              symbol: 'SHDY',
+              decimals: 18,
+              verified: false,
+              from: ME,
+              to: OTHER,
+              tokens: new Map([[1n, 2n]]),
+            },
+          ],
+        },
+      ];
+      deepStrictEqual(erc20Candidates(rows), [
+        { contract: USDT, abi: 'ERC20', symbol: 'USDT', decimals: 6 },
+        {
+          contract: shady.toLowerCase(),
+          abi: 'ERC20',
+          symbol: 'SHDY',
+          decimals: 18,
+          verified: false,
+        },
+      ]);
+      deepStrictEqual(erc20Candidates([]), []);
+      throws(() => erc20Candidates([{}]), /wrong rows/);
+    });
+
+    it('slimRow keeps only what a transaction list renders', () => {
+      const row = {
+        hash: TX_HASH,
+        block: 100,
+        timestamp: 1700000100,
+        reverted: false,
+        diff: 5n,
+        tokenTransfers: [],
+        info: { hash: TX_HASH, from: OTHER, to: ME, value: 7n, input: `0xa9059cbb${'00'.repeat(64)}` },
+        receipt: { status: 1, logs: [] },
+      };
+      deepStrictEqual(slimRow(row as any), {
+        hash: TX_HASH,
+        block: 100,
+        timestamp: 1700000100,
+        tokenTransfers: [],
+        info: { from: OTHER, to: ME, value: 7n, input: '0xa9059cbb' },
+      });
+      // multi-address rows keep their attribution
+      deepStrictEqual(slimRow({ ...row, addresses: [ME] } as any).addresses, [ME]);
+      // slim rows survive the persistence codec
+      deepStrictEqual(rowCodec.decode(rowCodec.encode(slimRow(row as any))), slimRow(row as any));
+    });
+
+    it('spendableAssets merges curated and discovered tokens with balances', async () => {
+      const usdt = tokenFromSymbol('USDT');
+      const rows = [
+        {
+          tokenTransfers: [
+            // discovered, with metadata
+            {
+              contract: UNKNOWN,
+              abi: 'ERC20',
+              symbol: 'MCK',
+              decimals: 18,
+              verified: false,
+              from: OTHER,
+              to: ME,
+              tokens: new Map([[1n, 5n]]),
+            },
+            // no decimals: skipped (amounts could not be rendered)
+            {
+              contract: '0x00000000000000000000000000000000000beef9',
+              abi: 'ERC20',
+              from: OTHER,
+              to: ME,
+              tokens: new Map([[1n, 5n]]),
+            },
+          ],
+        },
+      ];
+      const calls = [];
+      const prov = {
+        call: async (method, ...args) => {
+          calls.push(method);
+          if (method === 'eth_getBalance') return numberTo0xHex(10n ** 18n);
+          throw new Error(`unexpected call ${method}`);
+        },
+        ethCall: async (args) =>
+          args.to.toLowerCase() === usdt.contract.toLowerCase()
+            ? encodeWords(7000000n)
+            : encodeWords(0n), // discovered token: zero balance -> dropped
+        estimateGas: async () => 0n,
+        ethLogs: async () => [],
+      };
+      const assets = await spendableAssets(prov as any, ME, {
+        rows,
+        tokens: [usdt],
+        ethBalance: 5n,
+      });
+      deepStrictEqual(assets, [
+        { symbol: 'ETH', decimals: 18, balance: 5n },
+        { contract: usdt.contract, symbol: 'USDT', decimals: 6, balance: 7000000n },
+      ]);
+      deepStrictEqual(calls, [], 'ethBalance in hand: no balance read');
+      // without ethBalance the native balance is fetched
+      const fetched = await spendableAssets(prov as any, ME, { rows, tokens: [usdt] });
+      deepStrictEqual(fetched[0].balance, 10n ** 18n);
+      deepStrictEqual(calls, ['eth_getBalance']);
+      await rejects(
+        () => spendableAssets(prov as any, ME, { tokens: [{ contract: UNKNOWN }] }),
+        /wrong token entry/
+      );
+    });
+
     it('tokenURI substitutes every ERC-1155 {id} template', async () => {
       const game = '0x00000000000000000000000000000000000beef3';
       const prov = new RpcClient({
@@ -4089,9 +4829,19 @@ describe('Network', () => {
       // shared cache: the second enrichment probes nothing
       await enrichTx(prov, tx, { address: ME, cache });
       deepStrictEqual(counters.getCode, 1);
-      // discovery off: unknown contracts stay undecoded
+      // discovery off: the movement still decodes from log shape, but without
+      // metadata — and without any probes
       const blind = await enrichTx(offlineProv(), tx, { address: ME, discover: false });
-      deepStrictEqual(blind.tokenTransfers.length, 0);
+      deepStrictEqual(blind.tokenTransfers, [
+        {
+          contract: UNKNOWN,
+          abi: 'ERC20',
+          from: OTHER,
+          to: ME,
+          tokens: new Map([[1n, 5n]]),
+          verified: false,
+        },
+      ]);
     });
 
     it('nft-heavy address: replayed discovery, holdings, enrichTx', async () => {
@@ -4225,7 +4975,7 @@ describe('Network', () => {
       });
 
       // enrichTx over a row already in hand: no refetch of tx data
-      const detail = await enrichTx(prov, rows[0].info, {
+      const detail = await enrichTx(prov, rows[0], {
         address: NFT_ADDR,
         clearSig: 'resolve',
       });

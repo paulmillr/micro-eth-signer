@@ -36,10 +36,16 @@ export type HistoryTx = {
   reverted: boolean;
   /** Signed wei delta for the requested address: value in/out, minus fee on outgoing txs. */
   diff: bigint;
-  /** Known-token movements involving the requested address, decoded offline. */
+  /**
+   * Token movements involving the requested address, decoded offline. Tokens
+   * outside the registry decode from the log shape with symbol/decimals
+   * undefined; `discover` fills that metadata in.
+   */
   tokenTransfers: DecodedTokenTransfer[];
-  /** Raw normalized tx data, e.g. for detail views; no receipt on pending txs. */
-  info: { info: TxInfo; receipt: TxReceipt | undefined };
+  /** Raw normalized tx data, e.g. for detail views. */
+  info: TxInfo;
+  /** Absent on pending txs (and OTS rows served without one). */
+  receipt?: TxReceipt;
   /** Present when `internal: true`; recovered with per-transaction tracing only. */
   internal?: Transfer[];
   /** Present on rows produced by the universal eth_getLogs fallback. */
@@ -95,7 +101,8 @@ export function historyRow(
     reverted: receipt?.status === 0,
     diff: txDiff(address, info, receipt),
     tokenTransfers: decodeReceiptTokenTransfers(receipt, address, tokens),
-    info: { info, receipt },
+    info,
+    receipt,
   };
   if (partial) row.partial = partial;
   return row;
@@ -269,7 +276,8 @@ export async function enrichCore(
       ? all.filter((tt) => tt.from?.toLowerCase() === a || tt.to.toLowerCase() === a)
       : all,
     allTokenTransfers: all,
-    info: { info, receipt },
+    info,
+    receipt,
   };
   const tier = opts.clearSig ?? 'offline';
   if (tier === false || info.input === '0x' || !info.to) return row;
@@ -318,7 +326,7 @@ export async function enrichCore(
  * contract discovery, plus calldata/ERC-7730 clear-signing tiers. The shared
  * primitive behind history(); use it directly for tx detail pages, block views,
  * or receipts already in hand. Accepts a tx hash or an `{ info, receipt }` pair
- * (e.g. an existing row's `info`). Without `opts.address`, `tokenTransfers`
+ * (a HistoryTx row qualifies as-is). Without `opts.address`, `tokenTransfers`
  * equals `allTokenTransfers` and `diff` is zero. Pass one `cache` across calls
  * to dedupe discovery and speed up clear signing.
  */
@@ -338,6 +346,43 @@ export async function enrichTx(
     ({ info, receipt } = tx);
   } else throw new Error('enrichTx: wrong tx');
   return enrichCore(prov, opts.address, info, receipt, opts, opts.cache ?? new Map());
+}
+
+/** A row slimmed by {@link slimRow}: what a transaction list renders. */
+export type SlimHistoryTx = {
+  hash: string;
+  block?: number;
+  timestamp?: number;
+  tokenTransfers: DecodedTokenTransfer[];
+  /** `input` is truncated to the 4-byte selector. */
+  info: Pick<TxInfo, 'from' | 'to' | 'value'> & { input: string };
+  /** Preserved from multi-address rows (history over an address array). */
+  addresses?: string[];
+};
+
+/**
+ * The table/persistence-grade slice of a row: full rows retain complete
+ * receipts and calldata, which add up to hundreds of MB over a deep scan —
+ * slim rows keep only what a transaction list renders (decoded transfers plus
+ * from/to/value and the calldata selector). Keep the full `{ info, receipt }`
+ * separately (or refetch via txInfo) when a detail view needs it. Pairs with
+ * {@link rowCodec} for persisting scan results.
+ */
+export function slimRow(row: HistoryTx & { addresses?: string[] }): SlimHistoryTx {
+  const slim: SlimHistoryTx = {
+    hash: row.hash,
+    block: row.block,
+    timestamp: row.timestamp,
+    tokenTransfers: row.tokenTransfers,
+    info: {
+      from: row.info.from,
+      to: row.info.to,
+      value: row.info.value,
+      input: row.info.input.slice(0, 10),
+    },
+  };
+  if (row.addresses) slim.addresses = row.addresses;
+  return slim;
 }
 
 /**
