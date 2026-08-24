@@ -21,7 +21,7 @@
     "micro-packed": "~0.11.0"
   },
   "devDependencies": {
-    "@paulmillr/jsbt": "0.7.0",
+    "@paulmillr/jsbt": "0.7.1",
     "bismar": "0.1.8",
     "@paulmillr/trusted-setups": "~0.3.0",
     "@types/node": "25.9.0",
