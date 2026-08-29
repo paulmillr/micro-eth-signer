@@ -198,8 +198,17 @@ describe('RLP', () => {
         for (let i = 0; i < n; i++) x = [x];
         return x;
       };
-      const tree = deep(1000);
-      deepStrictEqual(RLP.decode(RLP.encode(tree)), tree);
+      // node's deepStrictEqual comparator is itself recursive and overflows around this
+      // depth (limit varies by node build/thread stack), so unwrap iteratively instead
+      const unwrap = (x) => {
+        let d = 0;
+        while (Array.isArray(x) && x.length === 1) {
+          x = x[0];
+          d++;
+        }
+        return { d, x };
+      };
+      deepStrictEqual(unwrap(RLP.decode(RLP.encode(deep(1000)))), { d: 1000, x: [] });
       const boundary = RLP.encode(deep(1024));
       deepStrictEqual(RLP.encode(RLP.decode(boundary)), boundary);
       throws(() => RLP.encode(deep(1025)), {
