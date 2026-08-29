@@ -1,0 +1,13 @@
+{
+  "name": "micro-eth-signer-examples",
+  "private": true,
+  "type": "module",
+  "description": "Demo apps and their UI tests; dev-only deps (headless browser) live here, out of the library's devDependencies",
+  "scripts": {
+    "build:dist": "node _build-dist.js",
+    "test": "node test/explorer-html.test.ts && node test/tx-html.test.ts && node test/tx-cli.test.ts"
+  },
+  "devDependencies": {
+    "playwright-core": "1.62.1"
+  }
+}

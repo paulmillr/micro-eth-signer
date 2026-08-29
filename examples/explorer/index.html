@@ -1,0 +1,911 @@
+<!doctype html>
+<!--
+  Web version of explorer/cli.js: same default RPC and account, same functionality.
+  Requires built artifacts (`npm run build`) and a static server at the repo root:
+    npx serve .   # or: python3 -m http.server
+  Then open http://localhost:8000/examples/explorer/index.html
+  Override defaults with query params: index.html?address=0x…&rpc=http://…
+  The RPC endpoint must allow CORS requests from this page's origin.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!-- resizes-visual: the virtual keyboard overlays instead of reflowing the layout -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-visual" />
+    <title>Ethereum explorer</title>
+    <script type="importmap">
+      {
+        "imports": {
+          "micro-ftch": "../../node_modules/micro-ftch/index.js",
+          "micro-packed": "../../node_modules/micro-packed/index.js",
+          "@scure/base": "../../node_modules/@scure/base/index.js",
+          "@noble/hashes/": "../../node_modules/@noble/hashes/",
+          "@noble/curves/": "../../node_modules/@noble/curves/",
+          "micro-eth-signer": "../../index.js",
+          "micro-eth-signer/utils.js": "../../utils.js",
+          "micro-eth-signer/abi.js": "../../abi/index.js",
+          "micro-eth-signer/net.js": "../../net.js"
+        }
+      }
+    </script>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --muted: #808080;
+        --line: #80808040;
+        --accent: #2563eb;
+      }
+      body {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 13px;
+        line-height: 1.5;
+        max-width: 900px;
+        margin: 2rem auto;
+        padding: 0 1rem;
+      }
+      h1 {
+        font-size: 1rem;
+        font-weight: 600;
+        margin-bottom: 0.25rem;
+      }
+      .address-line {
+        word-break: break-all;
+      }
+      h2 {
+        font-size: 0.85rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--muted);
+        margin: 1.5rem 0 0.5rem;
+      }
+      form {
+        display: flex;
+        gap: 0.5rem;
+        margin: 1rem 0;
+      }
+      input {
+        flex: 1;
+        font: inherit;
+        /* >=16px stops mobile browsers from zooming in on focus */
+        font-size: 16px;
+        padding: 0.4rem 0.6rem;
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        background: transparent;
+        color: inherit;
+      }
+      button {
+        font: inherit;
+        padding: 0.4rem 0.8rem;
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        background: transparent;
+        color: inherit;
+        cursor: pointer;
+      }
+      button:hover:not(:disabled) {
+        border-color: var(--accent);
+        color: var(--accent);
+      }
+      button:disabled {
+        color: var(--muted);
+        cursor: default;
+      }
+      #favorite-button {
+        margin-top: 0.5rem;
+      }
+      pre {
+        margin: 0;
+        white-space: pre-wrap;
+        word-break: break-all;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      td,
+      th {
+        text-align: left;
+        padding: 0.25rem 0.75rem 0.25rem 0;
+        border-bottom: 1px solid var(--line);
+        white-space: nowrap;
+      }
+      /* taller rows: touch-friendly tap targets on mobile */
+      tbody td {
+        padding-top: 0.75rem;
+        padding-bottom: 0.75rem;
+      }
+      td.amount,
+      td.time,
+      td.addresses {
+        white-space: pre-line;
+        word-break: break-word;
+      }
+      th {
+        color: var(--muted);
+        font-weight: 400;
+      }
+      tbody tr {
+        cursor: pointer;
+      }
+      tbody tr:hover,
+      tbody tr.selected {
+        background: #80808020;
+      }
+      td.favorite-address {
+        white-space: normal;
+        word-break: break-all;
+        width: 100%;
+      }
+      .muted {
+        color: var(--muted);
+      }
+      .error {
+        color: #dc2626;
+      }
+      #progress:not(:empty),
+      #favorites-progress:not(:empty) {
+        margin: 0.5rem 0;
+        white-space: pre-line;
+      }
+      .nft-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+        gap: 12px;
+        margin: 0.75rem 0;
+      }
+      .nft-item {
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 8px;
+      }
+      .nft-item img,
+      .nft-item .no-image {
+        width: 100%;
+        aspect-ratio: 1;
+        object-fit: cover;
+        border-radius: 4px;
+        background: #80808020;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--muted);
+      }
+      .nft-item .nft-name {
+        margin-top: 6px;
+        word-break: break-word;
+      }
+      dialog {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 1rem 1.25rem;
+        width: min(640px, calc(100vw - 2rem));
+      }
+      dialog::backdrop {
+        background: #00000066;
+      }
+      #details dt {
+        float: left;
+        width: 8rem;
+        clear: left;
+        color: var(--muted);
+      }
+      #details dd {
+        margin: 0 0 0.15rem 8rem;
+        word-break: break-all;
+        white-space: pre-line;
+      }
+      #details dd.muted {
+        color: var(--muted);
+      }
+      .hidden,
+      /* beats the more specific .nft-item img/.no-image display rules */
+      .nft-item .hidden {
+        display: none;
+      }
+      footer {
+        margin-top: 2rem;
+        color: var(--muted);
+      }
+      /* before anything is loaded, the search floats free. iOS Safari
+         auto-scrolls focused inputs whenever the page can scroll, so the
+         empty state is made unscrollable and the field rests in the upper
+         third — above any keyboard, with nothing to scroll: it cannot move */
+      html:has(body.empty) {
+        overflow: hidden;
+        height: 100%;
+      }
+      body.empty {
+        box-sizing: border-box;
+        height: calc(100svh - 4rem);
+        /* bias on the container, not the form: the status message stays
+           directly under the input, and the group centers ~30% from top */
+        padding-bottom: 40svh;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+      }
+      body.empty footer {
+        display: none;
+      }
+    </style>
+  </head>
+  <body class="empty">
+    <form id="address-form">
+      <input
+        id="address-input"
+        placeholder="Ethereum address or .eth/.gwei name"
+        autocomplete="off"
+        spellcheck="false"
+      />
+      <button type="submit">Load</button>
+      <button type="button" id="favorites-button" class="hidden">★ Favorites</button>
+    </form>
+    <div id="status" class="muted"></div>
+
+    <div id="overview" class="hidden">
+      <h1>Ethereum</h1>
+      <div id="address-line" class="address-line"></div>
+      <div id="ens-line" class="muted"></div>
+      <button id="favorite-button">☆ Favorite</button>
+      <h2>Balances</h2>
+      <pre id="balances"></pre>
+      <h2>NFTs</h2>
+      <button id="nft-button">View NFT balances</button>
+      <div id="nfts" class="nft-grid hidden"></div>
+      <button id="nft-more" class="hidden">Show more</button>
+      <div id="nft-status" class="muted"></div>
+      <h2>Transactions</h2>
+      <button id="scan-button">Load token transactions</button>
+      <div id="progress" class="muted"></div>
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Time</th>
+            <th>Dir</th>
+            <th>Amount</th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+      <button id="rows-more" class="hidden">Show more</button>
+      <div id="empty" class="muted hidden">No transactions found.</div>
+    </div>
+
+    <!-- tx details open as a modal over whichever table they came from -->
+    <dialog id="details-view">
+      <button id="back-button">✕ Close</button>
+      <h2>Transaction</h2>
+      <dl id="details"></dl>
+    </dialog>
+
+    <div id="favorites-view" class="hidden">
+      <button id="favorites-back">← Back</button>
+      <h2>Favorites</h2>
+      <div id="favorites-empty" class="muted hidden">
+        No favorites yet: open an address and press ☆ Favorite.
+      </div>
+      <table>
+        <tbody id="favorites-list"></tbody>
+      </table>
+      <div id="favorites-balances-block" class="hidden">
+        <h2>Balances</h2>
+        <pre id="favorites-balances"></pre>
+      </div>
+      <h2>Transactions</h2>
+      <button id="favorites-scan">Load histories</button>
+      <div id="favorites-progress" class="muted"></div>
+      <div id="favorites-status" class="muted"></div>
+      <table id="favorites-tx-table" class="hidden">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Time</th>
+            <th>Address</th>
+            <th>Dir</th>
+            <th>Amount</th>
+          </tr>
+        </thead>
+        <tbody id="favorites-rows"></tbody>
+      </table>
+      <button id="favorites-more" class="hidden">Show more</button>
+    </div>
+
+    <footer>↑/↓ select · Return open · t scan tokens · Esc back</footer>
+
+    <!-- one tx-row shape for both tables: showRows drops the addresses cell -->
+    <template id="tx-row-template">
+      <tr>
+        <td></td>
+        <td class="time"></td>
+        <td class="addresses"></td>
+        <td></td>
+        <td class="amount"></td>
+      </tr>
+    </template>
+    <template id="favorite-template">
+      <tr>
+        <td class="favorite-address">
+          <div class="favorite-ens"></div>
+          <div class="favorite-addr"></div>
+        </td>
+        <td><button type="button">✕ Remove</button></td>
+      </tr>
+    </template>
+    <template id="nft-template">
+      <div class="nft-item">
+        <img class="hidden" loading="lazy" />
+        <div class="no-image">NFT</div>
+        <div class="nft-name"></div>
+        <div class="nft-id muted"></div>
+      </div>
+    </template>
+    <template id="detail-template"><dt></dt><dd></dd></template>
+
+    <script type="module">
+      import {
+        balanceText,
+        checksumAddress,
+        createExplorer,
+        createFavorites,
+        isAddress,
+        isName,
+        multiRowSummary,
+        rowSummary,
+        RPC_URL,
+        short,
+        usdApprox,
+        withScheme,
+      } from './core.js';
+
+      const $ = (id) => document.getElementById(id);
+      const clone = (id) => $(id).content.firstElementChild.cloneNode(true);
+      const params = new URLSearchParams(location.search);
+      const rpcUrl = withScheme(params.get('rpc') || RPC_URL);
+      const explorer = createExplorer(rpcUrl);
+      const favorites = createFavorites(localStorage);
+
+      let address;
+      let ens; // current address's ENS name, captured into favorites on toggle
+      let rows = [];
+      let scanner; // token scanner; huge addresses scan in ~2-minute steps
+      let cursor = -1;
+      let busy = false;
+      // favorites page data; reset whenever the favorites set changes
+      let favoriteRows = [];
+      let favScanner;
+      let favHistoryLoaded = false;
+      let favBalancesToken = 0; // invalidates stale async balance fills
+
+      const views = ['overview', 'favorites-view'];
+      // pass null to hide everything (the empty search state)
+      function showView(id) {
+        for (const view of views) $(view).classList.toggle('hidden', view !== id);
+      }
+
+      function txRow(summary, index) {
+        const tr = clone('tx-row-template');
+        const [num, time, addresses, dir, amount] = tr.cells;
+        num.textContent = index + 1;
+        time.textContent = summary.time;
+        // multi rows carry participants; single-address rows drop the column
+        if (summary.addresses)
+          addresses.textContent = summary.addresses.map((a) => short(a, 6)).join('\n');
+        else addresses.remove();
+        dir.textContent = summary.direction;
+        amount.textContent = summary.amounts.join('\n'); // one line per token movement
+        return tr;
+      }
+
+      // Tables render in pages: a deep scan can produce 100k rows, and
+      // building them all at once costs seconds and hundreds of MB of DOM.
+      // Rows are batched through a fragment and carry no per-row handlers —
+      // clicks are delegated on the tbody (see below).
+      const PAGE = 2000;
+      function pagedTable(bodyId, moreId, getRows, makeRow) {
+        let limit = 0;
+        const build = (from, to) => {
+          const list = getRows();
+          const fragment = document.createDocumentFragment();
+          for (let i = from; i < to && i < list.length; i++) fragment.append(makeRow(list[i], i));
+          return fragment;
+        };
+        const update = () => {
+          const left = getRows().length - limit;
+          const more = $(moreId);
+          more.textContent = `Show more (${left} left)`;
+          more.classList.toggle('hidden', left <= 0);
+        };
+        return {
+          get limit() {
+            return limit;
+          },
+          show(initial = PAGE) {
+            limit = initial;
+            $(bodyId).replaceChildren(build(0, limit));
+            update();
+          },
+          /** Extends rendering up to `to` rows without rebuilding. */
+          reveal(to) {
+            if (to <= limit) return;
+            const from = limit;
+            limit = to;
+            $(bodyId).append(build(from, to));
+            update();
+          },
+        };
+      }
+      const mainTable = pagedTable('rows', 'rows-more', () => rows, (row, index) => {
+        const tr = txRow(rowSummary(row, address), index);
+        if (index === cursor) tr.className = 'selected';
+        return tr;
+      });
+      const favTable = pagedTable('favorites-rows', 'favorites-more', () => favoriteRows,
+        (row, index) => txRow(multiRowSummary(row), index));
+
+      function showRows() {
+        mainTable.show(Math.max(PAGE, cursor + 1));
+        $('empty').classList.toggle('hidden', rows.length > 0);
+      }
+
+      // secondary info after '·' (usd value, rate) renders dimmed
+      function renderBalances(pre, lines) {
+        pre.textContent = '';
+        lines.forEach((line, i) => {
+          const at = line.indexOf('·');
+          if (line.startsWith('Total')) {
+            const total = document.createElement('span');
+            total.className = 'muted';
+            total.textContent = line;
+            pre.append(total);
+          } else if (at < 0) pre.append(line);
+          else {
+            pre.append(line.slice(0, at + 1));
+            const tail = document.createElement('span');
+            tail.className = 'muted';
+            tail.textContent = line.slice(at + 1);
+            pre.append(tail);
+          }
+          if (i < lines.length - 1) pre.append('\n');
+        });
+      }
+
+      // cursor moves restyle the two affected rows; rebuilding the whole
+      // table (100k rows after a deep scan) per keypress is unusable
+      function moveCursor(delta) {
+        if (!rows.length) return;
+        const body = $('rows');
+        body.children[cursor]?.classList.remove('selected');
+        cursor = (cursor + delta + rows.length) % rows.length;
+        if (cursor >= mainTable.limit) mainTable.reveal(cursor + 1); // e.g. wrap to the oldest row
+        const row = body.children[cursor];
+        row.classList.add('selected');
+        row.scrollIntoView({ block: 'nearest' });
+      }
+
+      async function details(row) {
+        const info = await explorer.details(row);
+        const list = $('details');
+        list.textContent = '';
+        for (const [kind, pairs] of [
+          ['', info.normal],
+          ['muted', info.muted],
+        ])
+          for (const [label, value] of pairs) {
+            if (label === 'txid') continue; // web app shows no txids
+            const pair = $('detail-template').content.cloneNode(true);
+            pair.querySelector('dt').textContent = label;
+            const dd = pair.querySelector('dd');
+            dd.textContent = value;
+            dd.className = kind;
+            list.append(pair);
+          }
+        $('details-view').showModal();
+      }
+
+      const closeDetails = () => $('details-view').close();
+
+      function renderFavoriteButton() {
+        $('favorite-button').textContent = favorites.has(address) ? '★ Favorited' : '☆ Favorite';
+      }
+
+      // the search-bar entry point exists only when there is something to show
+      function renderFavoritesNav() {
+        $('favorites-button').classList.toggle('hidden', !favorites.list().length);
+      }
+
+      // merged history/scan are per favorites-set: any change starts over
+      function resetFavoritesData() {
+        favoriteRows = [];
+        favScanner = undefined;
+        favHistoryLoaded = false;
+        $('favorites-rows').textContent = '';
+        $('favorites-tx-table').classList.add('hidden');
+        $('favorites-more').classList.add('hidden');
+        $('favorites-status').textContent = '';
+        $('favorites-progress').textContent = '';
+        const button = $('favorites-scan');
+        button.textContent = 'Load histories';
+        button.disabled = !favorites.list().length;
+      }
+
+      function favoritesChanged() {
+        renderFavoritesNav();
+        resetFavoritesData();
+      }
+
+      function renderFavoritesList() {
+        const list = favorites.list();
+        const body = $('favorites-list');
+        body.textContent = '';
+        for (const favorite of list) {
+          const tr = clone('favorite-template');
+          // the ENS name was captured when the favorite was created
+          tr.querySelector('.favorite-ens').textContent = favorite.ens || '';
+          const addr = tr.querySelector('.favorite-addr');
+          addr.textContent = favorite.address;
+          if (favorite.ens) addr.classList.add('muted');
+          tr.onclick = () => submit(favorite.address);
+          tr.querySelector('button').onclick = (event) => {
+            event.stopPropagation();
+            favorites.toggle(favorite.address);
+            favoritesChanged();
+            renderFavoritesList();
+            loadFavoritesBalances();
+          };
+          body.append(tr);
+        }
+        $('favorites-empty').classList.toggle('hidden', list.length > 0);
+        $('favorites-balances-block').classList.toggle('hidden', !list.length);
+        // storage may change outside toggle (another tab): refresh the idle button
+        if (!favHistoryLoaded) $('favorites-scan').disabled = !list.length;
+      }
+
+      // combined balances of the whole set, one wallet
+      async function loadFavoritesBalances() {
+        const list = favorites.list();
+        const pre = $('favorites-balances');
+        if (!list.length) return (pre.textContent = '');
+        const token = ++favBalancesToken;
+        pre.textContent = 'Loading…';
+        try {
+          const combined = await explorer.combinedBalances(list.map((f) => f.address));
+          if (token !== favBalancesToken) return; // superseded by a newer fill
+          const lines = combined.balances.map(balanceText);
+          if (combined.totalUsd !== undefined) lines.unshift(`Total ${usdApprox(combined.totalUsd)}`);
+          renderBalances(pre, lines);
+        } catch (error) {
+          if (token === favBalancesToken)
+            pre.textContent = `Balances unavailable: ${error.message}`;
+        }
+      }
+
+      function openFavorites() {
+        renderFavoritesList();
+        loadFavoritesBalances();
+        document.body.classList.remove('empty');
+        showView('favorites-view');
+        window.scrollTo(0, 0);
+      }
+
+      function closeFavorites() {
+        if (address) return showView('overview');
+        showView(null);
+        document.body.classList.add('empty');
+      }
+
+      function showFavoriteRows() {
+        favTable.show();
+        $('favorites-tx-table').classList.toggle('hidden', !favHistoryLoaded);
+      }
+
+      // One button, two stages: first click loads the merged quick history
+      // (history over the address array), later clicks deepen it with a token scan over the
+      // whole set — same behavior as the per-address button.
+      async function favoritesScan() {
+        if (busy || favScanner?.done) return;
+        const list = favorites.list();
+        if (!list.length) return;
+        const addresses = list.map((favorite) => favorite.address);
+        const button = $('favorites-scan');
+        const status = $('favorites-status');
+        busy = true;
+        button.disabled = true;
+        try {
+          if (!favHistoryLoaded) {
+            status.textContent = `Loading merged history of ${list.length} favorites…`;
+            favoriteRows = await explorer.favoritesHistory(addresses);
+            favHistoryLoaded = true;
+            status.textContent = favoriteRows.length ? '' : 'No transactions found.';
+            button.textContent = 'Load token transactions';
+            button.disabled = false;
+            showFavoriteRows();
+            return;
+          }
+          status.textContent = '';
+          favScanner ||= explorer.tokenScanner(addresses, favoriteRows);
+          const result = await scanStep(favScanner, $('favorites-progress'));
+          favoriteRows = result.rows;
+          if (result.done) {
+            button.textContent = '✓ Token transactions loaded';
+          } else {
+            button.textContent = `Continue scan · ${result.percent}% of history scanned · ${favoriteRows.length} txs so far`;
+            button.disabled = false;
+          }
+          showFavoriteRows();
+        } catch (error) {
+          status.textContent = `${favHistoryLoaded ? 'Token scan failed' : 'History unavailable'}: ${error.message}`;
+          button.disabled = false;
+        } finally {
+          busy = false;
+        }
+      }
+
+      // drives one scanner step, drawing spinner/progress into the given element
+      async function scanStep(activeScanner, progress) {
+        let state = { phase: 'prepare', completed: 0, total: 0, scannedTxs: 0, found: 0 };
+        const started = Date.now();
+        const draw = () => {
+          const percent = state.total ? (state.completed / state.total) * 100 : 0;
+          const done = Math.round(percent / 5);
+          const elapsed = Math.round((Date.now() - started) / 1000);
+          const spinner = '⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'[Math.floor((Date.now() - started) / 100) % 10];
+          const bar = `[${'#'.repeat(done)}${'.'.repeat(20 - done)}]`;
+          let line = `Preparing token scan ${spinner} · ${elapsed}s`;
+          if (state.phase === 'logs')
+            line = `Token logs ${spinner} ${bar} ${state.completed}/${state.total} chunks\n${state.scannedTxs} txs · ${state.found} known transfers · ${elapsed}s`;
+          if (state.phase === 'metadata' || state.phase === 'complete')
+            line = `Token metadata ${spinner} ${bar} ${state.completed}/${state.total} contracts\n${state.found} transfers · ${elapsed}s`;
+          progress.textContent = line;
+        };
+        const timer = setInterval(draw, 250);
+        try {
+          // record only: the scanner notifies per consumed row, and painting
+          // at that rate stalls the page — the 250ms timer repaints instead
+          return await activeScanner.step((update) => {
+            state = update;
+          });
+        } finally {
+          clearInterval(timer);
+          progress.textContent = '';
+        }
+      }
+
+      async function scanTokens() {
+        if (scanner?.done || busy || !address) return;
+        busy = true;
+        const button = $('scan-button');
+        button.disabled = true;
+        try {
+          scanner ||= explorer.tokenScanner(address, rows);
+          const result = await scanStep(scanner, $('progress'));
+          rows = result.rows;
+          cursor = rows.length ? 0 : -1;
+          if (result.done) {
+            button.textContent = '✓ Token transactions loaded';
+          } else {
+            // paused at a window boundary: show what we have, offer the next era
+            button.textContent = `Continue scan · ${result.percent}% of history scanned · ${rows.length} txs so far`;
+            button.disabled = false;
+          }
+          showRows();
+          return true;
+        } catch (error) {
+          button.disabled = false;
+          $('status').textContent = `Token scan failed: ${error.message}`;
+          $('status').className = 'error';
+          return false;
+        } finally {
+          busy = false;
+        }
+      }
+
+      let nftPager;
+      async function viewNfts() {
+        if (busy || !address) return;
+        const button = $('nft-button');
+        const status = $('nft-status');
+        try {
+          // scan history first: the quick view alone misses most NFT transfers.
+          // A paused deep scan is fine — candidates come from scanned eras and
+          // ownership is verified on-chain either way.
+          if (!scanner && !(await scanTokens())) return; // scan error already shown
+          busy = true;
+          button.disabled = true;
+          status.textContent = 'Verifying ownership on-chain…';
+          nftPager = await explorer.nfts(address, rows);
+          status.textContent = nftPager.total ? '' : 'No NFTs currently held.';
+          button.classList.add('hidden');
+          busy = false;
+          if (nftPager.total) await showMoreNfts();
+        } catch (error) {
+          status.textContent = `NFTs could not be loaded: ${error.message}`;
+          button.disabled = false;
+          busy = false;
+        }
+      }
+
+      async function showMoreNfts() {
+        if (busy || !nftPager) return;
+        busy = true;
+        const more = $('nft-more');
+        more.disabled = true;
+        more.textContent = 'Loading…';
+        try {
+          const items = await nftPager.next(24);
+          const grid = $('nfts');
+          const shortId = (id) => {
+            const s = id.toString();
+            if (s.length <= 12) return s;
+            const hex = `0x${id.toString(16)}`;
+            return `${hex.slice(0, 10)}…${hex.slice(-4)}`;
+          };
+          for (const item of items) {
+            const tile = clone('nft-template');
+            const img = tile.querySelector('img');
+            const noImage = tile.querySelector('.no-image');
+            if (item.image) {
+              img.src = item.image;
+              img.alt = item.name || `#${shortId(item.id)}`;
+              img.classList.remove('hidden');
+              noImage.classList.add('hidden');
+              img.onerror = () => {
+                img.classList.add('hidden');
+                noImage.classList.remove('hidden');
+              };
+            }
+            tile.querySelector('.nft-name').textContent =
+              item.name || item.symbol || short(item.contract);
+            tile.querySelector('.nft-id').textContent =
+              `#${shortId(item.id)}${item.amount > 1n ? ` ×${item.amount}` : ''}`;
+            grid.append(tile);
+          }
+          grid.classList.remove('hidden');
+          more.textContent = `Show more (${nftPager.remaining} left)`;
+          more.classList.toggle('hidden', nftPager.remaining === 0);
+          more.disabled = false;
+        } catch (error) {
+          $('nft-status').textContent = `NFTs could not be loaded: ${error.message}`;
+        } finally {
+          busy = false;
+        }
+      }
+
+      async function load(value) {
+        if (busy) return;
+        busy = true;
+        const status = $('status');
+        status.className = 'muted';
+        status.textContent = 'Loading balances…';
+        showView(null);
+        closeDetails();
+        try {
+          const overview = await explorer.load(value);
+          address = overview.address;
+          rows = overview.rows;
+          scanner = undefined;
+          cursor = -1;
+          const balances = overview.balances.map(balanceText);
+          if (overview.totalUsd !== undefined) balances.unshift(`Total ${usdApprox(overview.totalUsd)}`);
+          if (overview.historyError)
+            balances.push(`History unavailable: ${overview.historyError.message}`);
+          ens = overview.ens || undefined;
+          $('address-line').textContent = address;
+          $('ens-line').textContent = ens || '';
+          renderFavoriteButton();
+          renderBalances($('balances'), balances);
+          $('scan-button').textContent = 'Load token transactions';
+          $('scan-button').disabled = false;
+          $('progress').textContent = '';
+          $('nfts').textContent = '';
+          $('nfts').classList.add('hidden');
+          $('nft-status').textContent = '';
+          $('nft-button').classList.remove('hidden');
+          $('nft-button').disabled = false;
+          $('nft-more').classList.add('hidden');
+          nftPager = undefined;
+          showRows();
+          status.textContent = '';
+          showView('overview');
+          document.body.classList.remove('empty');
+        } catch (error) {
+          status.textContent = error.message;
+          status.className = 'error';
+        } finally {
+          busy = false;
+        }
+      }
+
+      // Accepts a raw address or a name: NameResolver routes 'vitalik.eth' to
+      // ENS and 'alice.gwei' to GNS through the same nameToAddress call.
+      async function submit(value) {
+        if (!isAddress(value)) {
+          if (!isName(value)) {
+            $('status').textContent = 'Invalid Ethereum address.';
+            $('status').className = 'error';
+            return;
+          }
+          $('status').textContent = `Resolving ${value}…`;
+          $('status').className = 'muted';
+          // resolveName returns undefined for unknown names and throws on
+          // transport failures: an unreachable RPC is not the name's fault
+          let resolved;
+          try {
+            resolved = await explorer.resolveName(value);
+          } catch (error) {
+            $('status').textContent = `Lookup failed: ${error.message} (RPC ${rpcUrl} — use ?rpc= to change).`;
+            $('status').className = 'error';
+            return;
+          }
+          if (!resolved) {
+            $('status').textContent = `Name ${value} did not resolve.`;
+            $('status').className = 'error';
+            return;
+          }
+          value = resolved;
+        }
+        $('address-input').value = checksumAddress(value);
+        load(value);
+      }
+      $('address-form').onsubmit = (event) => {
+        event.preventDefault();
+        submit($('address-input').value.trim());
+      };
+      // row clicks are delegated: rows carry no handlers of their own
+      $('rows').onclick = (event) => {
+        const tr = event.target.closest('tr');
+        if (tr) details(rows[tr.sectionRowIndex]);
+      };
+      $('favorites-rows').onclick = (event) => {
+        const tr = event.target.closest('tr');
+        if (tr) details(favoriteRows[tr.sectionRowIndex]);
+      };
+      $('rows-more').onclick = () => mainTable.reveal(mainTable.limit + PAGE);
+      $('favorites-more').onclick = () => favTable.reveal(favTable.limit + PAGE);
+      $('scan-button').onclick = scanTokens;
+      $('nft-button').onclick = viewNfts;
+      $('nft-more').onclick = showMoreNfts;
+      $('back-button').onclick = closeDetails;
+      // clicking the backdrop (the dialog element itself) closes the modal
+      $('details-view').onclick = (event) => {
+        if (event.target === $('details-view')) closeDetails();
+      };
+      $('favorites-button').onclick = openFavorites;
+      $('favorites-back').onclick = closeFavorites;
+      $('favorites-scan').onclick = favoritesScan;
+      $('favorite-button').onclick = () => {
+        favorites.toggle(address, ens);
+        renderFavoriteButton();
+        favoritesChanged();
+      };
+
+      document.addEventListener('keydown', (event) => {
+        if (event.target === $('address-input')) return;
+        if ($('details-view').open) return; // modal: Esc closes it natively
+        if (event.key === 'Escape') {
+          if (!$('favorites-view').classList.contains('hidden')) return closeFavorites();
+          return;
+        }
+        if ($('overview').classList.contains('hidden')) return;
+        if (event.key === 'ArrowUp') moveCursor(-1);
+        else if (event.key === 'ArrowDown') moveCursor(1);
+        else if (event.key === 'Enter' && rows[cursor]) details(rows[cursor]);
+        else if (event.key.toLowerCase() === 't') scanTokens();
+        else return;
+        event.preventDefault();
+      });
+
+      renderFavoritesNav();
+      resetFavoritesData();
+
+      // no demo default on the web: start with just the search input
+      const initial = params.get('address');
+      if (initial && (isAddress(initial) || isName(initial))) {
+        $('address-input').value = initial;
+        submit(initial);
+      }
+    </script>
+  </body>
+</html>

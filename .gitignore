@@ -6,6 +6,7 @@ node_modules
 *.d.ts.map
 /test/build
 /test/compiled
+/examples/dist
 /abi
 /advanced
 /clearsig
