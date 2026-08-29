@@ -464,6 +464,24 @@ describe('typedData (EIP-712)', () => {
         '0xf2cee375fa42b42143804025fc449deafd50cc031ca257e0b194a650a912090f'
       );
     });
+    it('uses an immutable EIP712 schema snapshot', () => {
+      const types = {
+        EIP712Domain: [],
+        Order: [
+          { name: 'amount', type: 'uint256' },
+          { name: 'approved', type: 'bool' },
+        ],
+      };
+      const data = { amount: 5n, approved: true };
+      const e = encoder(types, {});
+      const hash = e.structHash('Order', data);
+
+      // Mutating caller-owned schema state must not combine the old cached type hash
+      // with a new field order during signing.
+      types.Order.reverse();
+      types.Order[0].type = 'uint8';
+      deepStrictEqual(e.structHash('Order', data), hash);
+    });
     it('bounds EIP712 schema and message complexity', () => {
       const tooManyTypes = Object.fromEntries(Array.from({ length: 257 }, (_, i) => [`T${i}`, []]));
       throws(() => getDependencies(tooManyTypes), /EIP712: too many types, limit is 256/);
@@ -474,6 +492,29 @@ describe('typedData (EIP-712)', () => {
       throws(
         () => getDependencies({ Big: tooManyFields }),
         /EIP712: too many schema fields, limit is 1024/
+      );
+
+      const maxIdentifier = `x${'a'.repeat(1023)}`;
+      deepStrictEqual(getDependencies({ [maxIdentifier]: [] })[maxIdentifier], new Set());
+      deepStrictEqual(
+        getDependencies({ Named: [{ name: maxIdentifier, type: 'uint256' }] }).Named,
+        new Set()
+      );
+      throws(
+        () => getDependencies({ [`x${'a'.repeat(1024)}`]: [] }),
+        /EIP712: identifier too long, limit is 1024 characters/
+      );
+      throws(
+        () => getDependencies({ Named: [{ name: `x${'a'.repeat(1024)}`, type: 'uint256' }] }),
+        /EIP712: identifier too long, limit is 1024 characters/
+      );
+
+      const expanded = {};
+      for (let i = 47; i >= 0; i--)
+        expanded[`T${i}`] = [{ name: maxIdentifier, type: i === 47 ? 'uint256' : `T${i + 1}` }];
+      throws(
+        () => getTypes(expanded),
+        /EIP712: expanded schema too large, limit is 1048576 characters/
       );
 
       const recursive = encoder(
@@ -509,6 +550,39 @@ describe('typedData (EIP-712)', () => {
         () => arrays.encodeData('Bag', { values: [...values, 4094n] }),
         /EIP712: message too large, limit is 4096 nodes/
       );
+    });
+    it('rejects invalid EIP712 field identifiers that collide in canonical schemas', () => {
+      deepStrictEqual(
+        getDependencies({
+          Valid: [
+            { name: '_value', type: 'uint256' },
+            { name: '$approved0', type: 'bool' },
+          ],
+        }).Valid,
+        new Set()
+      );
+      for (const name of ['', '0value', 'has space', 'amount,bool approved', 'value[]'])
+        throws(
+          () => getDependencies({ Invalid: [{ name, type: 'uint256' }] }),
+          /EIP712: invalid field name/
+        );
+
+      const typesA = {
+        EIP712Domain: [],
+        Order: [
+          { type: 'uint256', name: 'amount,bool approved' },
+          { type: 'uint256', name: 'nonce' },
+        ],
+      };
+      const typesB = {
+        EIP712Domain: [],
+        Order: [
+          { type: 'uint256', name: 'amount' },
+          { type: 'bool', name: 'approved,uint256 nonce' },
+        ],
+      };
+      throws(() => typed.encodeType(typesA, 'Order'), /EIP712: invalid field name/);
+      throws(() => typed.encodeType(typesB, 'Order'), /EIP712: invalid field name/);
     });
   });
   describe('eip191Signer', () => {

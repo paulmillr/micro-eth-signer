@@ -1,5 +1,5 @@
 import { ERC1155, ERC20, WETH, TOKENS, events } from '../abi/index.ts';
-import { addChecksum } from '../core/address.ts';
+import { addChecksum, parseAddress } from '../core/address.ts';
 import {
   enrichCore,
   historyRow,
@@ -29,6 +29,7 @@ import {
 } from './tokens.ts';
 
 const _0n = /* @__PURE__ */ BigInt(0);
+const dict = <T>(): Record<string, T> => Object.create(null) as Record<string, T>;
 const ERC_TRANSFER = /* @__PURE__ */ (() => events(ERC20).Transfer)();
 const WETH_DEPOSIT = /* @__PURE__ */ (() => events(WETH).Deposit)();
 const WETH_WITHDRAW = /* @__PURE__ */ (() => events(WETH).Withdrawal)();
@@ -181,16 +182,19 @@ async function internalForTx(
   const addr = address.toLowerCase();
   if (useOts) {
     const actions: ActionOts[] = await withRetry(() => prov.ots_traceTransaction(txHash));
-    return actions
-      .filter((a) => {
-        const value = a.value ?? _0n;
-        return (
-          a.depth > 0 &&
-          value !== _0n &&
-          (a.from.toLowerCase() === addr || a.to.toLowerCase() === addr)
-        );
-      })
-      .map((a) => ({ from: a.from, to: a.to, value: a.value ?? _0n }));
+    const out: Transfer[] = [];
+    for (const a of actions) {
+      // These call variants only expose inherited/apparent value; unlike CALL,
+      // CREATE, or SELFDESTRUCT, they do not move ETH to the trace target.
+      const type = typeof a.type === 'string' ? a.type.toUpperCase() : '';
+      if (a.depth <= 0 || type === 'DELEGATECALL' || type === 'CALLCODE' || type === 'STATICCALL')
+        continue;
+      const value = a.value ?? _0n;
+      if (value === _0n) continue;
+      if (a.from.toLowerCase() !== addr && a.to.toLowerCase() !== addr) continue;
+      out.push({ from: a.from, to: a.to, value });
+    }
+    return out;
   }
   let actions;
   try {
@@ -198,9 +202,21 @@ async function internalForTx(
   } catch (e) {
     throw requireMethod(e, 'trace_transaction', TX_TRACE_REQUIREMENT);
   }
+  const failedPaths = new Set<string>();
+  for (const a of actions) {
+    if (Array.isArray(a.traceAddress) && a.error) failedPaths.add(a.traceAddress.join('.'));
+  }
+  const hasFailedAncestor = (path: number[]) => {
+    for (let depth = 0; depth < path.length; depth++) {
+      if (failedPaths.has(path.slice(0, depth).join('.'))) return true;
+    }
+    return false;
+  };
   const out: Transfer[] = [];
   for (const a of actions) {
     if (!Array.isArray(a.traceAddress) || a.traceAddress.length === 0) continue;
+    if (a.error || hasFailedAncestor(a.traceAddress)) continue;
+    if (!a.action || a.action.callType !== 'call') continue;
     const from = a.action && a.action.from;
     const to = a.action && a.action.to;
     if (from?.toLowerCase() !== addr && to?.toLowerCase() !== addr) continue;
@@ -609,6 +625,7 @@ async function* historyInner(
   const internalCache = new Map<string, Promise<Transfer[]>>();
   const withInternal = async (tx: HistoryTx): Promise<HistoryTx> => {
     if (!opts.internal) return tx;
+    if (tx.reverted) return { ...tx, internal: [] };
     const caps = capabilities || (await prov.capabilities());
     let internal = internalCache.get(tx.hash);
     if (!internal) {
@@ -911,21 +928,39 @@ async function* historyMultiInner(
  * Accepts any rows with ETH `transfers` and tokenTransfers; no network calls.
  */
 export function calcTransfersDiff<T extends TransfersLike>(transfers: T[]): (T & Balances)[] {
-  const balances: Record<string, bigint> = {};
-  const tokenBalances: Record<string, Record<string, Map<bigint, bigint>>> = {};
+  const validAddresses = new Set<string>();
+  const checked = (address: string, field: string) => {
+    if (validAddresses.has(address)) return address;
+    try {
+      parseAddress(address);
+    } catch {
+      throw new Error(`calcTransfersDiff: wrong ${field} address`);
+    }
+    validAddresses.add(address);
+    return address;
+  };
+  const balances: Record<string, bigint> = dict();
+  const tokenBalances: Record<string, Record<string, Map<bigint, bigint>>> = dict();
   for (const t of transfers) {
     for (const it of t.transfers) {
-      if (it.from) balances[it.from] = (balances[it.from] || _0n) - it.value;
-      if (it.to) balances[it.to] = (balances[it.to] || _0n) + it.value;
+      const from = checked(it.from, 'from');
+      balances[from] = (balances[from] || _0n) - it.value;
+      if (it.to !== undefined) {
+        const to = checked(it.to, 'to');
+        balances[to] = (balances[to] || _0n) + it.value;
+      }
     }
     for (const tt of t.tokenTransfers) {
-      if (!tokenBalances[tt.contract]) tokenBalances[tt.contract] = {};
-      const token = tokenBalances[tt.contract];
+      const contract = checked(tt.contract, 'contract');
+      const from = checked(tt.from, 'token from');
+      const to = checked(tt.to, 'token to');
+      if (!tokenBalances[contract]) tokenBalances[contract] = dict();
+      const token = tokenBalances[contract];
       for (const [tokenId, value] of tt.tokens) {
-        if (token[tt.from] === undefined) token[tt.from] = new Map();
-        if (token[tt.to] === undefined) token[tt.to] = new Map();
-        const fromTokens = token[tt.from];
-        const toTokens = token[tt.to];
+        if (token[from] === undefined) token[from] = new Map();
+        if (token[to] === undefined) token[to] = new Map();
+        const fromTokens = token[from];
+        const toTokens = token[to];
         fromTokens.set(tokenId, (fromTokens.get(tokenId) || _0n) - value);
         toTokens.set(tokenId, (toTokens.get(tokenId) || _0n) + value);
       }
@@ -987,8 +1022,9 @@ export type ScannerStepOpts = {
  * its interleaved windows share no resume boundary and retry the whole
  * remaining range).
  *
- * Rows are delivered through `step(onRow)`; the caller owns storage (slim
- * them for tables — full receipts of a busy address add up to gigabytes).
+ * Rows are delivered through `step(onRow)`; asynchronous callbacks are
+ * awaited before the scanner advances. The caller owns storage (slim them for
+ * tables — full receipts of a busy address add up to gigabytes).
  */
 export function tokenScanner(
   prov: RpcClient,
@@ -999,7 +1035,9 @@ export function tokenScanner(
   readonly percent: number;
   readonly state: ScannerState;
   step(
-    onRow: (row: HistoryTx | MultiHistoryTx) => void,
+    onRow:
+      | ((row: HistoryTx | MultiHistoryTx) => void)
+      | ((row: HistoryTx | MultiHistoryTx) => Promise<void>),
     stepOpts?: ScannerStepOpts
   ): Promise<{ done: boolean; percent: number }>;
 } {
@@ -1082,9 +1120,9 @@ export function tokenScanner(
           }
           const key = row.hash.toLowerCase();
           if (!seen.has(key)) {
+            await onRow(row);
             seen.add(key);
             found = progress.found += row.tokenTransfers.length;
-            onRow(row);
           }
           notify();
         }

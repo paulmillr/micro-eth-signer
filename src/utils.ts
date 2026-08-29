@@ -555,7 +555,19 @@ export function cloneDeep<T>(obj: T): T {
     // should be last, so it won't catch other types
     let res: any = {};
     // Clone only owned fields; inherited enumerable data is not part of the object's shape.
-    for (let key in obj) if (Object.hasOwn(obj, key)) res[key] = cloneDeep(obj[key]);
+    for (let key in obj) {
+      if (!Object.hasOwn(obj, key)) continue;
+      const value = cloneDeep(obj[key]);
+      // Object.prototype.__proto__ is an accessor, so assignment would mutate res's prototype.
+      if (key === '__proto__')
+        Object.defineProperty(res, key, {
+          value,
+          enumerable: true,
+          writable: true,
+          configurable: true,
+        });
+      else res[key] = value;
+    }
     return res;
   } else return obj;
 }
@@ -579,7 +591,8 @@ export function omit<T extends object, K extends Extract<keyof T, string>>(
   // Plain-object helper only: arrays and byte arrays carry positional data, not removable fields.
   if (obj === null || Array.isArray(obj) || isBytes(obj))
     throw new Error('omit: expected plain object');
-  let res: any = Object.assign({}, obj);
+  // Object spread creates data properties, including a literal own `__proto__` property.
+  let res: any = { ...obj };
   for (let key of keys) delete res[key];
   return res;
 }
@@ -614,14 +627,25 @@ export function zip<A, B>(a: A[], b: B[]): [A, B][] {
  * createDecimal(18).decode('1.5');
  * ```
  */
+const MAX_DECIMAL_PRECISION = 255;
+function decimalPrecision(precision: number): number {
+  if (!Number.isSafeInteger(precision) || precision < 0 || precision > MAX_DECIMAL_PRECISION) {
+    throw new RangeError(`decimal precision must be between 0 and ${MAX_DECIMAL_PRECISION}`);
+  }
+  return precision;
+}
+
 export const createDecimal = (precision: number, round?: boolean): Coder<bigint, string> =>
-  coders.decimal(precision, round);
+  coders.decimal(decimalPrecision(precision), round);
 // createDecimal per render is wasteful — every wallet UI ends up writing this
-// cache, so it ships here once
-const decimalCoders = /* @__PURE__ */ new Map<number, Coder<bigint, string>>();
+// cache, so it ships here once. An array makes the 256-entry upper bound explicit.
+const decimalCoders: (Coder<bigint, string> | undefined)[] = /* @__PURE__ */ new Array(
+  MAX_DECIMAL_PRECISION + 1
+);
 const cachedDecimal = (precision: number): Coder<bigint, string> => {
-  let coder = decimalCoders.get(precision);
-  if (!coder) decimalCoders.set(precision, (coder = createDecimal(precision)));
+  precision = decimalPrecision(precision);
+  let coder = decimalCoders[precision];
+  if (!coder) decimalCoders[precision] = coder = coders.decimal(precision);
   return coder;
 };
 /**
@@ -705,8 +729,8 @@ export const formatters: TRet<Formatters> = /* @__PURE__ */ deepFreeze({
   // returns decimal that costs exactly $0.01 in given precision (using price)
   // formatDecimal(perCentDecimal(prec, price), prec) * price == '0.01'
   perCentDecimal(precision: number, price: number): bigint {
-    if (!Number.isSafeInteger(precision) || precision <= 0)
-      throw new Error('perCentDecimal: wrong precision');
+    if (!Number.isSafeInteger(precision) || precision <= 0 || precision > MAX_DECIMAL_PRECISION)
+      throw new RangeError('perCentDecimal: wrong precision');
     // Zero price has no finite one-cent amount; reject before the bigint division.
     if (!Number.isFinite(price) || price <= 0) throw new Error('perCentDecimal: wrong price');
     const fiatPrec = weieth;

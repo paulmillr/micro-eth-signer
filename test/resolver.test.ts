@@ -58,7 +58,15 @@ describe('resolver', () => {
     deepStrictEqual(isResolvableName('0xd8da6bf26964af9d7eed9e03e53415d37aa96045'), false);
     deepStrictEqual(isResolvableName('0x.eth'), false); // 0x-prefixed is address-like
     deepStrictEqual(isResolvableName('has space.eth'), false);
+    deepStrictEqual(isResolvableName('a-b.c_d'), true);
+    for (const malformed of ['a..eth', '.eth', 'eth.', 'a...eth', `del\x7f.eth`])
+      deepStrictEqual(isResolvableName(malformed), false);
     deepStrictEqual(isResolvableName(''), false);
+  });
+  it('isResolvableName rejects long near-matches without backtracking', () => {
+    const start = performance.now();
+    deepStrictEqual(isResolvableName('a.'.repeat(26) + ' '), false);
+    deepStrictEqual(performance.now() - start < 100, true);
   });
   describe('ENS', () => {
     it('namehash', () => {

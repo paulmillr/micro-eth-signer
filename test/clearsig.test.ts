@@ -158,6 +158,24 @@ const UNREAD_BYTE_VECTORS = new Set([
   'registry/okx/tests/calldata-OkxDexRouterV1.0.7-multi-commission.tests.json#6',
   'registry/weth/tests/calldata-weth.tests.json#0',
 ]);
+// These copied upstream fixtures contradict their descriptor's explicit EIP-712
+// domain constraints. Deployment matches cannot override the mismatched domain.
+const CONTEXT_MISMATCH_VECTORS = new Set([
+  'registry/1inch/tests/eip712-1inch-limit-order.tests.json#0',
+  'registry/lens/tests/eip712-lens-token-handle-registry.tests.json#0',
+  'registry/permit/tests/eip712-permit-arbitrum-bridged-usdc.tests.json#0',
+  'registry/permit/tests/eip712-permit-avalanche_c_chain-savax.tests.json#0',
+  'registry/permit/tests/eip712-permit-avalanche_c_chain-yetiswap.tests.json#0',
+  'registry/permit/tests/eip712-permit-base-aero.tests.json#0',
+  'registry/permit/tests/eip712-permit-base-usdt.tests.json#0',
+  'registry/permit/tests/eip712-permit-ethereum-lido-wsteth.tests.json#0',
+  'registry/permit/tests/eip712-permit-ethereum-usds.tests.json#0',
+  'registry/permit/tests/eip712-permit-optimism-bob.tests.json#0',
+  'registry/permit/tests/eip712-permit-polygon-aave-weth.tests.json#0',
+  'registry/permit/tests/eip712-permit-polygon-bridged-usdc.tests.json#0',
+  'registry/permit/tests/eip712-permit-polygon-quick.tests.json#0',
+  'registry/permit/tests/eip712-permit-polygon-usdt.tests.json#0',
+]);
 const INFERRED_CHAIN_IDS: Record<string, number> = {
   // This copied Rarible fixture omits chainId, but its bytes32 salt is Polygon's 137.
   // Supply the missing runtime context without changing the EIP-712 schema or signature.
@@ -768,6 +786,22 @@ describe('ERC-7730 clear signing', () => {
     const files = addTokens(CLEARSIG_REPO, {
       [USDC]: { abi: 'ERC20', symbol: 'USDC', decimals: 6 },
     });
+    const unverified = addTokens(CLEARSIG_REPO, {
+      [ASSET]: { abi: 'ERC20', symbol: 'FAKE', decimals: 18, verified: false },
+    });
+    const trusted = addTokens(CLEARSIG_REPO, {
+      [ASSET]: {
+        abi: 'ERC20',
+        contract: SHARE,
+        symbol: 'REAL',
+        decimals: 18,
+        verified: true,
+      },
+    });
+    const assetDescriptor = `tokens/1/${ASSET}/calldata-erc20-tokens.json`;
+    deepStrictEqual(Object.hasOwn(unverified, assetDescriptor), false);
+    deepStrictEqual(Object.hasOwn(trusted, assetDescriptor), true);
+    deepStrictEqual(Object.hasOwn(trusted, `tokens/1/${SHARE}/calldata-erc20-tokens.json`), false);
     deepStrictEqual(
       {
         ercs: Object.keys(ERCS).length,
@@ -775,7 +809,7 @@ describe('ERC-7730 clear signing', () => {
         full: Object.keys(CLEARSIG_REPO_FULL).length,
         fullHasNoErcs: Object.keys(CLEARSIG_REPO_FULL).some((k) => k.startsWith('ercs/')),
       },
-      { ercs: 6, ours: 6, full: 378, fullHasNoErcs: false }
+      { ercs: 6, ours: 5, full: 378, fullHasNoErcs: false }
     );
     deepStrictEqual(
       {
@@ -1148,6 +1182,59 @@ describe('ERC-7730 clear signing', () => {
     });
   });
 
+  it('scopes repository token metadata by chain and address', async () => {
+    const token = '0x0000000000000000000000000000000000000011';
+    const target = '0x0000000000000000000000000000000000000012';
+    const tokenDescriptor = (chainId, ticker) => ({
+      context: { contract: { deployments: [{ chainId, address: token }] } },
+      metadata: { token: { ticker, decimals: 0 } },
+      display: { formats: {} },
+    });
+    const files = {
+      'token-mainnet.json': tokenDescriptor(1, 'MAIN'),
+      'token-optimism.json': tokenDescriptor(10, 'OPT'),
+      'pay.json': {
+        context: {
+          contract: {
+            deployments: [
+              { chainId: 1, address: target },
+              { chainId: 10, address: target },
+            ],
+          },
+        },
+        display: {
+          formats: {
+            'pay(uint256 value)': {
+              intent: 'Pay',
+              fields: [
+                {
+                  path: 'value',
+                  label: 'Amount',
+                  format: 'tokenAmount',
+                  params: { token },
+                },
+              ],
+            },
+          },
+        },
+      },
+    };
+    const data = ethHex.encode(
+      createContract([
+        { type: 'function', name: 'pay', inputs: [{ name: 'value', type: 'uint256' }] },
+      ] as const).pay.encodeInput(5n)
+    );
+
+    deepStrictEqual(
+      (await calldata(files, { to: target, data, chainId: 1 })).fields.Amount.value,
+      '5 MAIN'
+    );
+    deepStrictEqual(
+      (await calldata(files, { to: target, data, chainId: 10 })).fields.Amount.value,
+      '5 OPT'
+    );
+  });
+
   it('checks EIP-712 domainSeparator context offline', async () => {
     const typed = vectors.permit2Single.data;
     const domainSeparator = encoder(
@@ -1218,6 +1305,52 @@ describe('ERC-7730 clear signing', () => {
       }),
       undefined
     );
+    deepStrictEqual(
+      await eip712(
+        { ...typed, domain: { ...typed.domain, name: 'Wrong Permit2' } },
+        { clearSig: files }
+      ),
+      undefined
+    );
+  });
+
+  it('matches EIP-712 deployment and domain constraints cumulatively', async () => {
+    const address = '0x0000000000000000000000000000000000000001';
+    const descriptor = (name, intent) => ({
+      context: {
+        eip712: {
+          deployments: [{ chainId: 1, address }],
+          domain: { name },
+        },
+      },
+      display: { formats: { 'Mail(string body)': { intent, fields: [] } } },
+    });
+    const typed = (name) => ({
+      types: { Mail: [{ name: 'body', type: 'string' }] },
+      primaryType: 'Mail',
+      domain: { name, chainId: 1n, verifyingContract: address },
+      message: { body: 'hello' },
+    });
+    const trusted = descriptor('Trusted', 'Trusted mail');
+    const files = {
+      'trusted.json': trusted,
+      'alternate.json': descriptor('Alternate', 'Alternate mail'),
+    };
+
+    deepStrictEqual(await eip712(typed('Trusted'), { clearSig: trusted }), {
+      intent: 'Trusted mail',
+      fields: {},
+    });
+    deepStrictEqual(await eip712(typed('Evil'), { clearSig: trusted }), undefined);
+    deepStrictEqual(await eip712(typed('Trusted'), { clearSig: files }), {
+      intent: 'Trusted mail',
+      fields: {},
+    });
+    deepStrictEqual(await eip712(typed('Alternate'), { clearSig: files }), {
+      intent: 'Alternate mail',
+      fields: {},
+    });
+    deepStrictEqual(await eip712(typed('Evil'), { clearSig: files }), undefined);
   });
 
   it('matches EIP-712 domain constraints with bigint chainId', async () => {
@@ -1364,115 +1497,78 @@ describe('ERC-7730 clear signing', () => {
     );
   });
 
-  it('renders the local MetaMask swap router descriptor', async () => {
+  it('does not clear-sign the MetaMask router without decoding its nested payload', async () => {
     // Real mainnet calldata (tx 0xef99b8f4...): the router appends ONE non-ABI
-    // referral byte after the encoded args, so the render needs
-    // allowUnreadBytes - same story as the copied 1inch registry vectors.
+    // referral byte after the encoded args. Even permissive decoding must not
+    // clear-sign a descriptor that cannot explain the nested swap payload.
     const to = '0x881d40237659c251811cec9c364ef91dc08d300c';
     const data =
       '0x5f5755290000000000000000000000000000000000000000000000000000000000000080000000000000000000000000dac17f958d2ee523a2206206994597c13d831ec70000000000000000000000000000000000000000000000000000000001c9c38000000000000000000000000000000000000000000000000000000000000000c00000000000000000000000000000000000000000000000000000000000000018756e69737761705065726d69743246656544796e616d696300000000000000000000000000000000000000000000000000000000000000000000000000000600000000000000000000000000dac17f958d2ee523a2206206994597c13d831ec7000000000000000000000000a0b86991c6218b36c1d19d4a2e9eb0ce3606eb480000000000000000000000000000000000000000000000000000000001c9c3800000000000000000000000000000000000000000000000000000000001a7bf4e000000000000000000000000000000000000000000000000000000000000012000000000000000000000000000000000000000000000000000000000001f7232000000000000000000000000e3478b0bb1a5084567c319096437924948be1964000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000000004ce3593564c000000000000000000000000000000000000000000000000000000000000006000000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000000000000000000000000000000000006a1a59fd000000000000000000000000000000000000000000000000000000000000000110000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000002000000000000000000000000000000000000000000000000000000000000003c0000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000000800000000000000000000000000000000000000000000000000000000000000003070b0e000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000030000000000000000000000000000000000000000000000000000000000000060000000000000000000000000000000000000000000000000000000000000022000000000000000000000000000000000000000000000000000000000000002a000000000000000000000000000000000000000000000000000000000000001a00000000000000000000000000000000000000000000000000000000000000020000000000000000000000000dac17f958d2ee523a2206206994597c13d831ec700000000000000000000000000000000000000000000000000000000000000800000000000000000000000000000000000000000000000000000000001c9c3800000000000000000000000000000000000000000000000000000000001c70c2a00000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000020000000000000000000000000a0b86991c6218b36c1d19d4a2e9eb0ce3606eb48000000000000000000000000000000000000000000000000000000000000000a0000000000000000000000000000000000000000000000000000000000000001000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000a000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000060000000000000000000000000dac17f958d2ee523a2206206994597c13d831ec7000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000060000000000000000000000000a0b86991c6218b36c1d19d4a2e9eb0ce3606eb4800000000000000000000000074de5d4fcbf63e00296fd95d33236b97940166310000000000000000000000000000000000000000000000000000000000000000756e6978000038fe60af00000000000000000000000000000000000046';
-    const opt = {
-      async resolveToken(req: { address: string }) {
-        if (req.address === '0xdac17f958d2ee523a2206206994597c13d831ec7')
-          return { abi: 'ERC20', symbol: 'USDT', decimals: 6 };
-        return undefined;
-      },
-    };
-    const desc = OURS['local/legacy-metamask-swap-router.json'];
+    const key = 'local/legacy-metamask-swap-router.json';
+    deepStrictEqual(Object.hasOwn(OURS, key), false);
     deepStrictEqual(
-      await calldata(desc, { to, chainId: 1, data }, { allowUnreadBytes: true, ...opt }),
+      await calldata(CLEARSIG_REPO, { to, chainId: 1, data }, { allowUnreadBytes: true }),
+      undefined
+    );
+  });
+  it('renders decoded transaction context and supports bytes slices in token paths', async () => {
+    deepStrictEqual(
+      await calldata(
+        UNISWAP_V3_ROUTER02_CLEAR,
+        txInput(Transaction.fromHex(vectors.uniswapV3Router02.rawTx)),
+        {
+          async resolveToken(req) {
+            if (req.address === SABAI.toLowerCase())
+              return { abi: 'ERC20', symbol: 'SABAI', decimals: 18 };
+            if (req.address === WETH.toLowerCase())
+              return { abi: 'ERC20', symbol: 'WETH', decimals: 18 };
+          },
+        }
+      ),
       {
         intent: 'Swap',
-        interpolatedIntent: 'Swap 30 USDT via uniswapPermit2FeeDynamic',
+        interpolatedIntent:
+          'Swap 1020.3493939635519715 SABAI for at least 0.000902656069426593 WETH to 0xc0fb1c01de1148fa7b1f151a1740e52b375c47f1',
         structuredIntent: [
           'Swap ',
-          { value: '30 USDT', format: 'tokenAmount', rawValue: 30000000n },
-          ' via ',
           {
-            value: 'uniswapPermit2FeeDynamic',
-            format: 'raw',
-            rawValue: 'uniswapPermit2FeeDynamic',
+            value: '1020.3493939635519715 SABAI',
+            format: 'tokenAmount',
+            rawValue: 1020349393963551971500n,
+          },
+          ' for at least ',
+          {
+            value: '0.000902656069426593 WETH',
+            format: 'tokenAmount',
+            rawValue: 902656069426593n,
+          },
+          ' to ',
+          {
+            value: '0xc0fb1c01de1148fa7b1f151a1740e52b375c47f1',
+            format: 'addressName',
+            rawValue: '0xc0fb1c01de1148fa7b1f151a1740e52b375c47f1',
           },
         ],
         fields: {
-          'Amount to Send': { value: '30 USDT', format: 'tokenAmount', rawValue: 30000000n },
-          'Token to Send': {
-            value: '0xdac17f958d2ee523a2206206994597c13d831ec7',
-            format: 'addressName',
-            rawValue: '0xdac17f958d2ee523a2206206994597c13d831ec7',
+          'Amount to Send': {
+            value: '1020.3493939635519715 SABAI',
+            format: 'tokenAmount',
+            rawValue: 1020349393963551971500n,
           },
-          Aggregator: {
-            value: 'uniswapPermit2FeeDynamic',
-            format: 'raw',
-            rawValue: 'uniswapPermit2FeeDynamic',
+          'Minimum to Receive': {
+            value: '0.000902656069426593 WETH',
+            format: 'tokenAmount',
+            rawValue: 902656069426593n,
+          },
+          Beneficiary: {
+            value: '0xc0fb1c01de1148fa7b1f151a1740e52b375c47f1',
+            format: 'addressName',
+            rawValue: '0xc0fb1c01de1148fa7b1f151a1740e52b375c47f1',
           },
         },
       }
     );
-    // Strict decode (the default) refuses the trailing referral byte outright.
-    await rejects(() => calldata(desc, { to, chainId: 1, data }, opt));
   });
-  it(
-    'renders decoded transaction context and supports bytes slices in token paths',
-    async () => {
-      deepStrictEqual(
-        await calldata(
-          UNISWAP_V3_ROUTER02_CLEAR,
-          txInput(Transaction.fromHex(vectors.uniswapV3Router02.rawTx)),
-          {
-            async resolveToken(req) {
-              if (req.address === SABAI.toLowerCase())
-                return { abi: 'ERC20', symbol: 'SABAI', decimals: 18 };
-              if (req.address === WETH.toLowerCase())
-                return { abi: 'ERC20', symbol: 'WETH', decimals: 18 };
-            },
-          }
-        ),
-        {
-          intent: 'Swap',
-          interpolatedIntent:
-            'Swap 1020.3493939635519715 SABAI for at least 0.000902656069426593 WETH to 0xc0fb1c01de1148fa7b1f151a1740e52b375c47f1',
-          structuredIntent: [
-            'Swap ',
-            {
-              value: '1020.3493939635519715 SABAI',
-              format: 'tokenAmount',
-              rawValue: 1020349393963551971500n,
-            },
-            ' for at least ',
-            {
-              value: '0.000902656069426593 WETH',
-              format: 'tokenAmount',
-              rawValue: 902656069426593n,
-            },
-            ' to ',
-            {
-              value: '0xc0fb1c01de1148fa7b1f151a1740e52b375c47f1',
-              format: 'addressName',
-              rawValue: '0xc0fb1c01de1148fa7b1f151a1740e52b375c47f1',
-            },
-          ],
-          fields: {
-            'Amount to Send': {
-              value: '1020.3493939635519715 SABAI',
-              format: 'tokenAmount',
-              rawValue: 1020349393963551971500n,
-            },
-            'Minimum to Receive': {
-              value: '0.000902656069426593 WETH',
-              format: 'tokenAmount',
-              rawValue: 902656069426593n,
-            },
-            Beneficiary: {
-              value: '0xc0fb1c01de1148fa7b1f151a1740e52b375c47f1',
-              format: 'addressName',
-              rawValue: '0xc0fb1c01de1148fa7b1f151a1740e52b375c47f1',
-            },
-          },
-        }
-      );
-    }
-  );
 
   it('resolves ERC-7730 JSONPath subset and rejects unsupported selectors', async () => {
     const data = ethHex.encode(
@@ -2317,43 +2413,40 @@ describe('ERC-7730 clear signing', () => {
     );
   });
 
-  it(
-    'falls back to raw date value for blockheight encoding without chain timing data',
-    async () => {
-      const data = ethHex.encode(
-        createContract(ERC20).transfer.encodeInput({
-          to: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
-          value: 1n,
-        })
-      );
-      deepStrictEqual(
-        await calldata(
-          {
-            display: {
-              formats: {
-                'transfer(address to,uint256 value)': {
-                  intent: 'Check',
-                  fields: [
-                    {
-                      label: 'Block',
-                      value: '19332140',
-                      format: 'date',
-                      params: { encoding: 'blockheight' },
-                    },
-                  ],
-                },
+  it('falls back to raw date value for blockheight encoding without chain timing data', async () => {
+    const data = ethHex.encode(
+      createContract(ERC20).transfer.encodeInput({
+        to: '0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
+        value: 1n,
+      })
+    );
+    deepStrictEqual(
+      await calldata(
+        {
+          display: {
+            formats: {
+              'transfer(address to,uint256 value)': {
+                intent: 'Check',
+                fields: [
+                  {
+                    label: 'Block',
+                    value: '19332140',
+                    format: 'date',
+                    params: { encoding: 'blockheight' },
+                  },
+                ],
               },
             },
           },
-          { to: USDC, data, chainId: 1 }
-        ),
-        {
-          intent: 'Check',
-          fields: { Block: { value: '19332140', format: 'date', rawValue: '19332140' } },
-        }
-      );
-    }
-  );
+        },
+        { to: USDC, data, chainId: 1 }
+      ),
+      {
+        intent: 'Check',
+        fields: { Block: { value: '19332140', format: 'date', rawValue: '19332140' } },
+      }
+    );
+  });
 
   it('resolves chain-keyed token maps and interpolates formatted values', async () => {
     deepStrictEqual(
@@ -2682,110 +2775,107 @@ describe('ERC-7730 clear signing', () => {
     ]);
   });
 
-  it(
-    'uses renderer callbacks for embedded calldata descriptors and encrypted values',
-    async () => {
-      const to = '0xd8da6bf26964af9d7eed9e03e53415d37aa96045';
-      const transfer = createContract(ERC20).transfer.encodeInput({ to, value: 1000000n }).slice(4);
-      deepStrictEqual(
-        await calldata(
-          EXECUTE_CLEAR,
-          {
-            to: ROUTER02,
-            data: ethHex.encode(
-              createContract(EXECUTE_ABI).execute.encodeInput({
-                to: USDC,
+  it('uses renderer callbacks for embedded calldata descriptors and encrypted values', async () => {
+    const to = '0xd8da6bf26964af9d7eed9e03e53415d37aa96045';
+    const transfer = createContract(ERC20).transfer.encodeInput({ to, value: 1000000n }).slice(4);
+    deepStrictEqual(
+      await calldata(
+        EXECUTE_CLEAR,
+        {
+          to: ROUTER02,
+          data: ethHex.encode(
+            createContract(EXECUTE_ABI).execute.encodeInput({
+              to: USDC,
+              value: 0n,
+              data: transfer,
+            })
+          ),
+        },
+        {
+          async resolveCalldata(req) {
+            deepStrictEqual(
+              {
+                to: req.to,
+                selector: req.selector,
+                chainId: req.chainId,
+                value: req.value,
+              },
+              {
+                to: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48',
+                selector: '0xa9059cbb',
+                chainId: 1n,
                 value: 0n,
-                data: transfer,
-              })
+              }
+            );
+            return ERC20_USDC_CLEAR;
+          },
+        }
+      ),
+      {
+        intent: 'Execute',
+        interpolatedIntent: 'Execute Send 1 USDC to 0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
+        structuredIntent: [
+          'Execute ',
+          {
+            value: 'Send 1 USDC to 0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
+            format: 'calldata',
+            rawValue: ethHex.decode(
+              '0x000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa9604500000000000000000000000000000000000000000000000000000000000f4240'
             ),
           },
-          {
-            async resolveCalldata(req) {
-              deepStrictEqual(
-                {
-                  to: req.to,
-                  selector: req.selector,
-                  chainId: req.chainId,
-                  value: req.value,
-                },
-                {
-                  to: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48',
-                  selector: '0xa9059cbb',
-                  chainId: 1n,
-                  value: 0n,
-                }
-              );
-              return ERC20_USDC_CLEAR;
-            },
-          }
-        ),
+        ],
+        fields: {
+          Call: {
+            value: 'Send 1 USDC to 0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
+            format: 'calldata',
+            rawValue: ethHex.decode(
+              '0x000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa9604500000000000000000000000000000000000000000000000000000000000f4240'
+            ),
+          },
+        },
+      }
+    );
+    const payload = new Uint8Array(32).fill(7);
+    deepStrictEqual(
+      await calldata(
+        ENCRYPTED_CLEAR,
         {
-          intent: 'Execute',
-          interpolatedIntent: 'Execute Send 1 USDC to 0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
-          structuredIntent: [
-            'Execute ',
-            {
-              value: 'Send 1 USDC to 0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
-              format: 'calldata',
-              rawValue: ethHex.decode(
-                '0x000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa9604500000000000000000000000000000000000000000000000000000000000f4240'
-              ),
-            },
-          ],
-          fields: {
-            Call: {
-              value: 'Send 1 USDC to 0xd8da6bf26964af9d7eed9e03e53415d37aa96045',
-              format: 'calldata',
-              rawValue: ethHex.decode(
-                '0x000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa9604500000000000000000000000000000000000000000000000000000000000f4240'
-              ),
-            },
+          to: USDC,
+          chainId: 1,
+          data: ethHex.encode(createContract(ENCRYPTED_ABI).encrypted.encodeInput(payload)),
+        },
+        {
+          async decrypt(req) {
+            deepStrictEqual(req.scheme, 'fhevm');
+            return 1000000n;
           },
         }
-      );
-      const payload = new Uint8Array(32).fill(7);
-      deepStrictEqual(
-        await calldata(
-          ENCRYPTED_CLEAR,
+      ),
+      {
+        intent: 'Encrypted Transfer',
+        interpolatedIntent: 'Encrypted Transfer 1 USDC',
+        structuredIntent: [
+          'Encrypted Transfer ',
           {
-            to: USDC,
-            chainId: 1,
-            data: ethHex.encode(createContract(ENCRYPTED_ABI).encrypted.encodeInput(payload)),
+            value: '1 USDC',
+            format: 'tokenAmount',
+            rawValue: ethHex.decode(
+              '0x0707070707070707070707070707070707070707070707070707070707070707'
+            ),
           },
-          {
-            async decrypt(req) {
-              deepStrictEqual(req.scheme, 'fhevm');
-              return 1000000n;
-            },
-          }
-        ),
-        {
-          intent: 'Encrypted Transfer',
-          interpolatedIntent: 'Encrypted Transfer 1 USDC',
-          structuredIntent: [
-            'Encrypted Transfer ',
-            {
-              value: '1 USDC',
-              format: 'tokenAmount',
-              rawValue: ethHex.decode(
-                '0x0707070707070707070707070707070707070707070707070707070707070707'
-              ),
-            },
-          ],
-          fields: {
-            Amount: {
-              value: '1 USDC',
-              format: 'tokenAmount',
-              rawValue: ethHex.decode(
-                '0x0707070707070707070707070707070707070707070707070707070707070707'
-              ),
-            },
+        ],
+        fields: {
+          Amount: {
+            value: '1 USDC',
+            format: 'tokenAmount',
+            rawValue: ethHex.decode(
+              '0x0707070707070707070707070707070707070707070707070707070707070707'
+            ),
           },
-        }
-      );
-    }
-  );
+        },
+      }
+    );
+  });
 
   it('rejects unread calldata bytes unless explicitly allowed', async () => {
     const item = {
@@ -2835,6 +2925,12 @@ describe('ERC-7730 clear signing', () => {
       } catch (e) {
         throw new Error(`${item.file}#${item.index} ${item.description}: ${(e as Error).message}`);
       }
+      const vectorKey = `${item.file}#${item.index}`;
+      if (CONTEXT_MISMATCH_VECTORS.has(vectorKey)) {
+        deepStrictEqual(result, undefined, `${vectorKey} must fail its domain constraints`);
+        continue;
+      }
+      if (!result) throw new Error(`${vectorKey} ${item.description}: no descriptor matched`);
       deepStrictEqual(
         [typeof result.intent, !!result.fields, Array.isArray(result.fields)],
         ['string', true, false],
@@ -2855,6 +2951,12 @@ describe('ERC-7730 clear signing', () => {
       } catch (e) {
         throw new Error(`${item.file}#${item.index} ${item.description}: ${(e as Error).message}`);
       }
+      const vectorKey = `${item.file}#${item.index}`;
+      if (CONTEXT_MISMATCH_VECTORS.has(vectorKey)) {
+        deepStrictEqual(result, undefined, `${vectorKey} must fail its domain constraints`);
+        continue;
+      }
+      if (!result) throw new Error(`${vectorKey} ${item.description}: no descriptor matched`);
       deepStrictEqual(
         registryMatched(expected, registryActual(result)),
         expected,

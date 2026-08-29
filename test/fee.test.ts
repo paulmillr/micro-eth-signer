@@ -61,7 +61,7 @@ describe('Fees', () => {
     );
     deepStrictEqual(tx.fee, 42000000000000n + 2n * 131072n * 3n);
   });
-  it('Whole amount', () => {
+  it('Max amount', () => {
     const tx = Transaction.prepare({
       to: '0x27b1fdb04752bbc536007a920d24acb045561c26',
       nonce: 1n,
@@ -69,14 +69,14 @@ describe('Fees', () => {
       maxFeePerGas: weigwei.decode('2'),
       maxPriorityFeePerGas: weigwei.decode('1'),
     });
-    const tx2 = tx.setWholeAmount(weieth.decode('1'));
+    const tx2 = tx.setMaxAmount(weieth.decode('1'));
     deepStrictEqual(tx.fee, 42000000000000n);
     deepStrictEqual(tx2.raw, {
       to: '0x27b1fdb04752bbc536007a920d24acb045561c26',
       value: 999958000000000000n,
       nonce: 1n,
       maxFeePerGas: 2000000000n,
-      maxPriorityFeePerGas: 2000000000n,
+      maxPriorityFeePerGas: 1000000000n,
       gasLimit: 21000n,
       accessList: [],
       chainId: 1n,
@@ -84,7 +84,7 @@ describe('Fees', () => {
       type: 'eip1559',
     });
   });
-  it('Whole amount: legacy & burnRemaining=false', () => {
+  it('Max amount preserves fee fields', () => {
     const legacy = Transaction.prepare({
       type: 'legacy',
       to: '0x27b1fdb04752bbc536007a920d24acb045561c26',
@@ -92,30 +92,22 @@ describe('Fees', () => {
       value: weieth.decode('1'),
       gasPrice: weigwei.decode('2'),
     });
-    const wholeLegacy = legacy.setWholeAmount(weieth.decode('1'));
-    deepStrictEqual(wholeLegacy.raw.value, 999958000000000000n);
+    const maxLegacy = legacy.setMaxAmount(weieth.decode('1'));
+    deepStrictEqual(maxLegacy.raw.value, 999958000000000000n);
     // legacy has no priority fee to adjust, gasPrice stays as-is
-    deepStrictEqual(wholeLegacy.raw.gasPrice, weigwei.decode('2'));
+    deepStrictEqual(maxLegacy.raw.gasPrice, weigwei.decode('2'));
     const tx = Transaction.prepare({
       to: '0x27b1fdb04752bbc536007a920d24acb045561c26',
       nonce: 1n,
       value: weieth.decode('1'),
       maxFeePerGas: weigwei.decode('2'),
     });
-    // default burnRemaining=true bumps priority fee to maxFeePerGas, false keeps it
-    deepStrictEqual(
-      tx.setWholeAmount(weieth.decode('1')).raw.maxPriorityFeePerGas,
-      weigwei.decode('2')
-    );
-    deepStrictEqual(
-      tx.setWholeAmount(weieth.decode('1'), { burnRemaining: false }).raw.maxPriorityFeePerGas,
-      weigwei.decode('1')
-    );
-    throws(() => tx.setWholeAmount(0n), /must be bigger than 0/);
-    throws(() => tx.setWholeAmount(tx.fee), /must be bigger than fee/);
+    deepStrictEqual(tx.setMaxAmount(weieth.decode('1')).raw.maxPriorityFeePerGas, weigwei.decode('1'));
+    throws(() => tx.setMaxAmount(0n), /must be bigger than 0/);
+    throws(() => tx.setMaxAmount(tx.fee), /must be bigger than fee/);
     // changing value/fees would invalidate the signature
     const priv = '0x6b911fd37cdf5c81d4c0adb1ab7fa822ed253ab0ad9aa18d77257c88b29b718e';
-    throws(() => tx.signBy(priv).setWholeAmount(weieth.decode('1')), /expected unsigned/);
+    throws(() => tx.signBy(priv).setMaxAmount(weieth.decode('1')), /expected unsigned/);
     // non-strict txs stay non-strict: fee fields above the strict UI caps must not throw
     const loose = Transaction.prepare(
       {
@@ -129,11 +121,11 @@ describe('Fees', () => {
     );
     const looseRt = Transaction.fromHex(loose.toHex({ includeSignature: false }));
     deepStrictEqual(
-      looseRt.setWholeAmount(weieth.decode('10')).raw.value,
+      looseRt.setMaxAmount(weieth.decode('10')).raw.value,
       weieth.decode('10') - looseRt.fee
     );
   });
-  it('Whole amount: EIP4844 includes blob fee', () => {
+  it('Max amount: EIP4844 includes blob fee', () => {
     const tx = Transaction.prepare({
       type: 'eip4844',
       to: '0x27b1fdb04752bbc536007a920d24acb045561c26',
@@ -146,7 +138,7 @@ describe('Fees', () => {
     });
     // 21000 * 2 gwei + 131072 blob gas * 1 blob * 3 wei
     deepStrictEqual(tx.fee, 42000000000000n + 131072n * 3n);
-    deepStrictEqual(tx.setWholeAmount(weieth.decode('1')).raw.value, weieth.decode('1') - tx.fee);
+    deepStrictEqual(tx.setMaxAmount(weieth.decode('1')).raw.value, weieth.decode('1') - tx.fee);
   });
   it('intrinsic gas defaults', () => {
     const base = {

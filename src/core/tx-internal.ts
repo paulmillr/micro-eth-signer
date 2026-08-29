@@ -149,9 +149,9 @@ export const legacySig = /* @__PURE__ */ (() => ({
 type BytesBigintCoder = P.Coder<Bytes, bigint>;
 type BytesNumberCoder = P.Coder<Bytes, number>;
 const U64BE: BytesBigintCoder = /* @__PURE__ */ (() =>
-  P.coders.reverse(P.bigint(8, false, false, false)))();
+  P.coders.reverse(P.bigint(8, false, false, false, true)))();
 const U256BE: BytesBigintCoder = /* @__PURE__ */ (() =>
-  P.coders.reverse(P.bigint(32, false, false, false)))();
+  P.coders.reverse(P.bigint(32, false, false, false, true)))();
 
 // Small coder utils
 // TODO: seems generic enought for packed? or RLP (seems useful for structured encoding/decoding of RLP stuff)
@@ -204,7 +204,7 @@ const struct = <
 // treeshake: authorization-only bundles should not keep extra tx coder locals alive.
 const mkYParityCoder = /* @__PURE__ */ (): TRet<BytesNumberCoder> =>
   P.coders.reverse(
-    P.validate(P.int(1, false, false, false), (elm) => {
+    P.validate(P.int(1, false, false, false, true), (elm) => {
       assertYParityValid(elm);
       return elm;
     })
@@ -612,7 +612,7 @@ const validators: {
     // EIP-7702 §Set code transaction imports the same destination semantics.
     if ((type === 'eip4844' || type === 'eip7702') && address === '0x')
       throw new Error(`${type} transaction destination must not be empty`);
-    if (strict && address === '0x' && !data.data)
+    if (strict && address === '0x' && ethHex.decode(data.data ?? '').length === 0)
       throw new Error('Empty address (0x) without contract deployment code');
   },
   value(num: bigint, { strict }: ValidationOpts) {

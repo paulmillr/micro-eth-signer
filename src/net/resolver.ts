@@ -71,10 +71,9 @@ export function gnsRegistrationFee(label: string): bigint {
  * 'alice.gwei'): dot-separated printable-ASCII labels, not a 0x address.
  * The search-input router for UIs that accept both addresses and names.
  */
+const RESOLVABLE_NAME = /^[\x21-\x2d\x2f-\x7e]+(?:\.[\x21-\x2d\x2f-\x7e]+)+$/;
 export const isResolvableName = (value: string): boolean =>
-  typeof value === 'string' &&
-  /^[\x21-\x7f]+(\.[\x21-\x7f]+)+$/.test(value) &&
-  !value.startsWith('0x');
+  typeof value === 'string' && RESOLVABLE_NAME.test(value) && !value.startsWith('0x');
 
 /** Which name service a reverse (address → name) lookup should use. */
 export type ResolverMode = 'ens' | 'gns';

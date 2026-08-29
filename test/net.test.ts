@@ -2,11 +2,18 @@ import { describe, it } from '@paulmillr/jsbt/test.js';
 import * as mftch from 'micro-ftch';
 import { deepStrictEqual, rejects, throws } from 'node:assert';
 import { readFile } from 'node:fs/promises';
-import { createContract, DEFAULT_TOKENS, ERC1155, ERC20, events, tokenFromSymbol } from '../src/abi/index.ts';
+import {
+  createContract,
+  DEFAULT_TOKENS,
+  ERC1155,
+  ERC20,
+  events,
+  tokenFromSymbol,
+} from '../src/abi/index.ts';
 import { Transaction } from '../src/index.ts';
 import { mapPool, RpcClient, Web3Error, withRetry } from '../src/net.ts';
 import { MULTICALL3 } from '../src/abi/multicall.ts';
-import { enrichTx, rowCodec, slimRow } from '../src/net/enrich.ts';
+import { enrichTx, rowCodec, slimRow, txDiff } from '../src/net/enrich.ts';
 import { calcTransfersDiff, history, newestFirst, tokenScanner } from '../src/net/history.ts';
 import { Quoter } from '../src/net/quoter.ts';
 import { NameResolver } from '../src/net/resolver.ts';
@@ -50,11 +57,15 @@ const collectHistory = (prov, address, opts) => Array.fromAsync(history(prov, ad
 const word = (n) => BigInt(n).toString(16).padStart(64, '0');
 const encodeWords = (...words) => `0x${words.map(word).join('')}`;
 const encodeAddress = (address) => `0x${'0'.repeat(24)}${address.toLowerCase().slice(2)}`;
+const currentTimeSec = () => BigInt(Math.floor(Date.now() / 1000));
 
 function initProv(replayJson) {
   const replay = mftch.replayable(fetch, replayJson, { getKey, offline: true });
-  const provider = mftch.jsonrpc(replay, NODE_URL);
-  const archive = new RpcClient(provider);
+  const replayProvider = mftch.jsonrpc(replay, NODE_URL);
+  const archive = new RpcClient({
+    call: async (method, ...args) =>
+      method === 'eth_chainId' ? '0x1' : replayProvider.call(method, ...args),
+  });
   return archive;
 }
 
@@ -108,13 +119,13 @@ describe('Network', () => {
     deepStrictEqual(vitalikAddr, '0xd8da6bf26964af9d7eed9e03e53415d37aa96045');
     deepStrictEqual(vitalikName, 'vitalik.eth');
   });
-  it('Quoter uses Chainlink by default', async () => {
+  it('Quoter decodes a captured Chainlink response', async () => {
     const quoter = new Quoter(initProv(await rpcVector('chainlink')));
-    const btcPrice = await quoter.coinPrice('BTC');
+    const btcPrice = await quoter.coinPrice('BTC', 'chainlink', { nowSec: 1710097000 });
     deepStrictEqual(btcPrice, 69369.10271);
   });
   it('Quoter reads Chainlink prices without caching', async () => {
-    const latestRoundData = encodeWords(1n, 123456000000n, 0n, 1n, 1n);
+    const latestRoundData = encodeWords(1n, 123456000000n, 0n, currentTimeSec(), 1n);
     const { calls, provider } = mockEthCallProvider([latestRoundData, latestRoundData]);
     const quoter = new Quoter(provider);
     deepStrictEqual(await quoter.coinPrice('BTC'), 1234.56);
@@ -122,7 +133,7 @@ describe('Network', () => {
     deepStrictEqual(calls.length, 2);
   });
   it('Quoter ttlMs memoizes default-provider quotes, retries failures', async () => {
-    const latestRoundData = encodeWords(1n, 123456000000n, 0n, 1n, 1n);
+    const latestRoundData = encodeWords(1n, 123456000000n, 0n, currentTimeSec(), 1n);
     const { calls, provider } = mockEthCallProvider([latestRoundData, latestRoundData]);
     const quoter = new Quoter(provider, { ttlMs: 60_000 });
     deepStrictEqual(await quoter.coinPrice('BTC'), 1234.56);
@@ -141,10 +152,16 @@ describe('Network', () => {
     throws(() => new Quoter(failing.provider, { ttlMs: -1 }), /wrong ttlMs/);
   });
   it('Quoter passes block tags to Chainlink reads', async () => {
-    const latestRoundData = encodeWords(1n, 123456000000n, 0n, 1n, 1n);
+    const latestRoundData = encodeWords(1n, 123456000000n, 0n, currentTimeSec(), 1n);
     const { calls, provider } = mockEthCallProvider([latestRoundData]);
     const quoter = new Quoter(provider);
-    deepStrictEqual(await quoter.coinPrice('BTC', 'chainlink', { tag: 123 }), 1234.56);
+    deepStrictEqual(
+      await quoter.coinPrice('BTC', 'chainlink', {
+        tag: 123,
+        nowSec: Number(currentTimeSec()),
+      }),
+      1234.56
+    );
     deepStrictEqual(
       calls.map((c) => c.tag),
       [123]
@@ -161,6 +178,100 @@ describe('Network', () => {
     await rejects(() => quoter.coinPrice('BTC'), /invalid price data/);
     await rejects(() => quoter.coinPrice('BTC'), /invalid price data/);
     deepStrictEqual(calls.length, 3);
+  });
+  it('Quoter rejects stale and future Chainlink rounds', async () => {
+    const nowSec = 2_000_000_000n;
+    const answer = 123456000000n;
+    const round = (updatedAt) => encodeWords(1n, answer, 0n, updatedAt, 1n);
+    const { calls, provider } = mockEthCallProvider([
+      round(nowSec - 7201n),
+      round(nowSec + 1n),
+      round(nowSec - 7200n),
+      round(nowSec - 7201n),
+    ]);
+    const quoter = new Quoter(provider);
+    await rejects(
+      () => quoter.coinPrice('BTC', 'chainlink', { nowSec: Number(nowSec) }),
+      /stale price data/
+    );
+    await rejects(
+      () => quoter.coinPrice('BTC', 'chainlink', { nowSec: Number(nowSec) }),
+      /stale price data/
+    );
+    deepStrictEqual(
+      await quoter.coinPrice('BTC', 'chainlink', { nowSec: Number(nowSec) }),
+      1234.56
+    );
+    deepStrictEqual(
+      await quoter.coinPrice('BTC', 'chainlink', {
+        nowSec: Number(nowSec),
+        maxAgeSec: 7201,
+      }),
+      1234.56
+    );
+    deepStrictEqual(calls.length, 4);
+  });
+  it('Quoter applies constructor and validates custom Chainlink freshness limits', async () => {
+    const token = '0x00000000000000000000000000000000000000a1';
+    const feed = '0x00000000000000000000000000000000000000f1';
+    const wallTime = currentTimeSec();
+    const response = encodeWords(1n, 123456000000n, 0n, wallTime - 8000n, 1n);
+    const accepted = mockEthCallProvider([response]);
+    const quoter = new Quoter(accepted.provider, { chainlinkMaxAgeSec: 9000 });
+    deepStrictEqual(await quoter.coinPrice('BTC'), 1234.56);
+    const rejected = mockEthCallProvider([]);
+    throws(
+      () => new Quoter(rejected.provider, { chainlinkMaxAgeSec: 0 }),
+      /invalid chainlinkMaxAgeSec/
+    );
+    throws(
+      () =>
+        new Quoter(rejected.provider, {
+          tokens: {
+            [token]: {
+              symbol: 'BAD',
+              decimals: 18,
+              feed: { contract: feed, decimals: 8, maxAgeSec: 0 },
+            },
+          },
+        }),
+      /invalid feed maxAgeSec/
+    );
+    const defaultQuoter = new Quoter(rejected.provider);
+    await rejects(
+      () => defaultQuoter.coinPrice('BTC', 'chainlink', { maxAgeSec: 0 }),
+      /invalid maxAgeSec/
+    );
+    await rejects(
+      () => defaultQuoter.coinPrice('BTC', 'chainlink', { nowSec: -1 }),
+      /invalid nowSec/
+    );
+    deepStrictEqual(rejected.calls.length, 0);
+  });
+  it('Quoter compares historical Chainlink rounds with the tagged block time', async () => {
+    const blockTime = 1_500_000_000n;
+    const rpcCalls = [];
+    const ethCalls = [];
+    const provider = {
+      ethCall: async (args) => {
+        ethCalls.push(args);
+        return encodeWords(1n, 123456000000n, 0n, blockTime - 120n, 1n);
+      },
+      estimateGas: async () => {
+        throw new Error('unexpected estimateGas');
+      },
+      call: async (method, ...args) => {
+        rpcCalls.push([method, ...args]);
+        return { timestamp: `0x${blockTime.toString(16)}` };
+      },
+    };
+    const quoter = new Quoter(provider);
+    deepStrictEqual(
+      await quoter.coinPrice('BTC', 'chainlink', { tag: 123, maxAgeSec: 180 }),
+      1234.56
+    );
+    deepStrictEqual(ethCalls.map((call) => call.tag), [123]);
+    deepStrictEqual(rpcCalls, [['eth_getBlockByNumber', '0x7b', false]]);
   });
   it('Quoter rejects old provider object arguments', async () => {
     const { calls, provider } = mockEthCallProvider([]);
@@ -180,8 +291,8 @@ describe('Network', () => {
     deepStrictEqual(Object.keys(replay).length, 10);
     const prov = initProv(replay);
     const quoter = new Quoter(prov);
-    const btc = await quoter.coinPrice('BTC');
-    const bat = await quoter.tokenPrice('BAT');
+    const btc = await quoter.coinPrice('BTC', 'chainlink', { nowSec: 1783026500 });
+    const bat = await quoter.tokenPrice('BAT', 'chainlink', { nowSec: 1783026500 });
     const ethV2 = await quoter.coinPrice('ETH', 'uniswap-v2', {
       pairAddress: '0xb4e16d0168e52d35cacd2c6185b44281ec28c9dc',
     });
@@ -268,7 +379,7 @@ describe('Network', () => {
   it('Quoter uses injected replacement token table', async () => {
     const token = '0x00000000000000000000000000000000000000a1';
     const feed = '0x00000000000000000000000000000000000000f1';
-    const latestRoundData = encodeWords(1n, 123456n, 0n, 1n, 1n);
+    const latestRoundData = encodeWords(1n, 123456n, 0n, currentTimeSec(), 1n);
     const { calls, provider } = mockEthCallProvider([latestRoundData]);
     const quoter = new Quoter(provider, {
       tokens: {
@@ -309,6 +420,48 @@ describe('Network', () => {
         }),
       /duplicate token address/
     );
+  });
+  it('Quoter rejects decimals outside the ERC-20 uint8 range before RPC', async () => {
+    const token = '0x00000000000000000000000000000000000000a1';
+    const feed = '0x00000000000000000000000000000000000000f1';
+    const unknown = '0x00000000000000000000000000000000000000a2';
+    const { calls, provider } = mockEthCallProvider([]);
+    new Quoter(provider, {
+      tokens: {
+        [token]: {
+          symbol: 'MAX',
+          decimals: 255,
+          feed: { contract: feed, decimals: 255 },
+        },
+      },
+    });
+    throws(
+      () => new Quoter(provider, { tokens: { [token]: { symbol: 'BAD', decimals: 256 } } }),
+      /invalid token decimals/
+    );
+    throws(
+      () =>
+        new Quoter(provider, {
+          tokens: {
+            [token]: {
+              symbol: 'BAD',
+              decimals: 18,
+              feed: { contract: feed, decimals: 256 },
+            },
+          },
+        }),
+      /invalid feed decimals/
+    );
+    const quoter = new Quoter(provider);
+    await rejects(
+      () =>
+        quoter.coinPrice('ETH', 'uniswap-v2', {
+          priceIn: unknown,
+          priceInDecimals: 256,
+        }),
+      /invalid priceIn decimals/
+    );
+    deepStrictEqual(calls.length, 0);
   });
   it('formats RPC quantities', () => {
     deepStrictEqual(
@@ -638,7 +791,7 @@ describe('Network', () => {
       await quoter.rate(1_000_000n, 'uniswap-v3', {
         tokenIn: USDC,
         tokenOut: WETH,
-        fees: [500, 3000],
+        fees: [500, 500, 3000, 500],
         tag: 2,
       }),
       1_000_000_000_000_000_000n
@@ -647,6 +800,22 @@ describe('Network', () => {
       calls.map((c) => c.tag),
       [2, 2, 2, 2, 2, 2, 2, 2, 2]
     );
+  });
+  it('caps Uniswap V3 auto-discovery fee tiers before RPC', async () => {
+    const USDC = tokenFromSymbol('USDC')!.contract;
+    const WETH = tokenFromSymbol('WETH')!.contract;
+    const { calls, provider } = mockEthCallProvider([]);
+    const quoter = new Quoter(provider);
+    await rejects(
+      () =>
+        quoter.rate(1n, 'uniswap-v3', {
+          tokenIn: USDC,
+          tokenOut: WETH,
+          fees: Array.from({ length: 33 }, (_, i) => i),
+        }),
+      /fee tier limit is 32/
+    );
+    deepStrictEqual(calls.length, 0);
   });
   it('quotes Uniswap V3 prices with default USDT priceIn', async () => {
     const USDT = tokenFromSymbol('USDT')!.contract;
@@ -1131,6 +1300,47 @@ describe('Network', () => {
       ]
     );
   });
+  it('rejects invalid transfer dictionary keys without prototype pollution', () => {
+    const marker = 'auditFinding4Polluted';
+    const to = '0x0000000000000000000000000000000000000002';
+    const previousMarker = Object.getOwnPropertyDescriptor(Object.prototype, marker);
+    const previousTo = Object.getOwnPropertyDescriptor(Object.prototype, to);
+    try {
+      throws(
+        () =>
+          calcTransfersDiff([
+            {
+              transfers: [],
+              tokenTransfers: [
+                {
+                  contract: '__proto__',
+                  from: marker,
+                  to,
+                  tokens: new Map([[1n, 1n]]),
+                },
+              ],
+            },
+          ] as any),
+        /wrong contract address/
+      );
+      throws(
+        () =>
+          calcTransfersDiff([
+            {
+              transfers: [{ from: 'constructor', to, value: 1n }],
+              tokenTransfers: [],
+            },
+          ] as any),
+        /wrong from address/
+      );
+      deepStrictEqual(Object.hasOwn(Object.prototype, marker), false);
+    } finally {
+      if (previousMarker) Object.defineProperty(Object.prototype, marker, previousMarker);
+      else delete (Object.prototype as Record<string, unknown>)[marker];
+      if (previousTo) Object.defineProperty(Object.prototype, to, previousTo);
+      else delete (Object.prototype as Record<string, unknown>)[to];
+    }
+  });
   it('clamps eth_getLogs batches to toBlock', async () => {
     const calls = [];
     const archive = new RpcClient({
@@ -1230,7 +1440,12 @@ describe('Network', () => {
         throw new Error('unexpected rpc call');
       },
     });
-    for (const address of ['0x1234', 12, [], ['0x12d66f87a04a9e220743712ce6d9bb1b5616b8fc', '0xnope']])
+    for (const address of [
+      '0x1234',
+      12,
+      [],
+      ['0x12d66f87a04a9e220743712ce6d9bb1b5616b8fc', '0xnope'],
+    ])
       await rejects(
         () => archive.ethLogs([], { fromBlock: 1, toBlock: 2, address }),
         /validateLogOpts: wrong address/
@@ -1376,9 +1591,26 @@ describe('Network', () => {
       },
       raw: tx.toHex(),
     });
+    // The two RPC responses may agree with each other while still belonging to
+    // a different transaction than the one the caller requested.
+    const requestedHash = `0x${'22'.repeat(32)}`;
+    const swapped = new RpcClient({
+      call: async (method, txHash) => {
+        deepStrictEqual(txHash, requestedHash);
+        if (method === 'eth_getTransactionByHash') return { ...info };
+        if (method === 'eth_getTransactionReceipt') return { ...receipt };
+        throw new Error('unexpected rpc call');
+      },
+    });
+    await rejects(() => swapped.txInfo(requestedHash), /txInfo: wrong transaction hash/);
+    await rejects(
+      () => swapped.txInfo(requestedHash, { verify: false }),
+      /txInfo: wrong transaction hash/
+    );
     // A present receipt must belong to the reconstructed transaction.
     receipt.transactionHash = `0x${'22'.repeat(32)}`;
     await rejects(() => archive.txInfo(hash), /txInfo: wrong receipt hash/);
+    await rejects(() => archive.txInfo(hash, { verify: false }), /txInfo: wrong receipt hash/);
   });
   it('rebuilds zero-gas-price legacy transaction info', async () => {
     const tx = Transaction.prepare(
@@ -1603,6 +1835,105 @@ describe('Network', () => {
       ],
     ]);
   });
+  it('normalizes failed and variant trace responses without aborting scans', async () => {
+    const address = '0x0000000000000000000000000000000000000001';
+    const location = {
+      blockHash: `0x${'00'.repeat(32)}`,
+      blockNumber: 1,
+      subtraces: 0,
+      traceAddress: [],
+      transactionHash: `0x${'11'.repeat(32)}`,
+      transactionPosition: 0,
+    };
+    const variants = [
+      {
+        ...location,
+        action: {
+          callType: 'call',
+          from: address,
+          gas: '0x5208',
+          input: '0x',
+          to: address,
+          value: '0x0',
+        },
+        result: null,
+        error: 'out of gas',
+        type: 'call',
+      },
+      {
+        ...location,
+        action: { from: address, gas: '0x100', init: '0x', value: '0x1' },
+        result: { address, code: '0x', gasUsed: '0x80' },
+        type: 'create',
+      },
+      {
+        ...location,
+        action: { author: address, rewardType: 'block', value: '0x2' },
+        result: null,
+        type: 'reward',
+      },
+      {
+        ...location,
+        action: { address, refundAddress: address, balance: '0x3' },
+        result: null,
+        type: 'suicide',
+      },
+    ];
+    const direct = await traceFilterSingle({ call: async () => variants } as any, address);
+    deepStrictEqual(
+      (direct as any).map((trace) => ({
+        type: trace.type,
+        value: trace.action.value,
+        gas: trace.action.gas,
+        balance: trace.action.balance,
+        gasUsed: trace.result?.gasUsed,
+        error: trace.error,
+      })),
+      [
+        {
+          type: 'call',
+          value: 0n,
+          gas: 21000n,
+          balance: undefined,
+          gasUsed: undefined,
+          error: 'out of gas',
+        },
+        {
+          type: 'create',
+          value: 1n,
+          gas: 256n,
+          balance: undefined,
+          gasUsed: 128n,
+          error: undefined,
+        },
+        {
+          type: 'reward',
+          value: 2n,
+          gas: undefined,
+          balance: undefined,
+          gasUsed: undefined,
+          error: undefined,
+        },
+        {
+          type: 'suicide',
+          value: undefined,
+          gas: undefined,
+          balance: 3n,
+          gasUsed: undefined,
+          error: undefined,
+        },
+      ]
+    );
+
+    let calls = 0;
+    const paged = await internalTransactions(
+      { call: async () => (calls++ === 0 ? variants : []) } as any,
+      address,
+      { fromBlock: 1, perRequest: 4 }
+    );
+    deepStrictEqual(paged.length, 4);
+    deepStrictEqual(calls, 2);
+  });
   it('validates OTS search blocks', async () => {
     const archive = new RpcClient({
       call: async () => {
@@ -1725,6 +2056,25 @@ describe('Network', () => {
       Array.from({ length: 21 }, (_, i) => i * 2)
     );
   });
+  it('accumulates trace batches larger than the JavaScript argument limit', async () => {
+    const action = {
+      action: { value: '0x0', gas: '0x0' },
+      result: { gasUsed: '0x0' },
+      blockNumber: 0,
+    };
+    const archive = new RpcClient({
+      call: async (method) => {
+        if (method !== 'trace_filter') throw new Error(`unexpected call ${method}`);
+        return new Array(131_072).fill(action);
+      },
+    });
+    const actions = await internalTransactions(
+      archive,
+      '0x0000000000000000000000000000000000000000',
+      { fromBlock: 0, toBlock: 0, limitTrace: 1 }
+    );
+    deepStrictEqual(actions.length, 131_072);
+  });
   it('Transcations basic', async () => {
     // Random address from abi tests which test for fingerprinted data in encoding.
     // Perfect for tests: only has a few transactions and provides different types of txs.
@@ -1769,6 +2119,7 @@ describe('Network', () => {
     deepStrictEqual(await tokenInfo(tx, BAT.contract), {
       contract: BAT.contract,
       abi: 'ERC20',
+      verified: false,
       symbol: BAT.symbol,
       decimals: BAT.decimals,
       name: 'Basic Attention Token',
@@ -1808,6 +2159,33 @@ describe('Network', () => {
           115792089237316195423570985008687907853269984665640564039457584007913129639935n,
       },
     });
+  });
+
+  it('calcAllowances rejects invalid log contracts without prototype pollution', () => {
+    const owner = '0x0000000000000000000000000000000000000001';
+    const spender = '0x0000000000000000000000000000000000000002';
+    const approval = events(ERC20).Approval;
+    const previous = Object.getOwnPropertyDescriptor(Object.prototype, spender);
+    try {
+      throws(
+        () =>
+          calcAllowances(
+            [
+              {
+                address: '__proto__',
+                topics: approval.topics({ owner, spender, value: null }),
+                data: encodeWords(1n),
+              },
+            ] as any,
+            owner
+          ),
+        /wrong log address/
+      );
+      deepStrictEqual(Object.hasOwn(Object.prototype, spender), false);
+    } finally {
+      if (previous) Object.defineProperty(Object.prototype, spender, previous);
+      else delete (Object.prototype as Record<string, unknown>)[spender];
+    }
   });
 
   it('contractCapabilities', async () => {
@@ -1883,6 +2261,7 @@ describe('Network', () => {
     deepStrictEqual(await tokenInfo(archive, coolCats), {
       abi: 'ERC721',
       contract: '0x1a92f7381b9f03921564a437210bb9396471050c',
+      verified: false,
       name: 'Cool Cats',
       symbol: 'COOL',
       totalSupply: 9968n,
@@ -1893,11 +2272,13 @@ describe('Network', () => {
     deepStrictEqual(await tokenInfo(archive, metaverse), {
       contract: '0xce320d1484b9e6c6061f5de748484546cdae2206',
       abi: 'ERC1155',
+      verified: false,
     });
     const beanz = '0x306b1ea3ecdf94ab739f1910bbda052ed4a9f949';
     deepStrictEqual(await tokenInfo(archive, beanz), {
       contract: '0x306b1ea3ecdf94ab739f1910bbda052ed4a9f949',
       abi: 'ERC721',
+      verified: false,
       name: 'Beanz',
       symbol: 'BEANZ',
       metadata: true,
@@ -1906,6 +2287,7 @@ describe('Network', () => {
     deepStrictEqual(await tokenInfo(archive, usdt), {
       contract: '0xdac17f958d2ee523a2206206994597c13d831ec7',
       abi: 'ERC20',
+      verified: false,
       name: 'Tether USD',
       symbol: 'USDT',
       totalSupply: 76926220145483487n,
@@ -1957,6 +2339,7 @@ describe('Network', () => {
     deepStrictEqual(await tokenInfo(archive, contract), {
       contract,
       abi: 'ERC20',
+      verified: false,
       name: undefined,
       symbol: undefined,
       totalSupply: 1n,
@@ -2235,47 +2618,116 @@ describe('Network', () => {
     });
   });
   it('nonce', async () => {
+    const tags = [];
     const archive = new RpcClient({
       call: async (method, ...args) => {
         deepStrictEqual(method, 'eth_getTransactionCount');
-        deepStrictEqual(args, ['0x0000000000000000000000000000000000000001', 'latest']);
+        deepStrictEqual(args[0], '0x0000000000000000000000000000000000000001');
+        tags.push(args[1]);
         return '0x1f';
       },
     });
     deepStrictEqual(await archive.nonce('0x0000000000000000000000000000000000000001'), 31n);
+    deepStrictEqual(
+      await archive.nonce('0x0000000000000000000000000000000000000001', 'pending'),
+      31n
+    );
+    deepStrictEqual(tags, ['latest', 'pending']);
     await rejects(() => archive.nonce(1 as any), /nonce: wrong address/);
+    await rejects(
+      () => archive.nonce('0x0000000000000000000000000000000000000001', 'earliest' as any),
+      /nonce: wrong tag/
+    );
   });
-  it('fees from eth_feeHistory', async () => {
+  it('fees uses viem v3-compatible EIP-1559 estimation', async () => {
+    const archive = new RpcClient({
+      call: async (method, ...args) => {
+        if (method === 'eth_getBlockByNumber') {
+          deepStrictEqual(args, ['latest', false]);
+          return { baseFeePerGas: '0x65' };
+        }
+        if (method === 'eth_maxPriorityFeePerGas') return '0x3';
+        throw new Error(`unexpected rpc call ${method}`);
+      },
+    });
+    deepStrictEqual(await archive.fees(), {
+      type: 'eip1559',
+      baseFee: 101n,
+      maxPriorityFeePerGas: 3n,
+      maxFeePerGas: 124n,
+    });
+  });
+  it('fees derives priority from gas price when the RPC method is unavailable', async () => {
+    let gasPrice = '0x6e';
     const archive = new RpcClient({
       call: async (method) => {
-        if (method === 'eth_feeHistory')
-          return {
-            baseFeePerGas: ['0x32', '0x64'], // last entry is next block's base fee
-            gasUsedRatio: [0.5],
-            reward: [['0x2'], ['0x4'], ['0x0']], // zero-reward blocks are ignored
-          };
+        if (method === 'eth_getBlockByNumber') return { baseFeePerGas: '0x64' };
+        if (method === 'eth_maxPriorityFeePerGas')
+          throw Object.assign(new Error('FetchProvider(-32601): method not found'), {
+            code: -32601,
+          });
+        if (method === 'eth_gasPrice') return gasPrice;
         throw new Error(`unexpected rpc call ${method}`);
       },
     });
     deepStrictEqual(await archive.fees(), {
       type: 'eip1559',
       baseFee: 100n,
-      maxPriorityFeePerGas: 3n,
-      maxFeePerGas: 203n,
+      maxPriorityFeePerGas: 10n,
+      maxFeePerGas: 130n,
+    });
+    gasPrice = '0x5a';
+    deepStrictEqual(await archive.fees(), {
+      type: 'eip1559',
+      baseFee: 100n,
+      maxPriorityFeePerGas: 0n,
+      maxFeePerGas: 120n,
     });
   });
-  it('fees falls back to eth_gasPrice', async () => {
+  it('fees uses a scaled gas price on legacy chains', async () => {
     const archive = new RpcClient({
       call: async (method) => {
-        if (method === 'eth_feeHistory')
-          throw Object.assign(new Error('FetchProvider(-32601): method not found'), {
-            code: -32601,
-          });
+        if (method === 'eth_getBlockByNumber') return { baseFeePerGas: null };
         if (method === 'eth_gasPrice') return '0x77359400';
         throw new Error(`unexpected rpc call ${method}`);
       },
     });
-    deepStrictEqual(await archive.fees(), { type: 'legacy', gasPrice: 2000000000n });
+    deepStrictEqual(await archive.fees(), { type: 'legacy', gasPrice: 2400000000n });
+  });
+  it('fees supports the fixed ethers v6 policy', async () => {
+    const archive = new RpcClient({
+      call: async (method) => {
+        if (method === 'eth_getBlockByNumber') return { baseFeePerGas: '0x64' };
+        if (method === 'eth_maxPriorityFeePerGas') return '0x3';
+        throw new Error(`unexpected rpc call ${method}`);
+      },
+    });
+    deepStrictEqual(await archive.fees('ethers_v6'), {
+      type: 'eip1559',
+      baseFee: 100n,
+      maxPriorityFeePerGas: 3n,
+      maxFeePerGas: 203n,
+    });
+    await rejects(() => archive.fees('custom' as any), /fees: wrong policy/);
+  });
+  it('ethers fees use its priority fallback and unscaled legacy gas price', async () => {
+    let block: { baseFeePerGas: string | null } = { baseFeePerGas: '0x64' };
+    const archive = new RpcClient({
+      call: async (method) => {
+        if (method === 'eth_getBlockByNumber') return block;
+        if (method === 'eth_maxPriorityFeePerGas') throw new Error('method not found');
+        if (method === 'eth_gasPrice') return '0x64';
+        throw new Error(`unexpected rpc call ${method}`);
+      },
+    });
+    deepStrictEqual(await archive.fees('ethers_v6'), {
+      type: 'eip1559',
+      baseFee: 100n,
+      maxPriorityFeePerGas: 1000000000n,
+      maxFeePerGas: 1000000200n,
+    });
+    block = { baseFeePerGas: null };
+    deepStrictEqual(await archive.fees('ethers_v6'), { type: 'legacy', gasPrice: 100n });
   });
   it('broadcast accepts hex and Transaction', async () => {
     const tx = Transaction.prepare({
@@ -2424,14 +2876,19 @@ describe('Network', () => {
       ['waitForReceipt: timeout', 'waitForReceipt: timeout', 'waitForReceipt: timeout', 'stop']
     );
   });
-  it('prepare fetches wallet-loop fields in parallel', async () => {
+  it('prepare falls back to viem v3-compatible manual population', async () => {
     const to = '0x0000000000000000000000000000000000000001';
     const from = '0xd8da6bf26964af9d7eed9e03e53415d37aa96045';
     const archive = new RpcClient({
       call: async (method, ...args) => {
-        if (method === 'eth_getTransactionCount') return '0x5';
-        if (method === 'eth_feeHistory')
-          return { baseFeePerGas: ['0x64'], gasUsedRatio: [], reward: [['0x2']] };
+        if (method === 'eth_fillTransaction')
+          throw Object.assign(new Error('method not found'), { code: -32601 });
+        if (method === 'eth_getTransactionCount') {
+          deepStrictEqual(args, [from, 'pending']);
+          return '0x5';
+        }
+        if (method === 'eth_getBlockByNumber') return { baseFeePerGas: '0x64' };
+        if (method === 'eth_maxPriorityFeePerGas') return '0x2';
         if (method === 'eth_estimateGas') {
           deepStrictEqual(args[0], { from, to, value: '0x1' });
           return '0x5208';
@@ -2449,7 +2906,7 @@ describe('Network', () => {
       to,
       value: 1n,
       data: '0x',
-      maxFeePerGas: 202n,
+      maxFeePerGas: 122n,
       maxPriorityFeePerGas: 2n,
     });
     // Round-trips into a signable transaction.
@@ -2461,9 +2918,11 @@ describe('Network', () => {
     const from = '0xd8da6bf26964af9d7eed9e03e53415d37aa96045';
     const archive = new RpcClient({
       call: async (method) => {
+        if (method === 'eth_fillTransaction')
+          throw Object.assign(new Error('method not found'), { code: -32601 });
         if (method === 'eth_getTransactionCount') return '0x5';
-        if (method === 'eth_feeHistory')
-          return { baseFeePerGas: ['0x64'], gasUsedRatio: [], reward: [['0x2']] };
+        if (method === 'eth_getBlockByNumber') return { baseFeePerGas: '0x64' };
+        if (method === 'eth_maxPriorityFeePerGas') return '0x2';
         if (method === 'eth_estimateGas') return '0x5208';
         if (method === 'eth_chainId') return '0x1';
         throw new Error(`unexpected rpc call ${method}`);
@@ -2479,6 +2938,80 @@ describe('Network', () => {
       () => archive.prepare({ from, to, value: 1n, expectedChainId: 1 as any }),
       /wrong expectedChainId/
     );
+  });
+  it('prepare uses and validates the viem fillTransaction result', async () => {
+    const to = '0x0000000000000000000000000000000000000001';
+    const from = '0xd8da6bf26964af9d7eed9e03e53415d37aa96045';
+    const archive = new RpcClient({
+      call: async (method, ...args) => {
+        deepStrictEqual(method, 'eth_fillTransaction');
+        deepStrictEqual(args, [{ from, to, value: '0x1', data: '0x1234' }]);
+        return {
+          raw: '0xdeadbeef',
+          tx: {
+            chainId: '0x1',
+            from: to,
+            to: from,
+            value: '0xff',
+            input: '0xabcd',
+            gas: '0x5208',
+            maxFeePerGas: '0x64',
+            maxPriorityFeePerGas: '0x2',
+            nonce: '0x5',
+            type: '0x2',
+          },
+        };
+      },
+    });
+    deepStrictEqual(await archive.prepare({ from, to, value: 1n, data: '0x1234' }), {
+      type: 'eip1559',
+      nonce: 5n,
+      gasLimit: 21000n,
+      chainId: 1n,
+      to,
+      value: 1n,
+      data: '0x1234',
+      maxFeePerGas: 120n,
+      maxPriorityFeePerGas: 2n,
+    });
+    await rejects(
+      () =>
+        archive.prepare({
+          from,
+          to,
+          value: 1n,
+          data: '0x1234',
+          expectedChainId: 2n,
+        }),
+      /node reports chain id 1, expected 2/
+    );
+  });
+  it('prepare caches unsupported fillTransaction and ethers never calls it', async () => {
+    const to = '0x0000000000000000000000000000000000000001';
+    const from = '0xd8da6bf26964af9d7eed9e03e53415d37aa96045';
+    let fills = 0;
+    const archive = new RpcClient({
+      call: async (method) => {
+        if (method === 'eth_fillTransaction') {
+          fills++;
+          throw Object.assign(new Error('method not supported'), { code: -32004 });
+        }
+        if (method === 'eth_getTransactionCount') return '0x5';
+        if (method === 'eth_getBlockByNumber') return { baseFeePerGas: '0x64' };
+        if (method === 'eth_maxPriorityFeePerGas') return '0x2';
+        if (method === 'eth_estimateGas') return '0x5208';
+        if (method === 'eth_chainId') return '0x1';
+        throw new Error(`unexpected rpc call ${method}`);
+      },
+    });
+    await archive.prepare({ from, to });
+    await archive.prepare({ from, to });
+    deepStrictEqual(fills, 1);
+    const fields = await archive.prepare({ from, to }, 'ethers_v6');
+    deepStrictEqual(fills, 1);
+    deepStrictEqual(fields.type, 'eip1559');
+    if (fields.type === 'eip1559') deepStrictEqual(fields.maxFeePerGas, 202n);
+    await rejects(() => archive.prepare({ from, to }, 'custom' as any), /prepare: wrong policy/);
   });
   it('chainId reads the node chain id', async () => {
     const archive = new RpcClient({
@@ -3065,8 +3598,7 @@ describe('Network', () => {
       // watched set is deduplicated; casing of the first occurrence is kept
       calls.length = 0;
       const deduped = [];
-      for await (const row of history(archive, [ADDR, ADDR], { source: 'ots' }))
-        deduped.push(row);
+      for await (const row of history(archive, [ADDR, ADDR], { source: 'ots' })) deduped.push(row);
       deepStrictEqual(calls.length, 1);
       deepStrictEqual(deduped.length, 2);
       deepStrictEqual(deduped[0].addresses, [ADDR]);
@@ -3191,8 +3723,7 @@ describe('Network', () => {
         new RpcClient({
           call: async (method, ...args) => {
             if (method === 'eth_blockNumber') return numberTo0xHex(399_999);
-            if (method === 'eth_getLogs')
-              return BigInt(args[0].fromBlock) === 0n ? [incoming] : [];
+            if (method === 'eth_getLogs') return BigInt(args[0].fromBlock) === 0n ? [incoming] : [];
             if (method === 'eth_getTransactionByHash')
               return rawTx(hash('11'), 100, OTHER, USDT, 0n);
             if (method === 'eth_getTransactionReceipt')
@@ -3201,13 +3732,15 @@ describe('Network', () => {
           },
         });
       const scanner = tokenScanner(provider(), ADDR, { logsWindow: 100_000, discover: false });
-      deepStrictEqual({ done: scanner.done, percent: scanner.percent }, { done: false, percent: 0 });
+      deepStrictEqual(
+        { done: scanner.done, percent: scanner.percent },
+        { done: false, percent: 0 }
+      );
       const rows = [];
       const progress = [];
-      const result = await scanner.step(
-        (row) => rows.push(row),
-        { onProgress: (p) => progress.push(p) }
-      );
+      const result = await scanner.step((row) => rows.push(row), {
+        onProgress: (p) => progress.push(p),
+      });
       deepStrictEqual(result, { done: true, percent: 100 });
       deepStrictEqual(scanner.state, { done: true, top: 399_999, toBlock: 399_999 });
       deepStrictEqual(
@@ -3265,6 +3798,39 @@ describe('Network', () => {
         multiRows.map((row) => [row.hash, row.addresses]),
         [[hash('11'), [ADDR]]]
       );
+    });
+    it('tokenScanner waits for persistence before advancing state or deduping', async () => {
+      const incoming = transferLog(USDT, OTHER, ADDR, 5000000n);
+      const archive = new RpcClient({
+        call: async (method, ...args) => {
+          if (method === 'eth_blockNumber') return numberTo0xHex(399_999);
+          if (method === 'eth_getLogs') return BigInt(args[0].fromBlock) === 0n ? [incoming] : [];
+          if (method === 'eth_getTransactionByHash') return rawTx(hash('11'), 100, OTHER, USDT, 0n);
+          if (method === 'eth_getTransactionReceipt')
+            return rawReceipt(hash('11'), 100, [incoming]);
+          throw new Error(`unexpected rpc call ${method}`);
+        },
+      });
+      const scanner = tokenScanner(archive, ADDR, { logsWindow: 100_000, discover: false });
+      const failedWrite = Promise.reject(new Error('database unavailable'));
+      // Keep the deliberate rejection handled even on the vulnerable path,
+      // where step() returns without observing it.
+      failedWrite.catch(() => {});
+      await rejects(() => scanner.step(() => failedWrite), /database unavailable/);
+      deepStrictEqual(scanner.state, { done: false, top: 399_999, toBlock: 399_999 });
+
+      const stored = [];
+      const progress = [];
+      const result = await scanner.step(
+        async (row) => {
+          await Promise.resolve();
+          stored.push(row.hash);
+        },
+        { onProgress: (item) => progress.push(item) }
+      );
+      deepStrictEqual(result, { done: true, percent: 100 });
+      deepStrictEqual(stored, [hash('11')]);
+      deepStrictEqual(progress.at(-1).found, 1);
     });
     it('ots+logs deduplicates log discoveries in favor of the OTS row', async () => {
       const transfer = transferLog(USDT, OTHER, ADDR, 5000000n);
@@ -3848,6 +4414,7 @@ describe('Network', () => {
           if (method === 'ots_traceTransaction')
             return [
               { type: 'CALL', depth: '0x0', from: OTHER, to: ADDR, value: '0x5' },
+              { type: 'DELEGATECALL', depth: '0x1', from: OTHER, to: ADDR, value: '0x9' },
               { type: 'CALL', depth: '0x1', from: OTHER, to: ADDR, value: '0x2' },
               { type: 'CALL', depth: '0x2', from: OTHER, to: ADDR, value: '0x0' },
             ];
@@ -3867,9 +4434,31 @@ describe('Network', () => {
         call: async (method) => {
           deepStrictEqual(method, 'trace_transaction');
           return [
-            { traceAddress: [], action: { from: OTHER, to: ADDR, value: '0x5' } },
-            { traceAddress: [0], action: { from: OTHER, to: ADDR, value: '0x3' } },
-            { traceAddress: [1], action: { from: OTHER, to: ADDR, value: '0x0' } },
+            {
+              traceAddress: [],
+              action: { callType: 'call', from: OTHER, to: ADDR, value: '0x5' },
+            },
+            {
+              traceAddress: [0],
+              action: { callType: 'delegatecall', from: OTHER, to: ADDR, value: '0x9' },
+            },
+            {
+              traceAddress: [1],
+              action: { callType: 'call', from: OTHER, to: ADDR, value: '0x3' },
+            },
+            {
+              traceAddress: [2],
+              error: 'Reverted',
+              action: { callType: 'call', from: OTHER, to: ADDR, value: '0x4' },
+            },
+            {
+              traceAddress: [2, 0],
+              action: { callType: 'call', from: OTHER, to: ADDR, value: '0x8' },
+            },
+            {
+              traceAddress: [3],
+              action: { callType: 'call', from: OTHER, to: ADDR, value: '0x0' },
+            },
           ];
         },
       };
@@ -3878,6 +4467,28 @@ describe('Network', () => {
         internal: true,
       });
       deepStrictEqual(rows[0].internal, [{ from: OTHER, to: ADDR, value: 3n }]);
+    });
+    it('reverted transactions skip internal transfer enrichment', async () => {
+      const archive = new RpcClient({
+        call: async (method) => {
+          if (method === 'eth_blockNumber') return '0x1';
+          if (method === 'trace_filter') return [];
+          if (method === 'ots_getApiLevel') return 8;
+          if (method === 'ots_searchTransactionsBefore')
+            return {
+              txs: [rawTx(hash('11'), 100, OTHER, ADDR, 5n)],
+              receipts: [{ ...rawReceipt(hash('11'), 100), status: '0x0' }],
+              firstPage: true,
+              lastPage: true,
+            };
+          throw new Error(`unexpected rpc call ${method}`);
+        },
+      });
+      const rows = await collectHistory(archive, ADDR, { source: 'ots', internal: true });
+      deepStrictEqual(
+        rows.map(({ reverted, diff, internal }) => ({ reverted, diff, internal })),
+        [{ reverted: true, diff: 0n, internal: [] }]
+      );
     });
     it('unsupported internal enrichment surfaces the capability gap', async () => {
       const log = normalizedTransferLog(hash('11'), 100, OTHER, ADDR, 5n);
@@ -4098,9 +4709,13 @@ describe('Network', () => {
           throw new Error(`unexpected network call: ${method}`);
         },
       });
-    const tokenMetaProv = (meta, counters = {}) =>
+    const tokenMetaProv = (meta, counters = {}, chainId = 1n) =>
       new RpcClient({
         call: async (method, ...args) => {
+          if (method === 'eth_chainId') {
+            counters.chainId = (counters.chainId || 0) + 1;
+            return `0x${chainId.toString(16)}`;
+          }
           if (method === 'eth_getCode') {
             counters.getCode = (counters.getCode || 0) + 1;
             return '0x6001';
@@ -4287,9 +4902,11 @@ describe('Network', () => {
         call: async (method, ...args) => {
           calls.push(method);
           if (method === 'eth_getBalance') return numberTo0xHex(10n ** 18n);
+          if (method === 'eth_fillTransaction')
+            throw Object.assign(new Error('method not found'), { code: -32601 });
           if (method === 'eth_getTransactionCount') return '0x5';
-          if (method === 'eth_feeHistory')
-            return { baseFeePerGas: ['0x64'], gasUsedRatio: [], reward: [['0x2']] };
+          if (method === 'eth_getBlockByNumber') return { baseFeePerGas: '0x64' };
+          if (method === 'eth_maxPriorityFeePerGas') return '0x2';
           if (method === 'eth_estimateGas') return '0x5208';
           if (method === 'eth_chainId') return '0x1';
           if (method === 'eth_call') return encodeWords(1000000n); // balanceOf
@@ -4305,19 +4922,34 @@ describe('Network', () => {
         to: TO,
         value: 10n ** 17n,
         data: '0x',
-        maxFeePerGas: 202n,
+        maxFeePerGas: 122n,
         maxPriorityFeePerGas: 2n,
       });
       // round-trips into a signable transaction
       deepStrictEqual(Transaction.prepare(eth).raw.value, 10n ** 17n);
+      await rejects(
+        () =>
+          buildTransferTx(archive, {
+            from: FROM,
+            to: TO,
+            amount: 500000n,
+            token: { contract: usdt.contract, verified: false },
+          }),
+        /unverified token requires allowUnverified/
+      );
       const erc20 = await buildTransferTx(archive, {
         from: FROM,
         to: TO,
         amount: 500000n,
-        token: usdt.contract,
+        token: { contract: usdt.contract, verified: false },
+        allowUnverified: true,
         expectedChainId: 1n,
       });
-      deepStrictEqual(erc20.to.toLowerCase(), usdt.contract.toLowerCase(), 'token contract, checksummed');
+      deepStrictEqual(
+        erc20.to.toLowerCase(),
+        usdt.contract.toLowerCase(),
+        'token contract, checksummed'
+      );
       deepStrictEqual(erc20.value, 0n);
       deepStrictEqual(
         erc20.data,
@@ -4343,9 +4975,11 @@ describe('Network', () => {
       const broke = new RpcClient({
         call: async (method) => {
           if (method === 'eth_getBalance') return '0x0'; // no ETH, plenty of tokens
+          if (method === 'eth_fillTransaction')
+            throw Object.assign(new Error('method not found'), { code: -32601 });
           if (method === 'eth_getTransactionCount') return '0x5';
-          if (method === 'eth_feeHistory')
-            return { baseFeePerGas: ['0x64'], gasUsedRatio: [], reward: [['0x2']] };
+          if (method === 'eth_getBlockByNumber') return { baseFeePerGas: '0x64' };
+          if (method === 'eth_maxPriorityFeePerGas') return '0x2';
           if (method === 'eth_estimateGas') return '0x5208';
           if (method === 'eth_chainId') return '0x1';
           if (method === 'eth_call') return encodeWords(1000000n); // balanceOf
@@ -4386,9 +5020,18 @@ describe('Network', () => {
         /node reports chain id 1, expected 11155111/
       );
       // validation
-      await rejects(() => buildTransferTx(archive, { from: FROM, to: 'nope', amount: 1n }), /wrong to/);
-      await rejects(() => buildTransferTx(archive, { from: 'nope', to: TO, amount: 1n }), /wrong from/);
-      await rejects(() => buildTransferTx(archive, { from: FROM, to: TO, amount: 0n }), /wrong amount/);
+      await rejects(
+        () => buildTransferTx(archive, { from: FROM, to: 'nope', amount: 1n }),
+        /wrong to/
+      );
+      await rejects(
+        () => buildTransferTx(archive, { from: 'nope', to: TO, amount: 1n }),
+        /wrong from/
+      );
+      await rejects(
+        () => buildTransferTx(archive, { from: FROM, to: TO, amount: 0n }),
+        /wrong amount/
+      );
       await rejects(
         () => buildTransferTx(archive, { from: FROM, to: TO, amount: 1 as any }),
         /wrong amount/
@@ -4405,21 +5048,21 @@ describe('Network', () => {
       const archive = new RpcClient({
         call: async (method) => {
           if (method === 'eth_getBalance') return numberTo0xHex(10n ** 18n);
-          if (method === 'eth_feeHistory')
-            return { baseFeePerGas: ['0x64'], gasUsedRatio: [], reward: [['0x2']] };
+          if (method === 'eth_getBlockByNumber') return { baseFeePerGas: '0x64' };
+          if (method === 'eth_maxPriorityFeePerGas') return '0x2';
           if (method === 'eth_call') return encodeWords(123n);
           throw new Error(`unexpected rpc call ${method}`);
         },
       });
-      // maxFeePerGas = 2 * 100 + 2 = 202; reserve = 21000 * 202
-      deepStrictEqual(await maxSpendable(archive, { from: FROM }), 10n ** 18n - 21000n * 202n);
+      // maxFeePerGas = 1.2 * 100 + 2 = 122; reserve = 21000 * 122
+      deepStrictEqual(await maxSpendable(archive, { from: FROM }), 10n ** 18n - 21000n * 122n);
       deepStrictEqual(await maxSpendable(archive, { from: FROM, token: usdt.contract }), 123n);
       // dust below the reserve clamps to zero
       const dust = new RpcClient({
         call: async (method) => {
           if (method === 'eth_getBalance') return '0x1';
-          if (method === 'eth_feeHistory')
-            return { baseFeePerGas: ['0x64'], gasUsedRatio: [], reward: [['0x2']] };
+          if (method === 'eth_getBlockByNumber') return { baseFeePerGas: '0x64' };
+          if (method === 'eth_maxPriorityFeePerGas') return '0x2';
           throw new Error(`unexpected rpc call ${method}`);
         },
       });
@@ -4489,6 +5132,86 @@ describe('Network', () => {
         [game]: new Map([[5n, 3n]]),
       });
       await rejects(() => nftHoldings(prov, 123, []), /wrong address/);
+    });
+
+    it('bounds NFT ownership concurrency and ERC1155 batch allocation', async () => {
+      const nft = '0x00000000000000000000000000000000000beef2';
+      const game = '0x00000000000000000000000000000000000beef3';
+      let ownerActive = 0;
+      let ownerPeak = 0;
+      const batchSizes = [];
+      const prov = new RpcClient({
+        call: async (method, ...args) => {
+          if (method !== 'eth_call') throw new Error(`unexpected RPC method ${method}`);
+          const data = args[0].data;
+          const selector = data.slice(0, 10);
+          if (selector === '0x70a08231') return encodeWords(20n);
+          if (selector === '0x6352211e') {
+            ownerActive++;
+            ownerPeak = Math.max(ownerPeak, ownerActive);
+            await new Promise((resolve) => setImmediate(resolve));
+            ownerActive--;
+            return encodeAddress(ME);
+          }
+          if (selector === '0x4e1273f4') {
+            const size = Number(BigInt(`0x${data.slice(10 + 2 * 64, 10 + 3 * 64)}`));
+            batchSizes.push(size);
+            return encodeWords(32n, BigInt(size), ...Array(size).fill(1n));
+          }
+          throw new Error(`unexpected selector ${selector}`);
+        },
+      });
+      const holdings = await nftHoldings(prov, ME, [
+        {
+          contract: nft,
+          abi: 'ERC721',
+          tokens: new Map(Array.from({ length: 20 }, (_, i) => [BigInt(i), 1n])),
+        },
+        {
+          contract: game,
+          abi: 'ERC1155',
+          tokens: new Map(Array.from({ length: 129 }, (_, i) => [BigInt(i), 1n])),
+        },
+      ]);
+      deepStrictEqual(ownerPeak, 8);
+      deepStrictEqual(batchSizes, [128, 1]);
+      deepStrictEqual((holdings[nft] as Map<bigint, bigint>).size, 20);
+      deepStrictEqual((holdings[game] as Map<bigint, bigint>).size, 129);
+    });
+
+    it('caps NFT candidate allocation and rejects oversized holdings before RPC', async () => {
+      const nft = '0x00000000000000000000000000000000000beef2';
+      const tooManyIds = new Map(Array.from({ length: 4097 }, (_, i) => [BigInt(i), 1n] as const));
+      const tooManyContracts = Array.from({ length: 257 }, (_, i) => ({
+        contract: `0x${(i + 1).toString(16).padStart(40, '0')}`,
+        abi: 'ERC721' as const,
+        tokens: new Map([[1n, 1n]]),
+      }));
+      throws(
+        () =>
+          nftCandidates([
+            { tokenTransfers: [{ contract: nft, abi: 'ERC721', tokens: tooManyIds } as any] },
+          ]),
+        /token id limit is 4096/
+      );
+      throws(
+        () => nftCandidates([{ tokenTransfers: tooManyContracts as any }]),
+        /contract limit is 256/
+      );
+
+      let calls = 0;
+      const prov = new RpcClient({
+        call: async () => {
+          calls++;
+          throw new Error('unexpected RPC call');
+        },
+      });
+      await rejects(
+        () => nftHoldings(prov, ME, [{ contract: nft, abi: 'ERC721', tokens: tooManyIds }]),
+        /token id limit is 4096/
+      );
+      await rejects(() => nftHoldings(prov, ME, tooManyContracts), /contract limit is 256/);
+      deepStrictEqual(calls, 0);
     });
 
     it('nftHoldings rejects incomplete ERC1155 balance batches', async () => {
@@ -4585,7 +5308,14 @@ describe('Network', () => {
               tokens: new Map([[1n, 5n]]),
             },
             // shape-decoded unknown token: no metadata yet
-            { contract: shady, abi: 'ERC20', verified: false, from: OTHER, to: ME, tokens: new Map([[1n, 9n]]) },
+            {
+              contract: shady,
+              abi: 'ERC20',
+              verified: false,
+              from: OTHER,
+              to: ME,
+              tokens: new Map([[1n, 9n]]),
+            },
             // NFT movements are ignored
             { contract: shady, abi: 'ERC721', symbol: 'PUNK', to: ME, tokens: new Map([[7n, 1n]]) },
           ],
@@ -4628,13 +5358,20 @@ describe('Network', () => {
         reverted: false,
         diff: 5n,
         tokenTransfers: [],
-        info: { hash: TX_HASH, from: OTHER, to: ME, value: 7n, input: `0xa9059cbb${'00'.repeat(64)}` },
+        info: {
+          hash: TX_HASH,
+          from: OTHER,
+          to: ME,
+          value: 7n,
+          input: `0xa9059cbb${'00'.repeat(64)}`,
+        },
         receipt: { status: 1, logs: [] },
       };
       deepStrictEqual(slimRow(row as any), {
         hash: TX_HASH,
         block: 100,
         timestamp: 1700000100,
+        reverted: false,
         tokenTransfers: [],
         info: { from: OTHER, to: ME, value: 7n, input: '0xa9059cbb' },
       });
@@ -4642,6 +5379,24 @@ describe('Network', () => {
       deepStrictEqual(slimRow({ ...row, addresses: [ME] } as any).addresses, [ME]);
       // slim rows survive the persistence codec
       deepStrictEqual(rowCodec.decode(rowCodec.encode(slimRow(row as any))), slimRow(row as any));
+    });
+
+    it('txDiff excludes reverted value and includes execution and blob fees', () => {
+      const info = { from: ME, to: OTHER, value: 100n } as any;
+      const receipt = {
+        status: 0,
+        gasUsed: 21n,
+        effectiveGasPrice: 2n,
+        blobGasUsed: 3n,
+        blobGasPrice: 4n,
+      } as any;
+      deepStrictEqual(txDiff(OTHER, info, receipt), 0n);
+      deepStrictEqual(txDiff(ME, info, receipt), -54n);
+      receipt.status = 1;
+      deepStrictEqual(txDiff(OTHER, info, receipt), 100n);
+      deepStrictEqual(txDiff(ME, info, receipt), -154n);
+      deepStrictEqual(txDiff(OTHER, info, undefined), 100n);
+      deepStrictEqual(txDiff(ME, info, undefined), -100n);
     });
 
     it('spendableAssets merges curated and discovered tokens with balances', async () => {
@@ -4681,22 +5436,32 @@ describe('Network', () => {
         ethCall: async (args) =>
           args.to.toLowerCase() === usdt.contract.toLowerCase()
             ? encodeWords(7000000n)
-            : encodeWords(0n), // discovered token: zero balance -> dropped
+            : encodeWords(9n),
         estimateGas: async () => 0n,
         ethLogs: async () => [],
       };
       const assets = await spendableAssets(prov as any, ME, {
         rows,
-        tokens: [usdt],
+        tokens: [usdt, { contract: UNKNOWN, symbol: 'MCK', decimals: 18, verified: false }],
         ethBalance: 5n,
       });
       deepStrictEqual(assets, [
         { symbol: 'ETH', decimals: 18, balance: 5n },
         { contract: usdt.contract, symbol: 'USDT', decimals: 6, balance: 7000000n },
+        {
+          contract: UNKNOWN,
+          symbol: 'MCK',
+          decimals: 18,
+          verified: false,
+          balance: 9n,
+        },
       ]);
       deepStrictEqual(calls, [], 'ethBalance in hand: no balance read');
       // without ethBalance the native balance is fetched
-      const fetched = await spendableAssets(prov as any, ME, { rows, tokens: [usdt] });
+      const fetched = await spendableAssets(prov as any, ME, {
+        rows,
+        tokens: [usdt, { contract: UNKNOWN, symbol: 'MCK', decimals: 18, verified: false }],
+      });
       deepStrictEqual(fetched[0].balance, 10n ** 18n);
       deepStrictEqual(calls, ['eth_getBalance']);
       await rejects(
@@ -4813,6 +5578,7 @@ describe('Network', () => {
       const discovered = [];
       const cache = new Map();
       const tx = transferTx([erc20Log(UNKNOWN, OTHER, ME, 5n)]);
+      tx.info.to = UNKNOWN;
       const row = await enrichTx(prov, tx, {
         address: ME,
         cache,
@@ -4823,9 +5589,14 @@ describe('Network', () => {
       deepStrictEqual(row.tokenTransfers[0].decimals, 18);
       // discovered (on-chain, attacker-controlled) metadata is marked unverified
       deepStrictEqual(row.tokenTransfers[0].verified, false);
+      deepStrictEqual(row.intent, undefined);
+      deepStrictEqual(row.clearSig, undefined);
       deepStrictEqual(discovered.length, 1);
       deepStrictEqual(discovered[0].abi, 'ERC20');
+      deepStrictEqual(discovered[0].verified, false);
       deepStrictEqual(counters.getCode, 1);
+      deepStrictEqual(counters.chainId, 1);
+      deepStrictEqual(cache.has(`1:${UNKNOWN}`), true);
       // shared cache: the second enrichment probes nothing
       await enrichTx(prov, tx, { address: ME, cache });
       deepStrictEqual(counters.getCode, 1);
@@ -4842,6 +5613,97 @@ describe('Network', () => {
           verified: false,
         },
       ]);
+    });
+
+    it('caps per-receipt token discovery while preserving shape decoding', async () => {
+      const contracts = Array.from(
+        { length: 33 },
+        (_, i) => `0x${(0xbeef00 + i).toString(16).padStart(40, '0')}`
+      );
+      let getCodeActive = 0;
+      let getCodePeak = 0;
+      let getCodeCalls = 0;
+      const discovered = [];
+      const prov = new RpcClient({
+        call: async (method, ...args) => {
+          if (method === 'eth_chainId') return '0x1';
+          if (method === 'eth_getCode') {
+            getCodeCalls++;
+            getCodeActive++;
+            getCodePeak = Math.max(getCodePeak, getCodeActive);
+            await new Promise((resolve) => setImmediate(resolve));
+            getCodeActive--;
+            return '0x6001';
+          }
+          if (method === 'eth_call') {
+            const selector = args[0].data.slice(0, 10);
+            if (selector === '0x01ffc9a7') return encodeWords(0n);
+            if (selector === '0x06fdde03') return encodeString('Mock');
+            if (selector === '0x95d89b41') return encodeString('MCK');
+            if (selector === '0x313ce567') return encodeWords(18n);
+            if (selector === '0x18160ddd') return encodeWords(1000n);
+          }
+          throw new Error(`unexpected call: ${method}`);
+        },
+      });
+      const tx = transferTx(contracts.map((contract) => erc20Log(contract, OTHER, ME, 1n)));
+      const row = await enrichTx(prov, tx, {
+        address: ME,
+        onToken: (token) => discovered.push(token),
+      });
+      deepStrictEqual(getCodeCalls, 32);
+      deepStrictEqual(getCodePeak, 2);
+      deepStrictEqual(discovered.length, 32);
+      deepStrictEqual(row.tokenTransfers.length, 33);
+      deepStrictEqual(row.tokenTransfers[31].symbol, 'MCK');
+      deepStrictEqual(row.tokenTransfers[32].symbol, undefined);
+      deepStrictEqual(row.tokenTransfers[32].verified, false);
+    });
+
+    it('enrichTx scopes discovery caches to a verified chain', async () => {
+      const cache = new Map();
+      const mainnetCounters = {};
+      const optimismCounters = {};
+      const mainnet = tokenMetaProv(
+        { name: 'Mainnet Mock', symbol: 'MAIN', decimals: 18, totalSupply: 1000n },
+        mainnetCounters,
+        1n
+      );
+      const optimism = tokenMetaProv(
+        { name: 'Optimism Mock', symbol: 'OPT', decimals: 6, totalSupply: 1000n },
+        optimismCounters,
+        10n
+      );
+      const mainnetTx = transferTx([erc20Log(UNKNOWN, OTHER, ME, 5n)]);
+      const optimismTx = transferTx([erc20Log(UNKNOWN, OTHER, ME, 5n)]);
+      optimismTx.info.chainId = 10n;
+
+      const mainnetRow = await enrichTx(mainnet, mainnetTx, { address: ME, cache });
+      const optimismRow = await enrichTx(optimism, optimismTx, { address: ME, cache });
+      deepStrictEqual(mainnetRow.tokenTransfers[0].symbol, 'MAIN');
+      deepStrictEqual(optimismRow.tokenTransfers[0].symbol, 'OPT');
+      deepStrictEqual([...cache.keys()].sort(), [`10:${UNKNOWN}`, `1:${UNKNOWN}`].sort());
+      deepStrictEqual(mainnetCounters.chainId, 1);
+      deepStrictEqual(optimismCounters.chainId, 1);
+
+      await rejects(
+        () => enrichTx(mainnet, optimismTx, { address: ME, cache: new Map() }),
+        /RPC chain id 1 does not match transaction chain id 10/
+      );
+
+      const reusedAddressCounters = {};
+      const reusedAddressProvider = tokenMetaProv(
+        { name: 'L2 Token', symbol: 'L2', decimals: 8, totalSupply: 1000n },
+        reusedAddressCounters,
+        10n
+      );
+      const reusedAddressTx = transferTx([erc20Log(USDT, OTHER, ME, 5n)]);
+      reusedAddressTx.info.chainId = 10n;
+      const reusedAddressRow = await enrichTx(reusedAddressProvider, reusedAddressTx, {
+        address: ME,
+      });
+      deepStrictEqual(reusedAddressRow.tokenTransfers[0].symbol, 'L2');
+      deepStrictEqual(reusedAddressCounters.getCode, 1);
     });
 
     it('nft-heavy address: replayed discovery, holdings, enrichTx', async () => {

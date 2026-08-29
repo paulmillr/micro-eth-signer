@@ -1,12 +1,12 @@
 import { describe, it } from '@paulmillr/jsbt/test.js';
-import { deepStrictEqual } from 'node:assert';
+import { deepStrictEqual, rejects } from 'node:assert';
 import {
   CLEARSIG_REPO,
   Decoder,
   OURS,
   createContract,
   decodeData,
-  decodeTx
+  decodeTx,
 } from '../src/abi/index.ts';
 import { Transaction } from '../src/index.ts';
 import { RpcClient } from '../src/net.ts';
@@ -21,6 +21,9 @@ const ACCOUNT = '0x0000000000000000000000000000000000001004';
 const NFT = '0x0000000000000000000000000000000000001005';
 const BAYC = '0xbc4ca0eda7647a8ab7c2061c2e118a18a936f13d';
 const KEY = '0x1111111111111111111111111111111111111111111111111111111111111111';
+const TRUSTED_TOKEN = {
+  [TOKEN]: { abi: 'ERC20', chainId: 1n, symbol: 'MTK', decimals: 6, verified: true },
+} as const;
 const USDT_TX =
   '0xf8a901851d1a94a20082c12a94dac17f958d2ee523a2206206994597c13d831ec780b844a9059cbb000000000000000000000000dac17f958d2ee523a2206206994597c13d831ec7000000000000000000000000000000000000000000000000000000054259870025a066fcb560b50e577f6dc8c8b2e3019f760da78b4c04021382ba490c572a303a42a0078f5af8ac7e11caba9b7dc7a64f7bdc3b4ce1a6ab0a1246771d7cc3524a7200';
 
@@ -402,16 +405,16 @@ describe('ERC-7730 archive callbacks', () => {
       await calldata({ to: TARGET, data: token, chainId: 1n }, { ...opts, clearSig: DIRECT_CLEAR }),
       {
         intent: 'Token Lookup',
-        interpolatedIntent: 'Token Lookup MTK 0.123456 MTK',
+        interpolatedIntent: `Token Lookup ${TOKEN} 123456 ???`,
         structuredIntent: [
           'Token Lookup ',
-          { value: 'MTK', format: 'tokenTicker', rawValue: TOKEN },
+          { value: TOKEN, format: 'tokenTicker', rawValue: TOKEN },
           ' ',
-          { value: '0.123456 MTK', format: 'tokenAmount', rawValue: 123456n },
+          { value: '123456 ???', format: 'tokenAmount', rawValue: 123456n },
         ],
         fields: {
-          Token: { value: 'MTK', format: 'tokenTicker', rawValue: TOKEN },
-          Amount: { value: '0.123456 MTK', format: 'tokenAmount', rawValue: 123456n },
+          Token: { value: TOKEN, format: 'tokenTicker', rawValue: TOKEN },
+          Amount: { value: '123456 ???', format: 'tokenAmount', rawValue: 123456n },
         },
       }
     );
@@ -422,12 +425,9 @@ describe('ERC-7730 archive callbacks', () => {
       await calldata({ to: TARGET, data: nft, chainId: 1n }, { ...opts, clearSig: DIRECT_CLEAR }),
       {
         intent: 'NFT Lookup',
-        interpolatedIntent: 'NFT Lookup Archive NFT #42',
-        structuredIntent: [
-          'NFT Lookup ',
-          { value: 'Archive NFT #42', format: 'nftName', rawValue: 42n },
-        ],
-        fields: { NFT: { value: 'Archive NFT #42', format: 'nftName', rawValue: 42n } },
+        interpolatedIntent: 'NFT Lookup 42',
+        structuredIntent: ['NFT Lookup ', { value: '42', format: 'nftName', rawValue: 42n }],
+        fields: { NFT: { value: '42', format: 'nftName', rawValue: 42n } },
       }
     );
     // ERC-20 contracts are not NFT collections: the standard resolver declines and
@@ -465,10 +465,9 @@ describe('ERC-7730 archive callbacks', () => {
     deepStrictEqual(calls.includes('eth_getBlockByNumber'), true);
   });
 
-  it('discoverTx binds generic descriptors for a probed unknown token', async () => {
-    // The mock TOKEN contract is in no registry and no repository: online probing
-    // detects ERC-20 metadata, binds ercs/calldata-erc20-tokens.json through the
-    // token map, and the descriptor's format-key ABI supplies the signature info.
+  it('discoverTx does not bind generic descriptors for a probed unknown token', async () => {
+    // The mock TOKEN contract can self-report ERC-20 metadata, but probing is
+    // display-grade and must not turn the generic descriptor into a signing prompt.
     const { archive, calls } = rpc();
     const tx = Transaction.prepare({
       to: TOKEN,
@@ -485,28 +484,7 @@ describe('ERC-7730 archive callbacks', () => {
     const decoded = await discoverTx(archive, tx, {
       'erc20.json': OURS['ercs/calldata-erc20-tokens.json'],
     });
-    if (!decoded || Array.isArray(decoded) || !decoded.clearSig)
-      throw new Error('missing discovered clearSig');
-    const { clearSig, ...info } = decoded;
-    deepStrictEqual(info, {
-      name: 'transfer',
-      signature: 'transfer(address,uint256)',
-      value: { _to: ACCOUNT, _value: 123456n },
-    });
-    deepStrictEqual(await clearSig, {
-      intent: 'Send',
-      interpolatedIntent: `Transfer 0.123456 MTK to ${ACCOUNT}`,
-      structuredIntent: [
-        'Transfer ',
-        { value: '0.123456 MTK', format: 'tokenAmount', rawValue: 123456n },
-        ' to ',
-        { value: ACCOUNT, format: 'addressName', rawValue: ACCOUNT },
-      ],
-      fields: {
-        Amount: { value: '0.123456 MTK', format: 'tokenAmount', rawValue: 123456n },
-        To: { value: ACCOUNT, format: 'addressName', rawValue: ACCOUNT },
-      },
-    });
+    deepStrictEqual(decoded && !Array.isArray(decoded) ? decoded.clearSig : undefined, undefined);
     deepStrictEqual(calls.includes('eth_call'), true);
   });
 
@@ -525,15 +503,59 @@ describe('ERC-7730 archive callbacks', () => {
       ),
     });
     deepStrictEqual(unsigned.isSigned, false);
-    const decoded = await discoverTx(archive, unsigned, {
-      'erc20.json': OURS['ercs/calldata-erc20-tokens.json'],
-    });
+    const decoded = await discoverTx(
+      archive,
+      unsigned,
+      { 'erc20.json': OURS['ercs/calldata-erc20-tokens.json'] },
+      { tokens: TRUSTED_TOKEN }
+    );
     if (!decoded || Array.isArray(decoded) || !decoded.clearSig)
       throw new Error('missing discovered clearSig');
     deepStrictEqual(decoded.signature, 'transfer(address,uint256)');
     deepStrictEqual(
       (await decoded.clearSig).interpolatedIntent,
       `Transfer 0.123456 MTK to ${ACCOUNT}`
+    );
+  });
+
+  it('discoverTx defaults to verified mainnet and rejects RPC chain mismatches', async () => {
+    const data = ethHex.encode(
+      createContract(ERC20_ABI).transfer.encodeInput({ to: ACCOUNT, value: 123456n })
+    );
+    const implicitMainnet = Transaction.prepare({
+      to: TOKEN,
+      nonce: 0n,
+      maxFeePerGas: 10_000_000_000n,
+      value: 0n,
+      data,
+    });
+    const { archive } = rpc();
+    const decoded = await discoverTx(
+      archive,
+      implicitMainnet,
+      { 'erc20.json': OURS['ercs/calldata-erc20-tokens.json'] },
+      { tokens: TRUSTED_TOKEN }
+    );
+    if (!decoded || Array.isArray(decoded) || !decoded.clearSig)
+      throw new Error('missing implicit-mainnet clearSig');
+    deepStrictEqual(
+      (await decoded.clearSig)?.interpolatedIntent,
+      `Transfer 0.123456 MTK to ${ACCOUNT}`
+    );
+
+    const optimism = new RpcClient({
+      call: async (method) => {
+        if (method === 'eth_chainId') return '0xa';
+        throw new Error(`unexpected rpc call ${method}`);
+      },
+    });
+    await rejects(
+      () => discoverTx(optimism, implicitMainnet),
+      /RPC chain id 10 does not match expected chain id 1/
+    );
+    await rejects(
+      () => discoverTx(archive, implicitMainnet, CLEARSIG_REPO, { chainId: 10n }),
+      /requested chain id 10 does not match transaction chain id 1/
     );
   });
 
@@ -550,8 +572,19 @@ describe('ERC-7730 archive callbacks', () => {
       ),
     });
     deepStrictEqual(
-      await txIntent(archive, unsigned, { 'erc20.json': OURS['ercs/calldata-erc20-tokens.json'] }),
+      await txIntent(
+        archive,
+        unsigned,
+        { 'erc20.json': OURS['ercs/calldata-erc20-tokens.json'] },
+        { tokens: TRUSTED_TOKEN }
+      ),
       `Transfer 0.123456 MTK to ${ACCOUNT}`
+    );
+    deepStrictEqual(
+      await txIntent(archive, unsigned, {
+        'erc20.json': OURS['ercs/calldata-erc20-tokens.json'],
+      }),
+      undefined
     );
     // nothing to clear-sign: plain ETH transfer, empty calldata
     const plain = Transaction.prepare({

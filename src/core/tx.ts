@@ -20,6 +20,7 @@ import {
 import {
   amounts,
   cloneDeep,
+  deepFreeze,
   ethHex,
   ethHexNoLeadingZero,
   initSig,
@@ -95,9 +96,9 @@ export class Transaction<T extends TxType> {
     // Preserve whether this was validated as user input or machine/historical data.
     this.strict = strict;
     validateFields(type, raw, strict, allowSignatureFields);
-    // Shallow freeze: reassigning validated top-level fields would bypass validation
-    // and make `isSigned` stale. Nested structures (accessList) stay mutable.
-    this.raw = Object.freeze(cloneDeep(raw)) as TxCoder<T>;
+    // Sign only the validated snapshot. Nested access lists, authorizations, and blob
+    // hashes must not remain mutable between approval and signing.
+    this.raw = deepFreeze(cloneDeep(raw)) as TxCoder<T>;
     this.isSigned = typeof this.raw.r === 'bigint' && typeof this.raw.s === 'bigint';
   }
   // Defaults
@@ -135,29 +136,13 @@ export class Transaction<T extends TxType> {
     });
   }
   /**
-   * Creates transaction which sends whole account balance. Does two things:
-   * 1. `amount = accountBalance - maxFeePerGas * gasLimit`
-   * 2. `maxPriorityFeePerGas = maxFeePerGas`
-   *
-   * Every eth block sets a fee for all its transactions, called base fee.
-   * maxFeePerGas indicates how much gas user is able to spend in the worst case.
-   * If the block's base fee is 5 gwei, while user is able to spend 10 gwei in maxFeePerGas,
-   * the transaction would only consume 5 gwei. That means, base fee is unknown
-   * before the transaction is included in a block.
-   *
-   * By setting priorityFee to maxFee, we make the process deterministic:
-   * `maxFee = 10, maxPriority = 10, baseFee = 5` would always spend 10 gwei.
-   * In the end, the balance would become 0.
-   *
-   * WARNING: using the method would decrease privacy of a transfer, because
-   * payments for services have specific amounts, and not *the whole amount*.
+   * Sets the largest value that remains valid at the transaction's worst-case fee.
+   * Fee fields are preserved, so the actual fee can be lower and leave a small remainder.
+   * Maximum-value transfers remain recognizable on-chain from their amount.
    * @param accountBalance - account balance in wei
-   * @param opts.burnRemaining - send unspent fee to miners. When false, some "small amount" would
-   * remain. Default: true
-   * @returns new transaction with adjusted amounts
+   * @returns new transaction with its value adjusted to `accountBalance - fee`
    */
-  setWholeAmount(accountBalance: bigint, opts: { burnRemaining?: boolean } = {}): Transaction<T> {
-    const { burnRemaining = true } = opts;
+  setMaxAmount(accountBalance: bigint): Transaction<T> {
     const _0n = BigInt(0);
     if (typeof accountBalance !== 'bigint' || accountBalance <= _0n)
       throw new Error('account balance must be bigger than 0');
@@ -167,10 +152,6 @@ export class Transaction<T extends TxType> {
     const amountToSend = accountBalance - fee;
     if (amountToSend <= _0n) throw new Error('account balance must be bigger than fee of ' + fee);
     const raw = { ...this.raw, value: amountToSend };
-    if (!['legacy', 'eip2930'].includes(this.type) && burnRemaining) {
-      const r = raw as TxCoder<'eip1559' | 'eip4844' | 'eip7702'>;
-      r.maxPriorityFeePerGas = r.maxFeePerGas;
-    }
     return new Transaction(this.type, raw, { strict: this.strict });
   }
   /**

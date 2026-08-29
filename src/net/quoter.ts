@@ -10,6 +10,7 @@ import {
   ADDRESS_ZERO,
   astring,
   createDecimal,
+  ethHexNum,
   type IWeb3Provider,
   type Web3CallArgs,
 } from '../utils.ts';
@@ -21,15 +22,44 @@ const _192n = /* @__PURE__ */ BigInt(192);
 const UNISWAP_V2_FACTORY = '0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f';
 const UNISWAP_V3_FACTORY = '0x1F98431c8aD98523631AE4a59f267346ea31F984';
 const DEFAULT_V3_FEES = [100, 500, 3000, 10000];
+const MAX_V3_FEES = 32;
+const MAX_TOKEN_DECIMALS = 255;
+const CHAINLINK_FAST_MAX_AGE_SEC = 2 * 60 * 60;
+const CHAINLINK_DEFAULT_MAX_AGE_SEC = 26 * 60 * 60;
 const Q192 = /* @__PURE__ */ (() => _1n << _192n)();
 
-const CHAINLINK_COINS: Record<string, { decimals: number; contract: string }> = {
-  BCH: { decimals: 8, contract: '0x9f0f69428f923d6c95b781f89e165c9b2df9789d' },
-  BTC: { decimals: 8, contract: '0xf4030086522a5beea4988f8ca5b36dbc97bee88c' },
-  DOGE: { decimals: 8, contract: '0x2465cefd3b488be410b941b1d4b2767088e2a028' },
-  ETH: { decimals: 8, contract: '0x5f4ec3df9cbd43714fe2740f5e3616155c5b8419' },
-  XMR: { decimals: 8, contract: '0xfa66458cce7dd15d8650015c4fce4d278271618f' },
-  ZEC: { decimals: 8, contract: '0xd54b033d48d0475f19c5fccf7484e8a981848501' },
+type ChainlinkFeed = { decimals: number; contract: string; maxAgeSec: number };
+const CHAINLINK_COINS: Record<string, ChainlinkFeed> = {
+  BCH: {
+    decimals: 8,
+    contract: '0x9f0f69428f923d6c95b781f89e165c9b2df9789d',
+    maxAgeSec: CHAINLINK_DEFAULT_MAX_AGE_SEC,
+  },
+  BTC: {
+    decimals: 8,
+    contract: '0xf4030086522a5beea4988f8ca5b36dbc97bee88c',
+    maxAgeSec: CHAINLINK_FAST_MAX_AGE_SEC,
+  },
+  DOGE: {
+    decimals: 8,
+    contract: '0x2465cefd3b488be410b941b1d4b2767088e2a028',
+    maxAgeSec: CHAINLINK_DEFAULT_MAX_AGE_SEC,
+  },
+  ETH: {
+    decimals: 8,
+    contract: '0x5f4ec3df9cbd43714fe2740f5e3616155c5b8419',
+    maxAgeSec: CHAINLINK_FAST_MAX_AGE_SEC,
+  },
+  XMR: {
+    decimals: 8,
+    contract: '0xfa66458cce7dd15d8650015c4fce4d278271618f',
+    maxAgeSec: CHAINLINK_DEFAULT_MAX_AGE_SEC,
+  },
+  ZEC: {
+    decimals: 8,
+    contract: '0xd54b033d48d0475f19c5fccf7484e8a981848501',
+    maxAgeSec: CHAINLINK_DEFAULT_MAX_AGE_SEC,
+  },
 };
 type TokenSymbolIndex = Record<string, TokenDef & { contract: string }>;
 type TokenRegistry = { byAddress: Record<string, TokenDef>; bySymbol: TokenSymbolIndex };
@@ -37,6 +67,17 @@ const DEFAULT_TOKEN_REGISTRY: TokenRegistry = {
   byAddress: DEFAULT_TOKENS,
   bySymbol: TOKENS_BY_SYMBOL,
 };
+
+function tokenDecimals(decimals: number, name: string): number {
+  if (!Number.isSafeInteger(decimals) || decimals < 0 || decimals > MAX_TOKEN_DECIMALS)
+    throw new RangeError(`quoter: invalid ${name} decimals`);
+  return decimals;
+}
+
+function positiveSeconds(value: number, name: string): number {
+  if (!Number.isSafeInteger(value) || value <= 0) throw new RangeError(`quoter: invalid ${name}`);
+  return value;
+}
 
 function tokenRegistry(tokens: Record<string, TokenDef> = DEFAULT_TOKENS): TokenRegistry {
   if (tokens === DEFAULT_TOKENS) return DEFAULT_TOKEN_REGISTRY;
@@ -46,7 +87,16 @@ function tokenRegistry(tokens: Record<string, TokenDef> = DEFAULT_TOKENS): Token
     const address = assertAddress(contract, 'token');
     if (Object.hasOwn(byAddress, address))
       throw new Error(`quoter: duplicate token address: ${address}`);
-    byAddress[address] = token;
+    const decimals = tokenDecimals(token.decimals, 'token');
+    if (token.feed?.maxAgeSec !== undefined)
+      positiveSeconds(token.feed.maxAgeSec, 'feed maxAgeSec');
+    byAddress[address] = token.feed
+      ? {
+          ...token,
+          decimals,
+          feed: { ...token.feed, decimals: tokenDecimals(token.feed.decimals, 'feed') },
+        }
+      : { ...token, decimals };
   }
   return { byAddress, bySymbol: tokensBySymbol(byAddress) };
 }
@@ -78,18 +128,67 @@ const CHAINLINK_ABI = [
   },
 ] as const;
 
-export type ChainlinkPriceOpt = QuoterOpt;
+export type ChainlinkPriceOpt = QuoterOpt & {
+  /** Reject rounds older than this many seconds. Overrides the feed default. */
+  maxAgeSec?: number;
+  /** Reference Unix time for deterministic/offline use. Defaults to wall time or tagged block. */
+  nowSec?: number;
+};
+
+function feedMaxAgeSec(contract: string, configured?: number): number {
+  if (configured !== undefined) return positiveSeconds(configured, 'feed maxAgeSec');
+  const normalized = contract.toLowerCase();
+  if (
+    normalized === CHAINLINK_COINS.BTC.contract.toLowerCase() ||
+    normalized === CHAINLINK_COINS.ETH.contract.toLowerCase()
+  )
+    return CHAINLINK_FAST_MAX_AGE_SEC;
+  return CHAINLINK_DEFAULT_MAX_AGE_SEC;
+}
+
+function explicitReferenceTime(opt?: ChainlinkPriceOpt): bigint | undefined {
+  if (opt?.nowSec === undefined) return;
+  if (!Number.isSafeInteger(opt.nowSec) || opt.nowSec < 0)
+    throw new RangeError('quoter: invalid nowSec');
+  return BigInt(opt.nowSec);
+}
+
+async function chainlinkReferenceTime(
+  net: IWeb3Provider,
+  opt?: ChainlinkPriceOpt
+): Promise<bigint> {
+  const explicit = explicitReferenceTime(opt);
+  if (explicit !== undefined) return explicit;
+  const tag = opt?.tag;
+  if (typeof tag !== 'number' && tag !== 'earliest') return BigInt(Math.floor(Date.now() / 1000));
+  const rpcTag = typeof tag === 'number' ? ethHexNum.encode(tag) : tag;
+  const block = await net.call('eth_getBlockByNumber', rpcTag, false);
+  try {
+    const timestamp = BigInt(block?.timestamp);
+    if (timestamp < _0n) throw new Error('negative timestamp');
+    return timestamp;
+  } catch {
+    throw new Error('micro-web3/chainlink: invalid block timestamp');
+  }
+}
 
 async function chainlinkPrice(
   net: IWeb3Provider,
   contract: string,
   decimals: number,
+  defaultMaxAgeSec: number,
   opt?: ChainlinkPriceOpt
 ): Promise<number> {
+  decimals = tokenDecimals(decimals, 'feed');
+  const maxAgeSec = positiveSeconds(opt?.maxAgeSec ?? defaultMaxAgeSec, 'maxAgeSec');
+  const explicitNow = explicitReferenceTime(opt);
   const prices = createContract(CHAINLINK_ABI, net, contract);
   const res = await (prices.latestRoundData.call as any)(undefined, callOpt(opt));
   if (res.answer <= _0n || res.updatedAt === _0n || res.answeredInRound < res.roundId)
     throw new Error('micro-web3/chainlink: invalid price data');
+  const now = explicitNow ?? (await chainlinkReferenceTime(net, opt));
+  if (res.updatedAt > now || now - res.updatedAt > BigInt(maxAgeSec))
+    throw new Error('micro-web3/chainlink: stale price data');
   const num = Number.parseFloat(createDecimal(decimals).encode(res.answer));
   if (!Number.isFinite(num)) throw new Error('invalid data received');
   return num;
@@ -103,7 +202,7 @@ async function chainlinkCoinPrice(
   astring(symbol, 'symbol');
   const coin = CHAINLINK_COINS[symbol.toUpperCase()];
   if (!coin) throw new Error(`micro-web3/chainlink: unknown coin: ${symbol}`);
-  return await chainlinkPrice(net, coin.contract, coin.decimals, opt);
+  return await chainlinkPrice(net, coin.contract, coin.decimals, coin.maxAgeSec, opt);
 }
 
 async function chainlinkTokenPrice(
@@ -115,7 +214,13 @@ async function chainlinkTokenPrice(
   astring(symbol, 'symbol');
   const token = registry.bySymbol[symbol.toUpperCase()];
   if (!token?.feed) throw new Error(`micro-web3/chainlink: unknown token: ${symbol}`);
-  return await chainlinkPrice(net, token.feed.contract, token.feed.decimals, opt);
+  return await chainlinkPrice(
+    net,
+    token.feed.contract,
+    token.feed.decimals,
+    feedMaxAgeSec(token.feed.contract, token.feed.maxAgeSec),
+    opt
+  );
 }
 
 const UNISWAP_V2_FACTORY_ABI = [
@@ -219,6 +324,8 @@ const ERC4626_ABI = [
 export type RateDirection = 'forward' | 'reverse' | 'Forward' | 'Reverse';
 export type QuoterInit = {
   tokens?: Record<string, TokenDef>;
+  /** Override the built-in Chainlink freshness limits for this quoter. */
+  chainlinkMaxAgeSec?: number;
   /**
    * Memoize default-provider coinPrice/tokenPrice results for this long:
    * oracle quotes are stable second-to-second, so views re-rendering every
@@ -350,11 +457,14 @@ function checkLiquidity(score: bigint, min: bigint, name: string) {
 function validateV3Fees(fees?: number[]): number[] {
   const v3fees = fees || DEFAULT_V3_FEES;
   if (!Array.isArray(v3fees) || v3fees.length === 0) throw new Error('quoter: invalid fees');
+  const unique = new Set<number>();
   for (const fee of v3fees) {
     if (!Number.isSafeInteger(fee) || fee < 0 || fee > 0xffffff)
       throw new Error('quoter: invalid fee');
+    unique.add(fee);
+    if (unique.size > MAX_V3_FEES) throw new RangeError(`quoter: fee tier limit is ${MAX_V3_FEES}`);
   }
-  return [...v3fees];
+  return [...unique];
 }
 
 function routeCacheKey(id: string, tokenA: string, tokenB: string, opt?: ObjectParams): string {
@@ -406,7 +516,7 @@ function tokenInfoFromKnownSymbol(
   return {
     symbol: tokenSymbol,
     contract: token.contract.toLowerCase(),
-    decimals: token.decimals,
+    decimals: tokenDecimals(token.decimals, 'token'),
   };
 }
 
@@ -456,21 +566,24 @@ function tokenInfoFromAddress(
   const quote = quoteTokenInfo(tokenContract, registry, opt);
   if (quote) return quote;
   const token = tokenByAddress(registry, tokenContract);
-  if (token) return { symbol: token.symbol, contract: tokenContract, decimals: token.decimals };
+  if (token)
+    return {
+      symbol: token.symbol,
+      contract: tokenContract,
+      decimals: tokenDecimals(token.decimals, 'token'),
+    };
   if (opt?.priceInDecimals !== undefined) {
-    if (!Number.isSafeInteger(opt.priceInDecimals) || opt.priceInDecimals < 0)
-      throw new Error('quoter: invalid priceIn decimals');
     return {
       symbol: opt.priceInSymbol || tokenContract,
       contract: tokenContract,
-      decimals: opt.priceInDecimals,
+      decimals: tokenDecimals(opt.priceInDecimals, 'priceIn'),
     };
   }
   throw new Error(`quoter: unknown ${name} token metadata`);
 }
 
 function decimalNumber(amount: bigint, decimals: number): number {
-  const num = Number.parseFloat(createDecimal(decimals).encode(amount));
+  const num = Number.parseFloat(createDecimal(tokenDecimals(decimals, 'token')).encode(amount));
   if (!Number.isFinite(num)) throw new Error('invalid data received');
   return num;
 }
@@ -500,7 +613,7 @@ async function tokenPriceIn(
   quote: SymbolToken,
   opt?: QuoterOpt
 ): Promise<number> {
-  const amountIn = _10n ** BigInt(token.decimals);
+  const amountIn = _10n ** BigInt(tokenDecimals(token.decimals, 'token'));
   return decimalNumber(await tokenRateIn(quoter, token, quote, amountIn, opt), quote.decimals);
 }
 
@@ -663,7 +776,7 @@ async function tokenPriceInPath<O extends QuoterOpt, P extends O & UniswapPriceI
   routeCache?: RouteCache
 ): Promise<number> {
   if (token.contract === quote.contract) return 1;
-  let amount = _10n ** BigInt(token.decimals);
+  let amount = _10n ** BigInt(tokenDecimals(token.decimals, 'token'));
   const path = [token, ...(config.bridgeTokens?.(token, quote, registry) || []), quote];
   for (let i = 0; i < path.length - 1; i++) {
     const from = path[i];
@@ -1152,6 +1265,7 @@ export class Quoter {
   private readonly tokens: TokenRegistry;
   private readonly routeCache: RouteCache = new Map();
   private readonly ttlMs: number;
+  private readonly chainlinkMaxAgeSec?: number;
   private readonly priceCache = new Map<string, { at: number; promise: Promise<number> }>();
 
   constructor(net: IWeb3Provider, opt: QuoterInit = {}) {
@@ -1160,6 +1274,24 @@ export class Quoter {
     if (opt.ttlMs !== undefined && (!Number.isFinite(opt.ttlMs) || opt.ttlMs < 0))
       throw new Error('quoter: wrong ttlMs');
     this.ttlMs = opt.ttlMs ?? 0;
+    this.chainlinkMaxAgeSec =
+      opt.chainlinkMaxAgeSec === undefined
+        ? undefined
+        : positiveSeconds(opt.chainlinkMaxAgeSec, 'chainlinkMaxAgeSec');
+  }
+
+  private priceParams(provider: QuoterPriceProvider | undefined, params: unknown): unknown {
+    if (
+      this.chainlinkMaxAgeSec === undefined ||
+      (provider !== undefined && provider !== 'chainlink')
+    )
+      return params;
+    if (params === undefined) return { maxAgeSec: this.chainlinkMaxAgeSec };
+    if (typeof params !== 'object' || params === null || Array.isArray(params)) return params;
+    const configured = params as Record<string, unknown>;
+    return configured.maxAgeSec === undefined
+      ? { ...configured, maxAgeSec: this.chainlinkMaxAgeSec }
+      : configured;
   }
 
   // Only the default-provider path memoizes: explicit provider/params are not
@@ -1185,8 +1317,9 @@ export class Quoter {
     params?: unknown
   ): Promise<number> {
     astring(symbol, 'symbol');
+    const quoteParams = this.priceParams(provider, params);
     const fetch = () =>
-      quoterPrice(this.net, symbol, 'coin', provider, params, this.tokens, this.routeCache);
+      quoterPrice(this.net, symbol, 'coin', provider, quoteParams, this.tokens, this.routeCache);
     return provider === undefined ? await this.cachedPrice(`coin ${symbol}`, fetch) : await fetch();
   }
 
@@ -1198,8 +1331,9 @@ export class Quoter {
     params?: unknown
   ): Promise<number> {
     astring(symbol, 'symbol');
+    const quoteParams = this.priceParams(provider, params);
     const fetch = () =>
-      quoterPrice(this.net, symbol, 'token', provider, params, this.tokens, this.routeCache);
+      quoterPrice(this.net, symbol, 'token', provider, quoteParams, this.tokens, this.routeCache);
     return provider === undefined
       ? await this.cachedPrice(`token ${symbol}`, fetch)
       : await fetch();

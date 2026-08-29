@@ -10,10 +10,10 @@ type Any = Record<string, any>;
 export const ERCS: Record<string, ClearSigDef> = /* @__PURE__ */ deepFreeze({"ercs/calldata-erc20-tokens.json":{"$schema":"../specs/erc7730-v2.schema.json","context":{"contract":{}},"display":{"formats":{"transfer(address _to, uint256 _value)":{"intent":"Send","fields":[{"path":"_value","label":"Amount","format":"tokenAmount","params":{"tokenPath":"@.to"},"visible":"always"},{"path":"_to","label":"To","format":"addressName","params":{"types":["eoa"],"sources":["local","ens"]},"visible":"always"}]},"approve(address _spender, uint256 _value)":{"intent":"Approve","fields":[{"path":"_spender","label":"Spender","format":"addressName","params":{"types":["eoa","contract"]},"visible":"always"},{"path":"_value","label":"Amount","format":"tokenAmount","params":{"tokenPath":"@.to","threshold":"0x8000000000000000000000000000000000000000000000000000000000000000"},"visible":"always"}]}}}},"ercs/calldata-erc4626-vaults.json":{"$schema":"../specs/erc7730-v2.schema.json","context":{"contract":{}},"metadata":{"constants":{"underlyingToken":"0x0"}},"display":{"formats":{"deposit(uint256 assets, address receiver)":{"intent":"Deposit","fields":[{"path":"assets","label":"Deposit asset","format":"tokenAmount","params":{"token":"$.metadata.constants.underlyingToken"},"visible":"always"},{"label":"Share ticker","format":"raw","value":"$.metadata.constants.vaultTicker"},{"path":"receiver","label":"Send shares to","format":"addressName","params":{"types":["eoa","contract"]},"visible":"always"}]},"mint(uint256 shares, address receiver)":{"intent":"Mint","fields":[{"label":"Deposit asset","format":"raw","value":"$.metadata.constants.underlyingTicker"},{"path":"shares","label":"Minted shares","format":"tokenAmount","params":{"tokenPath":"@.to"},"visible":"always"},{"path":"receiver","label":"Mint shares to","format":"addressName","params":{"types":["eoa","contract"]},"visible":"always"}]},"withdraw(uint256 assets, address receiver, address owner)":{"intent":"Withdraw","fields":[{"path":"assets","label":"Withdraw exactly","format":"tokenAmount","params":{"token":"$.metadata.constants.underlyingToken"},"visible":"always"},{"path":"receiver","label":"To","format":"addressName","params":{"types":["eoa","contract"]},"visible":"always"},{"path":"owner","label":"Owner","format":"addressName","params":{"types":["eoa","contract"]},"visible":"always"}]},"redeem(uint256 shares, address receiver, address owner)":{"intent":"Redeem","fields":[{"path":"shares","label":"Shares to redeem","format":"tokenAmount","params":{"tokenPath":"@.to"},"visible":"always"},{"path":"receiver","label":"To","format":"addressName","params":{"types":["eoa","contract"]},"visible":"always"},{"path":"owner","label":"Owner","format":"addressName","params":{"types":["eoa","contract"]},"visible":"always"}]}}}},"ercs/calldata-erc721-nfts.json":{"$schema":"../specs/erc7730-v2.schema.json","context":{"contract":{}},"metadata":{"enums":{"rights":{"True":"Grant all","False":"Deny all"}}},"display":{"definitions":{"from":{"label":"From","format":"addressName","params":{"types":["eoa"],"sources":["local","ens"]}},"to":{"label":"To","format":"addressName","params":{"types":["eoa"],"sources":["local","ens"]}},"operator":{"label":"Operator","format":"addressName","params":{"types":["contract"],"sources":["local","ens"]}},"tokenId":{"label":"NFT","format":"nftName","params":{"collectionPath":"@.to"}}},"formats":{"transferFrom(address _from, address _to, uint256 _tokenId)":{"intent":"Send NFT","fields":[{"path":"_from","$ref":"$.display.definitions.from"},{"path":"_to","$ref":"$.display.definitions.to","visible":"always"},{"path":"_tokenId","$ref":"$.display.definitions.tokenId","visible":"always"}]},"safeTransferFrom(address _from, address _to, uint256 _tokenId)":{"intent":"Send NFT","fields":[{"path":"_from","$ref":"$.display.definitions.from"},{"path":"_to","$ref":"$.display.definitions.to"},{"path":"_tokenId","$ref":"$.display.definitions.tokenId"}]},"approve(address _approved, uint256 _tokenId)":{"intent":"Approve operator for NFT","fields":[{"path":"_approved","$ref":"$.display.definitions.operator"},{"path":"_tokenId","$ref":"$.display.definitions.tokenId"}]},"setApprovalForAll(address _operator, bool _approved)":{"$id":"setApprovalForAll","intent":"Manage operator rights for","fields":[{"path":"@.to","label":"Collection","format":"addressName","params":{"types":["collection"],"sources":["local","ens"]}},{"path":"_operator","$ref":"$.display.definitions.operator"},{"path":"_approved","label":"Access rights","format":"enum","params":{"$ref":"$.metadata.enums.rights"}}]}}}},"ercs/calldata-erc7540Deposit-vaults.json":{"$schema":"../specs/erc7730-v2.schema.json","context":{"contract":{}},"metadata":{"constants":{"underlyingToken":"0x0"}},"display":{"formats":{"deposit(uint256 assets, address receiver, address controller)":{"intent":"Claim deposit","fields":[{"path":"assets","label":"Amount of assets to finalize deposit for","format":"tokenAmount","params":{"token":"$.metadata.constants.underlyingToken"},"visible":"always"},{"label":"Receive shares","format":"raw","value":"$.metadata.constants.vaultTicker"},{"path":"receiver","label":"Send shares to","format":"addressName","params":{"types":["eoa","contract"]},"visible":"always"},{"path":"controller","label":"Controller of the request","format":"addressName","params":{"types":["eoa","contract"]},"visible":"always"}]},"mint(uint256 shares, address receiver, address controller)":{"intent":"Mint","fields":[{"label":"Claim deposit","format":"raw","value":"$.metadata.constants.underlyingTicker"},{"path":"shares","label":"Amount of shares to mint","format":"tokenAmount","params":{"tokenPath":"@.to"},"visible":"always"},{"path":"receiver","label":"Send shares to","format":"addressName","params":{"types":["eoa","contract"]},"visible":"always"},{"path":"controller","label":"Controller of the request","format":"addressName","params":{"types":["eoa","contract"]},"visible":"always"}]},"requestDeposit(uint256 assets, address controller, address owner)":{"intent":"Request deposit","fields":[{"path":"assets","label":"Amount of assets to request deposit for","format":"tokenAmount","params":{"token":"$.metadata.constants.underlyingToken"},"visible":"always"},{"path":"controller","label":"Controller of the request","format":"addressName","params":{"types":["eoa","contract"]},"visible":"always"},{"path":"owner","label":"Owner of the shares","format":"addressName","params":{"types":["eoa","contract"]},"visible":"always"}]},"setOperator(address operator, bool approved)":{"intent":"Set operator","fields":[{"path":"operator","label":"Operator","format":"addressName","params":{"types":["eoa","contract"]},"visible":"always"},{"path":"approved","label":"Approved","format":"raw","visible":"always"}]}}}},"ercs/calldata-erc7540Redeem-vaults.json":{"$schema":"../specs/erc7730-v2.schema.json","context":{"contract":{}},"metadata":{"constants":{"underlyingToken":"0x0"}},"display":{"formats":{"redeem(uint256 shares, address receiver, address controller)":{"intent":"Claim redemption","fields":[{"path":"shares","label":"Amount of shares to finalize redemption for","format":"tokenAmount","params":{"tokenPath":"@.to"},"visible":"always"},{"path":"receiver","label":"Send assets to","format":"addressName","params":{"types":["eoa","contract"]},"visible":"always"},{"path":"controller","label":"Controller of the request","format":"addressName","params":{"types":["eoa","contract"]},"visible":"always"}]},"withdraw(uint256 assets, address receiver, address controller)":{"intent":"Withdraw","fields":[{"label":"Claim withdrawal","format":"raw","value":"$.metadata.constants.underlyingTicker"},{"path":"assets","label":"Amount of assets to receive","format":"tokenAmount","params":{"token":"$.metadata.constants.underlyingToken"},"visible":"always"},{"path":"receiver","label":"Send assets to","format":"addressName","params":{"types":["eoa","contract"]},"visible":"always"},{"path":"controller","label":"Controller of the request","format":"addressName","params":{"types":["eoa","contract"]},"visible":"always"}]},"requestRedeem(uint256 shares, address controller, address owner)":{"intent":"Request redemption","fields":[{"path":"shares","label":"Amount of shares to request redemption for","format":"tokenAmount","params":{"tokenPath":"@.to"},"visible":"always"},{"path":"controller","label":"Controller of the request","format":"addressName","params":{"types":["eoa","contract"]},"visible":"always"},{"path":"owner","label":"Owner of the shares","format":"addressName","params":{"types":["eoa","contract"]},"visible":"always"}]},"setOperator(address operator, bool approved)":{"intent":"Set operator","fields":[{"path":"operator","label":"Operator","format":"addressName","params":{"types":["eoa","contract"]},"visible":"always"},{"path":"approved","label":"Approved","format":"raw","visible":"always"}]}}}},"ercs/eip712-erc2612-permit.json":{"$schema":"../specs/erc7730-v2.schema.json","context":{"eip712":{}},"display":{"formats":{"Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)":{"intent":"Authorize spending of tokens","fields":[{"path":"spender","label":"Spender","format":"raw","visible":"always"},{"path":"value","label":"Max spending amount","format":"tokenAmount","params":{"tokenPath":"@.to"},"visible":"always"},{"path":"deadline","label":"Valid until","format":"date","params":{"encoding":"timestamp"}},{"label":"Owner","path":"owner","visible":"never"},{"label":"Nonce","path":"nonce","visible":"never"}]}}}}});
 
 // Legacy contracts this library clear-signed through hand-written decoder
-// hints before ERC-7730 existed (uniswap v2/v3, kyber, the metamask router) -
-// none are in the upstream registry - plus two curated entries the registry
-// has but underspecifies. Descriptors are authored and maintained HERE; the
-// generator only ever copies upstream verbatim.
+// hints before ERC-7730 existed (uniswap v2/v3 and kyber) - none are in the
+// upstream registry - plus two curated entries the registry has but
+// underspecifies. Descriptors are authored and maintained HERE; the generator
+// only ever copies upstream verbatim.
 /** Local ERC-7730 descriptors and overrides maintained by this package. */
 export const OURS: Record<string, ClearSigDef> = /* @__PURE__ */ deepFreeze({
   // Overrides the generated ERCS copy ({ ...ERCS, ...OURS } - last wins):
@@ -907,67 +907,6 @@ export const OURS: Record<string, ClearSigDef> = /* @__PURE__ */ deepFreeze({
       },
     },
   },
-  // This router appends ONE non-ABI referral byte after the encoded args, so
-  // rendering needs ClearSigOpt.allowUnreadBytes (same story as the copied
-  // 1inch registry vectors).
-  'local/legacy-metamask-swap-router.json': {
-    $schema: '../../specs/erc7730-v2.schema.json',
-    context: {
-      $id: 'MetaMask Swap Router',
-      contract: {
-        deployments: [
-          {
-            chainId: 1,
-            address: '0x881d40237659c251811cec9c364ef91dc08d300c',
-          },
-        ],
-      },
-    },
-    metadata: {
-      owner: 'MetaMask',
-      contractName: 'MetaMask Swap Router',
-    },
-    display: {
-      formats: {
-        'swap(string aggregatorId, address tokenFrom, uint256 amount, bytes data)': {
-          intent: 'Swap',
-          interpolatedIntent: 'Swap {amount} via {aggregatorId}',
-          fields: [
-            {
-              path: 'amount',
-              label: 'Amount to Send',
-              format: 'tokenAmount',
-              params: {
-                tokenPath: 'tokenFrom',
-              },
-              visible: 'always',
-            },
-            {
-              path: 'tokenFrom',
-              label: 'Token to Send',
-              format: 'addressName',
-              params: {
-                types: ['contract'],
-                sources: ['local'],
-              },
-              visible: 'always',
-            },
-            {
-              path: 'aggregatorId',
-              label: 'Aggregator',
-              format: 'raw',
-              visible: 'always',
-            },
-            {
-              path: 'data',
-              label: 'Aggregator calldata',
-              visible: 'never',
-            },
-          ],
-        },
-      },
-    },
-  },
 });
 
 /**
@@ -976,7 +915,8 @@ export const OURS: Record<string, ClearSigDef> = /* @__PURE__ */ deepFreeze({
  * ERC-2612 permit binding because the upstream permit descriptor has no
  * deployments. Interface sources come from `repo` first, then bundled ERCS.
  * @param repo - Descriptor map to extend.
- * @param tokens - Token metadata keyed by address or symbolic name.
+ * @param tokens - Curated token metadata keyed by address or symbolic name;
+ * entries explicitly marked `verified: false` are ignored.
  * @param chainId - Default chain id for token metadata without its own chain id.
  * @returns New descriptor map suitable for `decodeData`, `decodeTx`, or `eip712`.
  * @throws If a token chain id cannot be represented as a JSON descriptor number. {@link Error}
@@ -1008,10 +948,17 @@ export const addTokens = (
   const own = candidates(out);
   const bundled = candidates(ERCS as Any);
   const permit = 'ercs/eip712-erc2612-permit.json';
+  const addressRe = /^0x[0-9a-f]{40}$/;
   for (const k of Object.keys(tokens)) {
     const t = tokens[k] as Any;
-    const address = `${t.address || t.contract || k}`.toLowerCase();
-    if (!/^0x[0-9a-f]{40}$/.test(address)) continue;
+    // Discovery metadata is useful for explorer display, but must not bind a
+    // generic signing descriptor. Callers can opt in with verified: true or
+    // pass curated metadata without the discovery-only false marker.
+    if (t.verified === false) continue;
+    const key = k.toLowerCase();
+    const keyIsAddress = addressRe.test(key);
+    const address = keyIsAddress ? key : `${t.address || t.contract || k}`.toLowerCase();
+    if (!keyIsAddress && !addressRe.test(address)) continue;
     const id = Number(t.chainId === undefined ? chainId : t.chainId);
     if (!Number.isSafeInteger(id))
       throw new Error(`clearSig-repo: expected safe integer chainId, got ${id}`);

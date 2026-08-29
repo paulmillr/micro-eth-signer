@@ -100,7 +100,7 @@ export type ClearSigResult = {
 export type ClearSigRepositoryEntry = ((
   input: Ctx | ClearSigTypedInput,
   opt?: ClearSigOpt
-) => Promise<ClearSigResult>) & {
+) => Promise<ClearSigResult | undefined>) & {
   /** Parsed ABI function used by Decoder.addClearSig() for selector hashing. */
   fn?: FnArg;
   /** Internal descriptor id for duplicate-selector validation in Decoder. */
@@ -822,6 +822,46 @@ const cleanDeployments = (deployments: Any[] = []): Deployment[] =>
     .filter(
       (d, i, a) => a.findIndex((j) => j.address === d.address && j.chainId === d.chainId) === i
     );
+const eip712ContextMatches = (
+  desc: TArg<Any>,
+  typed: TArg<TypedData<EIP712Types, string>>
+): boolean => {
+  const eip = (desc.context || {}).eip712;
+  if (!eip) return true;
+  const domain = typed.domain as Any;
+  if (eip.deployments) {
+    if (typeof domain.verifyingContract !== 'string' || domain.chainId === undefined) return false;
+    const address = domain.verifyingContract.toLowerCase();
+    const chainId = cast.chain(domain.chainId);
+    if (
+      !cleanDeployments(eip.deployments).some((d) => d.address === address && d.chainId === chainId)
+    )
+      return false;
+  }
+  if (eip.domain) {
+    const ok = Object.keys(eip.domain).every((key) => {
+      if (!Object.hasOwn(domain, key)) return false;
+      return key === 'verifyingContract'
+        ? `${domain[key]}`.toLowerCase() === `${eip.domain[key]}`.toLowerCase()
+        : same(domain[key], eip.domain[key]);
+    });
+    if (!ok) return false;
+  }
+  if (eip.domainSeparator) {
+    let separator: string | undefined;
+    try {
+      const types = {
+        EIP712Domain: getDomainType(typed.domain as EIP712DomainType),
+        ...typed.types,
+      };
+      separator = typedEncoder(types, typed.domain).structHash('EIP712Domain', typed.domain);
+    } catch {
+      return false;
+    }
+    if (separator.toLowerCase() !== cast.raw(eip.domainSeparator).toLowerCase()) return false;
+  }
+  return true;
+};
 // Repository keys are logical descriptor ids, not filesystem paths. Exact include
 // keys win; otherwise includes resolve relative to the current id with only `..` special.
 const resolveRepo = (files: Record<string, Any>, key: string, seen: string[] = []): Any => {
@@ -859,19 +899,23 @@ export const repository = (files: Record<string, ClearSigDef>): TRet<ClearSigRep
   // per-token descriptors with metadata.token): harvest deployed token metadata
   // into the per-render contracts map, so e.g. a router descriptor can name a
   // token that only appears as a calldata argument.
-  const contracts: Record<string, ClearSigToken> = {};
+  const tokenContracts: Record<string, Record<string, ClearSigToken>> = {};
   for (const { desc } of descriptors) {
     const token = (desc.metadata || ({} as Any)).token;
     if (!token) continue;
     for (const d of deployments(desc.context || {})) {
       if (!d.address) continue;
       const key = `${d.address}`.toLowerCase();
-      const prev = contracts[key] || {};
+      if (d.chainId === undefined) throw new Error('clearSig: missing deployment chainId');
+      const byAddress =
+        tokenContracts[`${cast.chain(d.chainId)}`] ||
+        (tokenContracts[`${cast.chain(d.chainId)}`] = {});
+      const prev = byAddress[key] || {};
       const meta = tokenMeta(token);
       // Concrete descriptors such as WETH can carry a trusted name while
       // addTokens-generated generic ERC clones only carry ticker/decimals.
       // Merge without erasing richer metadata with absent fields.
-      contracts[key] = {
+      byAddress[key] = {
         name: meta.name || prev.name,
         symbol: meta.symbol || prev.symbol,
         decimals: meta.decimals === undefined ? prev.decimals : meta.decimals,
@@ -883,15 +927,27 @@ export const repository = (files: Record<string, ClearSigDef>): TRet<ClearSigRep
   const generic: ClearSigRepositoryEntry[] = [];
   const eip712ByChain: ClearSigRepository['eip712'] = {};
   const factoryEntries: ClearSigFactoryEntry[] = [];
-  const env = (opt_: TArg<ClearSigOpt>) => {
+  const env = (opt_: TArg<ClearSigOpt>, chainId: bigint) => {
     const opt = opt_ as RunOpt;
-    const all = { ...contracts, ...opt.contracts };
+    const all = { ...tokenContracts[`${chainId}`], ...opt.contracts };
     return { contracts: all, opt: { ...(opt as ClearSigOpt), contracts: all } as RunOpt };
   };
   const eip712Index = (chainId: bigint, address: string) => {
     const byAddr = eip712ByChain[`${chainId}`] || (eip712ByChain[`${chainId}`] = {});
     const key = cast.address(address).toLowerCase();
     return byAddr[key] || (byAddr[key] = {});
+  };
+  const addEip712Entry = (
+    chainId: bigint,
+    address: string,
+    selector: string,
+    entry: ClearSigRepositoryEntry
+  ) => {
+    const index = eip712Index(chainId, address);
+    const previous = index[selector];
+    index[selector] = previous
+      ? async (input, opt) => (await previous(input, opt)) || entry(input, opt)
+      : entry;
   };
   const callEntry = (
     desc: Any,
@@ -902,7 +958,6 @@ export const repository = (files: Record<string, ClearSigDef>): TRet<ClearSigRep
     Object.assign(
       async (input: TArg<Ctx | ClearSigTypedInput>, opt: TArg<ClearSigOpt> = {}) => {
         const call = input as Ctx;
-        const e = env(opt);
         const ctx: Ctx = {
           to: call.to,
           from: call.from,
@@ -910,6 +965,7 @@ export const repository = (files: Record<string, ClearSigDef>): TRet<ClearSigRep
           value: call.value === undefined ? undefined : cast.integer(call.value),
           chainId: _chain(call.chainId),
         };
+        const e = env(opt, ctx.chainId!);
         if (!ctx.data) throw new Error('clearSig: expected calldata bytes');
         let decoded: Any = {};
         if (fn.inputs.length) {
@@ -932,8 +988,9 @@ export const repository = (files: Record<string, ClearSigDef>): TRet<ClearSigRep
   const typedEntry = (desc: Any, key: string): TRet<ClearSigRepositoryEntry> =>
     (async (input: TArg<Ctx | ClearSigTypedInput>, opt: TArg<ClearSigOpt> = {}) => {
       const typed = input as TypedData<EIP712Types, string>;
-      const e = env(opt);
+      if (!eip712ContextMatches(desc, typed)) return;
       const domain = typed.domain as Any;
+      const e = env(opt, _chain(domain.chainId));
       return render(
         {
           desc,
@@ -981,7 +1038,7 @@ export const repository = (files: Record<string, ClearSigDef>): TRet<ClearSigRep
             contractsByChain[`${d.chainId}`] || (contractsByChain[`${d.chainId}`] = {});
           (byAddr[d.address] || (byAddr[d.address] = [])).push(e);
         }
-      else for (const d of deployments) eip712Index(d.chainId, d.address)[selector] = e;
+      else for (const d of deployments) addEip712Entry(d.chainId, d.address, selector, e);
       if (deployments.length) continue;
       // Without declared deployments nothing binds - empty `context.contract`
       // files in `ercs/` are reusable interfaces; `addTokens` clones them into
@@ -992,7 +1049,7 @@ export const repository = (files: Record<string, ClearSigDef>): TRet<ClearSigRep
       } else {
         const domain = eip.domain || {};
         if (domain.chainId !== undefined && domain.verifyingContract !== undefined) {
-          eip712Index(cast.chain(domain.chainId), domain.verifyingContract)[selector] = e;
+          addEip712Entry(cast.chain(domain.chainId), domain.verifyingContract, selector, e);
         }
       }
     }
@@ -1423,52 +1480,10 @@ export async function eip712(
     })
   );
   let match: Match | undefined;
-  const ttypes = {
-    EIP712Domain: getDomainType(typed.domain as EIP712DomainType),
-    ...typed.types,
-  };
   const enc = typedKey(typed);
   for (const desc of descs) {
     const eip = desc.context && desc.context.eip712;
-    if (eip) {
-      const domain = typed.domain as Any;
-      const chainId = domain.chainId;
-      if (eip.deployments) {
-        const deployed =
-          domain.verifyingContract &&
-          chainId !== undefined &&
-          cleanDeployments(eip.deployments).some(
-            (d) =>
-              d.address === `${domain.verifyingContract}`.toLowerCase() &&
-              d.chainId === cast.chain(chainId)
-          );
-        if (!deployed) continue;
-      }
-      if (eip.domainSeparator) {
-        // ERC-7730 domainSeparator is an offline EIP-712 binding check; compute it
-        // from the message domain instead of trusting names/versions alone.
-        let sep: string | undefined;
-        try {
-          sep = typedEncoder(ttypes, typed.domain).structHash('EIP712Domain', typed.domain);
-        } catch {
-          // An unhashable domain cannot satisfy a domainSeparator constraint.
-        }
-        if (!sep || sep.toLowerCase() !== cast.raw(eip.domainSeparator).toLowerCase()) continue;
-      }
-      // ERC-7730 eip712.domain constraints are simple key-value pairs that MUST match;
-      // `same` tolerates bigint-vs-JSON-number chainId, and verifyingContract compares
-      // case-insensitively like every other address comparison in clear signing. The
-      // registry has exact-deployment vectors with stale domain names, so deployments
-      // win when present.
-      if (eip.domain && !eip.deployments) {
-        const ok = Object.keys(eip.domain).every((k) =>
-          k === 'verifyingContract'
-            ? `${domain[k]}`.toLowerCase() === `${eip.domain[k]}`.toLowerCase()
-            : same(domain[k], eip.domain[k])
-        );
-        if (!ok) continue;
-      }
-    }
+    if (eip && !eip712ContextMatches(desc, typed)) continue;
     const fmts = formats(desc);
     if (!Object.hasOwn(fmts, enc)) continue;
     const domain = typed.domain as Any;

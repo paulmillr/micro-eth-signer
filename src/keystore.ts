@@ -1014,6 +1014,11 @@ export async function privToLegacyKeystore(
 
 /**
  * Decrypts an Ethereum legacy sale wallet and returns the secp256k1 private key.
+ *
+ * @remarks Offline migration only. For compatibility, invalid padding and an
+ * invalid expected address can produce distinct errors. Never expose those
+ * errors to an untrusted or remote caller: catch every failure at the trust
+ * boundary, return one generic message, and rate-limit attempts.
  * @param keystore - Parsed legacy sale wallet JSON object.
  * @param password - Sale wallet password.
  * @returns Decrypted secp256k1 private key bytes.

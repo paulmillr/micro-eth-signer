@@ -471,7 +471,7 @@ export const decodeData = (
         return out && !Array.isArray(out) ? out.clearSig : undefined;
       },
     }) as ClearSigRenderOpt
-  );
+  ) as Promise<ClearSigResult>;
   if (res && !Array.isArray(res)) return { ...res, clearSig };
   return res;
 };

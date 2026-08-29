@@ -1,7 +1,7 @@
 import { CLEARSIG_REPO, TOKENS, addTokens, decodeData } from '../abi/index.ts';
 import type { ClearSigResult, ClearSigTokens } from '../clearsig.ts';
 import { clearSigCallbacks } from './clearsig.ts';
-import { throwIfAborted, type RpcClient, type TxInfo, type TxReceipt } from '../net.ts';
+import { mapPool, throwIfAborted, type RpcClient, type TxInfo, type TxReceipt } from '../net.ts';
 import {
   decodeReceiptAllTokenTransfers,
   decodeReceiptTokenTransfers,
@@ -24,6 +24,18 @@ enrichCore) are shared with the history scanners.
 */
 
 const _0n = /* @__PURE__ */ BigInt(0);
+const _1n = /* @__PURE__ */ BigInt(1);
+// One tokenInfo() probe fans out into several metadata/interface RPC calls.
+// Keep both the number of attacker-selected emitters and concurrent probes small.
+const MAX_DISCOVERED_CONTRACTS = 32;
+const TOKEN_DISCOVERY_CONCURRENCY = 2;
+const assertRpcChain = async (prov: RpcClient, expected: bigint): Promise<void> => {
+  const actual = await prov.chainId();
+  if (actual !== expected)
+    throw new Error(
+      `enrichTx: RPC chain id ${actual} does not match transaction chain id ${expected}`
+    );
+};
 
 export type Transfer = { from: string; to?: string; value: bigint };
 
@@ -76,9 +88,15 @@ export function validateEnrichOpts(
 export function txDiff(address: string, info: TxInfo, receipt: TxReceipt | undefined): bigint {
   let diff = _0n;
   const a = address.toLowerCase();
-  if (info.to && info.to.toLowerCase() === a) diff += info.value;
-  if (info.from && info.from.toLowerCase() === a)
-    diff -= info.value + (receipt ? receipt.gasUsed * receipt.effectiveGasPrice : _0n);
+  // Reverted execution transfers no value, but its sender still pays both
+  // execution gas and (for EIP-4844 transactions) blob gas.
+  const moved = receipt?.status === 0 ? _0n : info.value;
+  const fee = receipt
+    ? receipt.gasUsed * receipt.effectiveGasPrice +
+      (receipt.blobGasUsed ?? _0n) * (receipt.blobGasPrice ?? _0n)
+    : _0n;
+  if (info.to && info.to.toLowerCase() === a) diff += moved;
+  if (info.from && info.from.toLowerCase() === a) diff -= moved + fee;
   return diff;
 }
 
@@ -109,7 +127,7 @@ export function historyRow(
 }
 
 /**
- * Shared discovery cache: lowercased contract -> pending/settled tokenInfo().
+ * Shared discovery cache: `chainId:lowercased contract` -> pending/settled tokenInfo().
  * One per app session (or per scan); dedupes probes across rows and binds the
  * clear-signing resolvers to already-fetched metadata.
  */
@@ -118,7 +136,7 @@ export type EnrichCache = Map<string, Promise<TokenInfoResult | TokenError>>;
 export type EnrichOpts = {
   /** Perspective: adds a meaningful `diff` and participation-filters `tokenTransfers`. */
   address?: string;
-  /** Seed registry; never mutated. Default: built-in TOKENS. */
+  /** Seed registry; never mutated. Default: built-in TOKENS on mainnet, empty elsewhere. */
   tokens?: TokenRegistry;
   /** Probe unknown transfer-shaped contracts with tokenInfo(). Default true. */
   discover?: boolean;
@@ -141,8 +159,8 @@ export type EnrichedTx = HistoryTx & {
   /** Calldata signature, `a / b ?` best-guess list, or bare selector. */
   method?: string;
   /**
-   * ERC-7730 intent. Offline-bound (display-grade: discovered metadata is
-   * unverified) unless produced by `clearSig: 'resolve'`.
+   * ERC-7730 intent from curated or explicitly trusted metadata. Discovered
+   * metadata remains available on transfers but cannot create this intent.
    */
   intent?: string;
   /** Tier 2: lazy memoized clear signing; resolvers hit shared caches first. Dropped by rowCodec. */
@@ -151,16 +169,18 @@ export type EnrichedTx = HistoryTx & {
 
 function cachedTokenInfo(
   prov: RpcClient,
+  chainId: bigint,
   contract: string,
   cache: EnrichCache,
   onToken?: EnrichOpts['onToken']
 ): Promise<TokenInfoResult | TokenError> {
-  const key = contract.toLowerCase();
+  const address = contract.toLowerCase();
+  const key = `${chainId}:${address}`;
   let info = cache.get(key);
   if (!info) {
-    info = tokenInfo(prov, key).then(
+    info = tokenInfo(prov, address).then(
       (value) => value,
-      (error) => ({ contract: key, error: (error as Error).message })
+      (error) => ({ contract: address, error: (error as Error).message })
     );
     if (onToken)
       info = info.then((value) => {
@@ -176,6 +196,7 @@ function cachedTokenInfo(
 // tokenInfo() failures fall back to the log-shape hint so decoding still works.
 async function discoveredRegistry(
   prov: RpcClient,
+  chainId: bigint,
   receipt: TxReceipt | undefined,
   seed: TokenRegistry,
   opts: EnrichOpts,
@@ -183,8 +204,21 @@ async function discoveredRegistry(
 ): Promise<TokenRegistry> {
   const unknown = [...detectTokenContracts(receipt)].filter(([contract]) => !seed[contract]);
   if (!unknown.length) return seed;
-  const infos = await Promise.all(
-    unknown.map(([contract]) => cachedTokenInfo(prov, contract, cache, opts.onToken))
+  // All transfer-shaped logs still decode below. Only the first bounded set gets
+  // optional metadata probes; excess emitters retain the unverified log-shape hint.
+  const selected = unknown.slice(0, MAX_DISCOVERED_CONTRACTS);
+  const needsProbe = selected.some(
+    ([contract]) => !cache.has(`${chainId}:${contract.toLowerCase()}`)
+  );
+  if (needsProbe) await assertRpcChain(prov, chainId);
+  const infos = await mapPool(
+    selected,
+    ([contract]) => cachedTokenInfo(prov, chainId, contract, cache, opts.onToken),
+    {
+      concurrency: TOKEN_DISCOVERY_CONCURRENCY,
+      signal: opts.signal,
+      name: 'enrichTx discovery',
+    }
   );
   throwIfAborted(opts.signal, 'enrichTx');
   const merged: TokenRegistry = { ...seed };
@@ -194,7 +228,7 @@ async function discoveredRegistry(
     // discovered metadata is attacker-controlled (on-chain symbols can be
     // phishing URLs); mark it so decoded transfers carry verified: false
     merged[contract] =
-      'error' in info
+      info === undefined || 'error' in info
         ? { abi: hint, verified: false }
         : {
             abi: info.abi,
@@ -220,30 +254,55 @@ function registryClearSigTokens(registry: TokenRegistry, chainId: bigint): Clear
 function cachedCallbacks(
   prov: RpcClient,
   row: EnrichedTx,
-  cache: EnrichCache
+  cache: EnrichCache,
+  chainId: bigint
 ): ReturnType<typeof clearSigCallbacks> {
-  const base = clearSigCallbacks(prov);
+  let verified: Promise<void> | undefined;
+  const verify = () => (verified ||= assertRpcChain(prov, chainId));
+  const info = async (address: string) => {
+    if (!cache.has(`${chainId}:${address.toLowerCase()}`)) await verify();
+    return cachedTokenInfo(prov, chainId, address, cache);
+  };
   return {
-    ...base,
     async resolveToken(req) {
-      const info = await cachedTokenInfo(prov, req.address, cache);
-      if ('error' in info || info.abi !== 'ERC20') return undefined;
-      return { name: info.name, symbol: info.symbol, decimals: info.decimals };
+      if (req.chainId !== undefined && req.chainId !== chainId)
+        throw new Error(
+          `enrichTx: resolver chain id ${req.chainId} does not match transaction chain id ${chainId}`
+        );
+      const token = await info(req.address);
+      if ('error' in token || token.abi !== 'ERC20') return undefined;
+      return {
+        name: token.name,
+        symbol: token.symbol,
+        decimals: token.decimals,
+        verified: token.verified,
+      };
     },
     async resolveNft(req) {
-      const info = await cachedTokenInfo(prov, req.collection, cache);
-      if ('error' in info || info.abi !== 'ERC721' || !info.name) return undefined;
-      const uri = await tokenURI(prov, info, req.tokenId);
+      if (req.chainId !== undefined && req.chainId !== chainId)
+        throw new Error(
+          `enrichTx: resolver chain id ${req.chainId} does not match transaction chain id ${chainId}`
+        );
+      const collection = await info(req.collection);
+      if ('error' in collection || collection.abi !== 'ERC721' || !collection.name)
+        return undefined;
+      await verify();
+      const uri = await tokenURI(prov, collection, req.tokenId);
       return {
-        name: `${info.name} #${req.tokenId}`,
+        name: `${collection.name} #${req.tokenId}`,
         source: typeof uri === 'string' ? uri : undefined,
-        verified: true,
+        verified: collection.verified,
       };
     },
     async resolveBlock(req) {
       const block = Number(req.block);
       if (row.block === block && row.timestamp !== undefined) return row.timestamp;
-      return base.resolveBlock!(req);
+      if (req.chainId !== undefined && req.chainId !== chainId)
+        throw new Error(
+          `enrichTx: resolver chain id ${req.chainId} does not match transaction chain id ${chainId}`
+        );
+      await verify();
+      return (await prov.blockInfo(block)).timestamp;
     },
   };
 }
@@ -258,11 +317,14 @@ export async function enrichCore(
   base?: HistoryTx
 ): Promise<EnrichedTx> {
   throwIfAborted(opts.signal, 'enrichTx');
-  const seed = opts.tokens || (TOKENS as TokenRegistry);
+  const chainId = info.chainId ?? _1n;
+  // The built-in token table is mainnet-only. Other chains must use caller
+  // metadata or provider discovery even when a contract reuses a mainnet address.
+  const seed = opts.tokens || (chainId === _1n ? (TOKENS as TokenRegistry) : {});
   const registry =
     (opts.discover ?? true) === false
       ? seed
-      : await discoveredRegistry(prov, receipt, seed, opts, cache);
+      : await discoveredRegistry(prov, chainId, receipt, seed, opts, cache);
   const all = decodeReceiptAllTokenTransfers(receipt, registry);
   const a = address?.toLowerCase();
   const row: EnrichedTx = {
@@ -281,11 +343,8 @@ export async function enrichCore(
   };
   const tier = opts.clearSig ?? 'offline';
   if (tier === false || info.input === '0x' || !info.to) return row;
-  const defs =
-    info.chainId === undefined
-      ? CLEARSIG_REPO
-      : addTokens(CLEARSIG_REPO, registryClearSigTokens(registry, info.chainId), info.chainId);
-  const decodeOpt = { from: info.from, clearSig: defs };
+  const defs = addTokens(CLEARSIG_REPO, registryClearSigTokens(registry, chainId), chainId);
+  const decodeOpt = { from: info.from, clearSig: defs, chainId };
   let decoded: ReturnType<typeof decodeData>;
   try {
     decoded = decodeData(info.to, info.input, info.value, decodeOpt);
@@ -306,7 +365,7 @@ export async function enrichCore(
       try {
         full = decodeData(info.to!, info.input, info.value, {
           ...decodeOpt,
-          ...cachedCallbacks(prov, row, cache),
+          ...cachedCallbacks(prov, row, cache, chainId),
         });
       } catch {
         return undefined;
@@ -353,6 +412,7 @@ export type SlimHistoryTx = {
   hash: string;
   block?: number;
   timestamp?: number;
+  reverted: boolean;
   tokenTransfers: DecodedTokenTransfer[];
   /** `input` is truncated to the 4-byte selector. */
   info: Pick<TxInfo, 'from' | 'to' | 'value'> & { input: string };
@@ -373,6 +433,7 @@ export function slimRow(row: HistoryTx & { addresses?: string[] }): SlimHistoryT
     hash: row.hash,
     block: row.block,
     timestamp: row.timestamp,
+    reverted: row.reverted,
     tokenTransfers: row.tokenTransfers,
     info: {
       from: row.info.from,

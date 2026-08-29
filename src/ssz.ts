@@ -827,8 +827,11 @@ export const vector = <T>(len: number, inner: TArg<SSZCoder<T>>): TRet<VectorTyp
     composite: true,
     chunkCount: item.composite ? Math.ceil((len * item.size!) / 32) : len,
     chunks(value: TArg<T[]>) {
-      if (!item.composite) return chunks(this.encode(value as T[]));
-      return (value as T[]).map((i) => item.merkleRoot(i));
+      const values = value as T[];
+      if (!Array.isArray(values) || values.length !== len)
+        throw new Error(`SSZ/vector: wrong value length=${values?.length} expected=${len}`);
+      if (!item.composite) return chunks(this.encode(values));
+      return values.map((i) => item.merkleRoot(i));
     },
     merkleRoot(value: TArg<T[]>) {
       return merkleize(this.chunks(value));
@@ -851,6 +854,8 @@ type ListType<T> = SSZCoder<T[]> & { info: { type: 'list'; N: number; inner: SSZ
  */
 export const list = <T>(maxLen: number, inner: TArg<SSZCoder<T>>): TRet<ListType<T>> => {
   const item = inner as SSZCoder<T>;
+  if (!Number.isSafeInteger(maxLen) || maxLen < 0)
+    throw new Error(`SSZ/list: wrong max length=${maxLen} (should be non-negative integer)`);
   checkSSZ(item, 'inner');
   const coder = P.validate(array(null, item), (value) => {
     if (!Array.isArray(value) || value.length > maxLen)
@@ -1757,6 +1762,29 @@ export const profile = <
       size: undefined,
     } as unknown as ProfileCoder<T, OptK, ReqK>;
   }
+  const profileChunks = (value: Record<string, any>) => {
+    if (!isObject(value)) throw new TypeError(`"value" expected object, got type=${typeof value}`);
+    const leaves: Bytes[] = [];
+    const active: boolean[] = [];
+    const entries = Object.keys(base.info.fields);
+    let field = 0;
+    for (const baseActive of base.info.activeFields) {
+      if (!baseActive) {
+        leaves.push(EMPTY_CHUNK.slice());
+        active.push(false);
+        continue;
+      }
+      const name = entries[field++];
+      const selected = optFS.has(name) || reqFS.has(name);
+      const fieldValue = value[name];
+      if (reqFS.has(name) && fieldValue === undefined)
+        throw new Error(`profile.encode: empty required field ${name}`);
+      const present = selected && fieldValue !== undefined;
+      leaves.push(present ? fieldCoders[name].merkleRoot(fieldValue) : EMPTY_CHUNK.slice());
+      active.push(present);
+    }
+    return { leaves, active };
+  };
   return freezeSSZ({
     ...coder,
     info: { type: 'profile', container: base },
@@ -1772,11 +1800,15 @@ export const profile = <
     composite: true,
     chunkCount: profileRoot ? coder.chunkCount : base.info.activeFields.length,
     chunks(value: TArg<P.UnwrapCoder<ProfileCoder<T, OptK, ReqK>>>) {
-      // Current consensus profiles are ordinary SSZ containers; only old optional-profile shapes use the base container root.
-      return profileRoot ? coder.chunks(value as any) : base.chunks(value as any);
+      // Current consensus profiles are ordinary SSZ containers; only old optional-profile shapes use active-field roots.
+      return profileRoot ? coder.chunks(value as any) : profileChunks(value as any).leaves;
     },
     merkleRoot(value: TArg<P.UnwrapCoder<ProfileCoder<T, OptK, ReqK>>>) {
-      return profileRoot ? coder.merkleRoot(value as any) : base.merkleRoot(value as any);
+      if (profileRoot) return coder.merkleRoot(value as any);
+      const { leaves, active } = profileChunks(value as any);
+      const activeChunk = EMPTY_CHUNK.slice();
+      activeChunk.set(bitsCoder(active.length).decode(active));
+      return hash(merkleizeProgressive(leaves), activeChunk);
     },
   } as any) as TRet<ProfileCoder<T, OptK, ReqK>>;
 };
@@ -3901,7 +3933,12 @@ const _ElectraBeaconBlock = (): TRet<ElectraBeaconBlock> =>
     state_root: ETH2_BASE.Root,
     body: ProgressiveBeaconBlockBody,
   }) as TRet<ElectraBeaconBlock>;
-/** SSZ coder for a Electra beacon block. */
+/**
+ * Legacy progressive-body Electra block coder.
+ *
+ * @deprecated This export does not compute the consensus Electra block Merkle root. Use
+ * `ETH2_PROFILES.electra.BeaconBlock` for signing or verification.
+ */
 export const ElectraBeaconBlock: TRet<ElectraBeaconBlock> = /* @__PURE__ */ _ElectraBeaconBlock();
 
 type ElectraSignedBeaconBlock = SignedMessage<ElectraBeaconBlock>;
@@ -3910,7 +3947,12 @@ const _ElectraSignedBeaconBlock = (): TRet<ElectraSignedBeaconBlock> =>
     message: ElectraBeaconBlock,
     signature: ETH2_BASE.BLSSignature,
   }) as TRet<ElectraSignedBeaconBlock>;
-/** SSZ coder for a signed Electra beacon block. */
+/**
+ * Legacy signed progressive-body Electra block coder.
+ *
+ * @deprecated This export does not compute the consensus Electra block Merkle root. Use
+ * `ETH2_PROFILES.electra.SignedBeaconBlock` for signing or verification.
+ */
 export const ElectraSignedBeaconBlock: TRet<ElectraSignedBeaconBlock> =
   /* @__PURE__ */ _ElectraSignedBeaconBlock();
 

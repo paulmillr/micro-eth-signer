@@ -811,6 +811,19 @@ describe('SSZ', () => {
   });
 
   it('List', () => {
+    const vector = SSZ.vector(2, SSZ.bytevector(32));
+    const a = new Uint8Array(32).fill(0x11);
+    const b = new Uint8Array(32).fill(0x22);
+    const parent = vector.merkleRoot([a, b]);
+    // Before validation, a single pre-hashed parent produced the valid two-element root.
+    throws(() => vector.merkleRoot([parent]), /SSZ\/vector: wrong value length=1 expected=2/);
+    throws(() => vector.chunks([a, b, parent]), /SSZ\/vector: wrong value length=3 expected=2/);
+    for (const maxLen of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY])
+      throws(
+        () => SSZ.list(maxLen, SSZ.uint8),
+        /SSZ\/list: wrong max length=.*should be non-negative integer/
+      );
+
     const emptyRoot = Array.from(SSZ.list(1, SSZ.uint8).merkleRoot([]));
     deepStrictEqual(Array.from(SSZ.list(0, SSZ.uint8).merkleRoot([])), emptyRoot);
     const lst = SSZ.list(32, SSZ.uint16);

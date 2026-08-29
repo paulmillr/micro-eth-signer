@@ -1,6 +1,7 @@
 import { bytesToHex, concatBytes, hexToBytes } from '@noble/hashes/utils.js';
 import { describe, it } from '@paulmillr/jsbt/test.js';
-import { deepStrictEqual, throws } from 'node:assert';
+import { deepStrictEqual, rejects, throws } from 'node:assert';
+import { decodeData } from '../src/abi/index.ts';
 import * as u2 from '../src/net/uniswap.ts';
 import * as u3 from '../src/net/uniswap.ts';
 import { strip0x, weieth } from '../src/utils.ts';
@@ -13,6 +14,18 @@ const vitalik = '0xd8da6bf26964af9d7eed9e03e53415d37aa96045';
 const TS = 1876543210;
 
 describe('uniswap', () => {
+  it('swap rejects token decimals outside the ERC-20 uint8 range', async () => {
+    const exchange = new u2.UniswapV2({} as any);
+    await rejects(
+      () =>
+        exchange.swap(
+          { contract: vitalik, symbol: 'BAD', decimals: 256 },
+          'eth',
+          '1'
+        ),
+      /wrong fromCoin/
+    );
+  });
   it('pair', () => {
     deepStrictEqual(
       uniswap2.pairAddress(
@@ -214,6 +227,27 @@ describe('uniswap', () => {
       '414bf389000000000000000000000000c02aaa39b223fe8d0a0e5c4f27ead9083c756cc200000000000000000000000095ad61b0a150d79219dcf64e1e6cc01f0b64c4ce0000000000000000000000000000000000000000000000000000000000002710000000000000000000000000d8da6bf26964af9d7eed9e03e53415d37aa96045000000000000000000000000000000000000000000000000000000006fd9c6ea0000000000000000000000000000000000000000000000055aa54d38e5267eec000000000000000000000000000000000000000000000000ab54a98ceb1f0ad20000000000000000000000000000000000000000000000000000000000000000'
     );
     deepStrictEqual(tx0.value, 98765432109876543212n);
+    const limitedTx = uniswap3.txData(
+      vitalik,
+      'eth',
+      SHIB,
+      {
+        fee: uniswap3.Fee.HIGH,
+        amountOut: 13717421001371742101n,
+      },
+      98765432109876543212n,
+      undefined,
+      {
+        deadline: TS,
+        slippagePercent: 10,
+        sqrtPriceLimitX96: 4295128740n,
+      }
+    );
+    const limitedDecoded = decodeData(limitedTx.to, `0x${bytesToHex(limitedTx.data)}`, 1n);
+    deepStrictEqual(
+      !Array.isArray(limitedDecoded) && limitedDecoded?.name,
+      'multicall(exactInputSingle, refundETH)'
+    );
     throws(
       () =>
         uniswap3.txData(

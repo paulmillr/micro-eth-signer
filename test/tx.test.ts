@@ -2,7 +2,7 @@ import { bytesToHex, hexToBytes } from '@noble/hashes/utils.js';
 import { describe, it } from '@paulmillr/jsbt/test.js';
 import { deepStrictEqual, throws } from 'node:assert';
 import { deployContract } from '../src/abi/decoder.ts';
-import { RawTx, TxVersions, legacySig, validateFields } from '../src/core/tx-internal.ts';
+import { RlpTx, RawTx, TxVersions, legacySig, validateFields } from '../src/core/tx-internal.ts';
 import { Transaction, addr, authorization } from '../src/index.ts';
 import {
   add0x,
@@ -233,6 +233,12 @@ describe('Transactions', () => {
         false
       );
       deepStrictEqual(created.toHex({ includeSignature: false }), tx);
+      deepStrictEqual(Object.isFrozen(created), false);
+      deepStrictEqual(Object.isFrozen(created.raw.authorizationList), true);
+      deepStrictEqual(Object.isFrozen(created.raw.authorizationList[0]), true);
+      throws(() => {
+        created.raw.authorizationList[0].nonce = 421n;
+      }, TypeError);
       // Emulate signing
       const sig = {
         r: 0x60fdd29ff912ce880cd3edaf9f932dc61d3dae823ea77e0323f94adb9f6a72fen,
@@ -479,6 +485,21 @@ describe('Transactions', () => {
       deepStrictEqual(Object.hasOwn(cloned, 'inherited'), false);
       deepStrictEqual(cloned.own === value.own, false);
     });
+    it('utils: cloneDeep and omit preserve __proto__ as an own data property', () => {
+      const value = JSON.parse('{"role":"user","__proto__":{"role":"admin"}}');
+      const cloned = cloneDeep(value);
+      deepStrictEqual(Object.getPrototypeOf(cloned), Object.prototype);
+      deepStrictEqual(Object.hasOwn(cloned, '__proto__'), true);
+      deepStrictEqual(cloned.__proto__, { role: 'admin' });
+      deepStrictEqual(cloned.__proto__ === value.__proto__, false);
+
+      const omitted = omit(value, 'role');
+      deepStrictEqual(Object.getPrototypeOf(omitted), Object.prototype);
+      deepStrictEqual(Object.hasOwn(omitted, '__proto__'), true);
+      deepStrictEqual(omitted.__proto__, { role: 'admin' });
+      deepStrictEqual(omitted.role, undefined);
+      deepStrictEqual(omit(value, '__proto__'), { role: 'user' });
+    });
     it('utils: omit rejects non-plain object carriers', () => {
       deepStrictEqual(omit({ a: 1, b: 2 }, 'b'), { a: 1 });
       throws(() => omit(null as any, 'x'), /plain object/);
@@ -508,9 +529,10 @@ describe('Transactions', () => {
       t(18, 53124, 0.009999999999950064);
       t(18, 0.03456799, 0.01);
       t(18, 0.0123456, 0.01);
-      t(256, 0.0123456, 0.01);
+      t(255, 0.0123456, 0.01);
       throws(() => perCentDecimal(0, 1), /perCentDecimal: wrong precision/);
       throws(() => perCentDecimal(-1, 1), /perCentDecimal: wrong precision/);
+      throws(() => perCentDecimal(256, 1), /perCentDecimal: wrong precision/);
       throws(() => perCentDecimal(18, 0), /perCentDecimal: wrong price/);
       throws(() => perCentDecimal(18, -1), /perCentDecimal: wrong price/);
     });
@@ -543,6 +565,30 @@ describe('Transactions', () => {
   });
 
   describe('RawTx', () => {
+    it('rejects non-minimal transaction integers', () => {
+      const signed = Transaction.prepare({
+        to: '0xdf90dea0e0bf5ca6d2a7f0cb86874ba6714f463e',
+        nonce: 1n,
+        value: 1n,
+        maxFeePerGas: 2_000_000_000n,
+      }).signBy('0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80', false);
+      const wire = RlpTx.decode(signed.toBytes());
+      if (!Array.isArray(wire.data)) throw new Error('expected transaction field list');
+
+      // Type-2 field indexes exercise U64 (nonce), U256 (value), and int (yParity).
+      for (const [field, nonMinimal] of [
+        [1, Uint8Array.of(0, 1)],
+        [6, Uint8Array.of(0, 1)],
+        [9, Uint8Array.of(0, Number(signed.raw.yParity))],
+      ] as const) {
+        const malformed = { ...wire, data: wire.data.slice() };
+        malformed.data[field] = nonMinimal;
+        throws(
+          () => Transaction.fromBytes(RlpTx.encode(malformed)),
+          /bigint: non-minimal encoding/
+        );
+      }
+    });
     const t = (hex) => {
       const decoded = RawTx.decode(ethHex.decode(hex));
       const encoded = ethHex.encode(RawTx.encode(decoded));
@@ -664,6 +710,15 @@ describe('Transactions', () => {
       throws(() => parseUnits('1,2,3', 6)); // repeated separators
       throws(() => parseUnits('nope', 6));
     });
+    it('decimal coders reject precision outside the ERC-20 uint8 range', () => {
+      deepStrictEqual(formatUnits(1n, 255), `0.${'0'.repeat(254)}1`);
+      deepStrictEqual(parseUnits('1', 255), 10n ** 255n);
+      for (const precision of [-1, 256, 1.5, NaN, Number.MAX_SAFE_INTEGER + 1]) {
+        throws(() => createDecimal(precision), RangeError);
+        throws(() => formatUnits(1n, precision), RangeError);
+        throws(() => parseUnits('1', precision), RangeError);
+      }
+    });
     it('isValidPrivateKey', () => {
       deepStrictEqual(addr.isValidPrivateKey(priv), true);
       deepStrictEqual(addr.isValidPrivateKey(`0x${priv}`), true);
@@ -708,20 +763,42 @@ describe('Transactions', () => {
       const keccakOfEmpty = '0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470'; // keccak(0x)
       const zeros32 = `0x${'00'.repeat(32)}`;
       const vectors = [
-        ['0x0000000000000000000000000000000000000000', zeros32, keccakOf00,
-          '0x4D1A2e2bB4F88F0250f26Ffff098B0b30B26BF38'],
-        ['0xdeadbeef00000000000000000000000000000000', zeros32, keccakOf00,
-          '0xB928f69Bb1D91Cd65274e3c79d8986362984fDA3'],
-        ['0xdeadbeef00000000000000000000000000000000',
-          '0x000000000000000000000000feed000000000000000000000000000000000000', keccakOf00,
-          '0xD04116cDd17beBE565EB2422F2497E06cC1C9833'],
-        ['0x0000000000000000000000000000000000000000', zeros32, keccakOfDeadbeef,
-          '0x70f2b2914A2a4b783FaEFb75f459A580616Fcb5e'],
-        ['0x00000000000000000000000000000000deadbeef',
-          `0x${'00'.repeat(28)}cafebabe`, keccakOfDeadbeef,
-          '0x60f3f640a8508fC6a86d45DF051962668E1e8AC7'],
-        ['0x0000000000000000000000000000000000000000', zeros32, keccakOfEmpty,
-          '0xE33C0C7F7df4809055C3ebA6c09CFe4BaF1BD9e0'],
+        [
+          '0x0000000000000000000000000000000000000000',
+          zeros32,
+          keccakOf00,
+          '0x4D1A2e2bB4F88F0250f26Ffff098B0b30B26BF38',
+        ],
+        [
+          '0xdeadbeef00000000000000000000000000000000',
+          zeros32,
+          keccakOf00,
+          '0xB928f69Bb1D91Cd65274e3c79d8986362984fDA3',
+        ],
+        [
+          '0xdeadbeef00000000000000000000000000000000',
+          '0x000000000000000000000000feed000000000000000000000000000000000000',
+          keccakOf00,
+          '0xD04116cDd17beBE565EB2422F2497E06cC1C9833',
+        ],
+        [
+          '0x0000000000000000000000000000000000000000',
+          zeros32,
+          keccakOfDeadbeef,
+          '0x70f2b2914A2a4b783FaEFb75f459A580616Fcb5e',
+        ],
+        [
+          '0x00000000000000000000000000000000deadbeef',
+          `0x${'00'.repeat(28)}cafebabe`,
+          keccakOfDeadbeef,
+          '0x60f3f640a8508fC6a86d45DF051962668E1e8AC7',
+        ],
+        [
+          '0x0000000000000000000000000000000000000000',
+          zeros32,
+          keccakOfEmpty,
+          '0xE33C0C7F7df4809055C3ebA6c09CFe4BaF1BD9e0',
+        ],
       ] as const;
       for (const [from, salt, initCodeHash, expected] of vectors) {
         deepStrictEqual(addr.getCreate2Address(from, salt, initCodeHash), expected);
@@ -928,7 +1005,8 @@ describe('Transactions', () => {
             deepStrictEqual(sig.toHex({ includeSignature: true }), signed);
             deepStrictEqual(sig.raw.r, signature.r);
             deepStrictEqual(sig.raw.s, signature.s);
-            if (signature.yParity !== undefined) deepStrictEqual(sig.raw.yParity, signature.yParity);
+            if (signature.yParity !== undefined)
+              deepStrictEqual(sig.raw.yParity, signature.yParity);
           }
         }
         // parse signed
@@ -1011,11 +1089,17 @@ describe('Transactions', () => {
       );
       const looseClone = looseTx.clone();
       deepStrictEqual(looseClone.raw, looseTx.raw);
-      deepStrictEqual(looseClone.toHex({ includeSignature: false }), looseTx.toHex({ includeSignature: false }));
+      deepStrictEqual(
+        looseClone.toHex({ includeSignature: false }),
+        looseTx.toHex({ includeSignature: false })
+      );
       const looseSigned = looseTx.signBy(priv, false);
       const looseUnsigned = looseSigned.removeSignature();
       deepStrictEqual(looseUnsigned.raw, looseTx.raw);
-      deepStrictEqual(looseUnsigned.toHex({ includeSignature: false }), looseTx.toHex({ includeSignature: false }));
+      deepStrictEqual(
+        looseUnsigned.toHex({ includeSignature: false }),
+        looseTx.toHex({ includeSignature: false })
+      );
       const tx = raw.signBy(priv, false);
       const txH = raw.signBy(priv, true);
       deepStrictEqual(
@@ -1152,6 +1236,14 @@ describe('Transactions', () => {
         accessList: [],
         data: '',
       });
+      deepStrictEqual(Object.isFrozen(stableTx), false);
+      deepStrictEqual(Object.isFrozen(stableTx.raw.accessList), true);
+      throws(() => {
+        stableTx.raw.accessList.push({
+          address: '0x0000000000000000000000000000000000000000',
+          storageKeys: [],
+        });
+      }, TypeError);
       deepStrictEqual(
         new Transaction(
           'legacy',
@@ -1432,7 +1524,11 @@ describe('Transactions', () => {
         maxFeePerBlobGas: 1n,
         blobVersionedHashes: ['0x01' + '00'.repeat(31)],
       };
-      Transaction.prepare(blobTx);
+      const frozenBlobTx = Transaction.prepare(blobTx);
+      deepStrictEqual(Object.isFrozen(frozenBlobTx.raw.blobVersionedHashes), true);
+      throws(() => {
+        frozenBlobTx.raw.blobVersionedHashes[0] = '0x01' + '11'.repeat(31);
+      }, TypeError);
       Transaction.prepare({ ...blobTx, blobVersionedHashes: [] }, false);
       throws(
         () => Transaction.prepare({ ...blobTx, blobVersionedHashes: [] }),
@@ -1576,23 +1672,26 @@ describe('Transactions', () => {
 
     const fullTx = Transaction.fromHex(txHex);
     deepStrictEqual(fullTx.toHex(), txHex);
-    // Fails
-    throws(() =>
-      Transaction.prepare({
-        nonce: 0n,
-        value: 0n,
-        maxFeePerGas: 100n * amounts.GWEI,
-        to: '0x',
-      })
-    );
-    // Ok
-    Transaction.prepare({
+    const emptyDeployment = {
       nonce: 0n,
       value: 0n,
       maxFeePerGas: 100n * amounts.GWEI,
       to: '0x',
-      data: '00',
-    });
+    };
+    for (const data of ['', '0x'])
+      throws(
+        () => Transaction.prepare({ ...emptyDeployment, data }),
+        (err: any) => {
+          deepStrictEqual(err.errors, [
+            { field: 'to', error: 'Empty address (0x) without contract deployment code' },
+          ]);
+          return true;
+        }
+      );
+    // Explicit non-strict mode preserves intentional empty-code deployments.
+    Transaction.prepare({ ...emptyDeployment, data: '0x' }, false);
+    // Normal contract deployment with non-empty initcode remains valid in strict mode.
+    Transaction.prepare({ ...emptyDeployment, data: '0x60006000f3' });
     Transaction.prepare(
       {
         type: 'legacy',

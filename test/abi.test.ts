@@ -18,7 +18,8 @@ import {
   decodeEvent,
   decodeTx,
   deployContract,
-  parseAbi, parseAbiItem,
+  parseAbi,
+  parseAbiItem,
   tokenFromSymbol,
   tokensBySymbol,
 } from '../src/abi/index.ts';
@@ -27,18 +28,9 @@ import { Transaction } from '../src/index.ts';
 import { ethHex, strip0x } from '../src/utils.ts';
 
 import ERC20, { hints as ERC20_HINTS } from '../src/abi/erc20.ts';
-import {
-  default as KYBER_NETWORK_PROXY,
-  KYBER_NETWORK_PROXY_CONTRACT,
-} from '../src/abi/kyber.ts';
-import {
-  default as UNISWAP_V2_ROUTER,
-  UNISWAP_V2_ROUTER_CONTRACT,
-} from '../src/abi/uniswap-v2.ts';
-import {
-  default as UNISWAP_V3_ROUTER,
-  UNISWAP_V3_ROUTER_CONTRACT
-} from '../src/abi/uniswap-v3.ts';
+import { default as KYBER_NETWORK_PROXY, KYBER_NETWORK_PROXY_CONTRACT } from '../src/abi/kyber.ts';
+import { default as UNISWAP_V2_ROUTER, UNISWAP_V2_ROUTER_CONTRACT } from '../src/abi/uniswap-v2.ts';
+import { default as UNISWAP_V3_ROUTER, UNISWAP_V3_ROUTER_CONTRACT } from '../src/abi/uniswap-v3.ts';
 import { WETH_CONTRACT } from '../src/abi/weth.ts';
 
 import {
@@ -94,6 +86,48 @@ const clearSigFor = (to: string, data: Uint8Array, opt: Record<string, unknown>)
 it('fnSigHash', () => {
   deepStrictEqual(abi.fnSigHash(TUPLE_ABI[0]), '6f2be728');
   for (let [exp, fn] of FN_SIGHASH) deepStrictEqual(abi.fnSigHash(fn), exp);
+});
+it('canonicalizes bare integer aliases in selectors and event topics', () => {
+  const transferAlias = {
+    type: 'function',
+    name: 'transfer',
+    inputs: [{ type: 'address' }, { type: 'uint' }],
+  } as const;
+  deepStrictEqual(abi.fnSigHash(transferAlias), 'a9059cbb');
+
+  const eventAlias = {
+    type: 'event',
+    name: 'Value',
+    inputs: [{ type: 'int', indexed: true }],
+  } as const;
+  const eventCanonical = {
+    type: 'event',
+    name: 'Value',
+    inputs: [{ type: 'int256', indexed: true }],
+  } as const;
+  deepStrictEqual(abi.evSigHash(eventAlias), abi.evSigHash(eventCanonical));
+
+  const nestedAlias = {
+    type: 'function',
+    name: 'nested',
+    inputs: [
+      {
+        type: 'tuple[]',
+        components: [{ type: 'uint[]' }, { type: 'int[2]' }],
+      },
+    ],
+  } as const;
+  const nestedCanonical = {
+    type: 'function',
+    name: 'nested',
+    inputs: [
+      {
+        type: 'tuple[]',
+        components: [{ type: 'uint256[]' }, { type: 'int256[2]' }],
+      },
+    ],
+  } as const;
+  deepStrictEqual(abi.fnSigHash(nestedAlias), abi.fnSigHash(nestedCanonical));
 });
 it('evSigHash', () => {
   for (let [exp, fn] of EV_SIGHASH) deepStrictEqual(abi.evSigHash(fn), exp);
@@ -196,6 +230,16 @@ it('ABI named tuple fields can shadow object prototype names', () => {
       ],
     })
   );
+});
+it('bounds raw ABI component depth without exponential named-tuple mapping', () => {
+  const nested = (depth: number) => {
+    let component: any = { name: 'leaf', type: 'uint256' };
+    for (let i = 0; i < depth; i++)
+      component = { name: `level${i}`, type: 'tuple', components: [component] };
+    return component;
+  };
+  deepStrictEqual(mapComponent(nested(128)).size, 32);
+  throws(() => mapComponent(nested(129)), /mapComponent: schema too deep, limit is 128/);
 });
 it('mapArgs', () => {
   function t(contract, fn, args, exp) {
@@ -306,10 +350,17 @@ it('Decoder', async () => {
   const uni3Opt = optFor(UNISWAP3);
   const mtx0 = hex.decode(DECODER_UNISWAP_V3_MULTICALL.data);
   deepStrictEqual(
-    d.decode(UNISWAP3, mtx0, Object.assign(uni3Opt, { amount: DECODER_UNISWAP_V3_MULTICALL.amount })),
+    d.decode(
+      UNISWAP3,
+      mtx0,
+      Object.assign(uni3Opt, { amount: DECODER_UNISWAP_V3_MULTICALL.amount })
+    ),
     DECODER_UNISWAP_V3_MULTICALL.decoded
   );
-  deepStrictEqual(await clearSigFor(UNISWAP3, mtx0, uni3Opt), DECODER_UNISWAP_V3_MULTICALL.clearSig);
+  deepStrictEqual(
+    await clearSigFor(UNISWAP3, mtx0, uni3Opt),
+    DECODER_UNISWAP_V3_MULTICALL.clearSig
+  );
   const multicall = (UNISWAP_V3_ROUTER as any).find((i: any) => i.name === 'multicall');
   const refundETH = (UNISWAP_V3_ROUTER as any).find((i: any) => i.name === 'refundETH');
   const unknownAbi = hex.decode('12345678');
@@ -353,6 +404,24 @@ it('Decoder rejects trailing calldata for zero-arg functions', () => {
   ]);
   throws(() => d.decode(contract, trailing), /Unexpected trailing calldata/);
   deepStrictEqual(d.decode(unknown, trailing), undefined);
+});
+it('Decoder rejects invalid contract keys without prototype pollution', () => {
+  const bare = '11'.repeat(20);
+  const ping = [{ type: 'function', name: 'auditFinding4', inputs: [] }] as const;
+  const selector = abi.fnSigHash(ping[0]);
+  const previous = Object.getOwnPropertyDescriptor(Object.prototype, selector);
+  try {
+    const d = new abi.Decoder();
+    deepStrictEqual(Object.getPrototypeOf(d.contracts), null);
+    throws(() => d.add('__proto__', ping), /address must be 40-char hex/);
+    deepStrictEqual(Object.hasOwn(Object.prototype, selector), false);
+    // Preserve the existing prefix-optional API for otherwise valid addresses.
+    d.add(bare, ping);
+    deepStrictEqual(d.method(`0x${bare}`, hex.decode(selector)), 'auditFinding4');
+  } finally {
+    if (previous) Object.defineProperty(Object.prototype, selector, previous);
+    else delete (Object.prototype as Record<string, unknown>)[selector];
+  }
 });
 it('addHints only annotates events from own hint-map properties', () => {
   const hint = () => 'hint';
@@ -461,6 +530,10 @@ it('tokensBySymbol derives symbol indexes and rejects duplicates', () => {
   deepStrictEqual(bySymbol.TOKA.feed === table[tokenA].feed, false);
   table[tokenA].feed.decimals = 4;
   deepStrictEqual(bySymbol.TOKA.feed?.decimals, 3);
+  const poisoned = tokensBySymbol({
+    [tokenA]: { symbol: 'POISON', decimals: 18, contract: tokenB } as any,
+  });
+  deepStrictEqual(poisoned.POISON.contract, tokenA);
   throws(() => ((bySymbol.TOKA as any).symbol = 'MUT'), TypeError);
   throws(
     () =>
@@ -476,10 +549,7 @@ it('tokenFromSymbol returns undefined and supports custom token tables', () => {
   const table = {
     [token]: { symbol: 'CUSTOM', decimals: 5 },
   };
-  deepStrictEqual(
-    tokenFromSymbol('SUSD')?.contract,
-    '0x57ab1ec28d129707052df4df418d58a2d46d5f51'
-  );
+  deepStrictEqual(tokenFromSymbol('SUSD')?.contract, '0x57ab1ec28d129707052df4df418d58a2d46d5f51');
   deepStrictEqual(tokenFromSymbol('UNKNOWN'), undefined);
   deepStrictEqual(tokenFromSymbol('CUSTOM', table), { contract: token, ...table[token] });
 });
@@ -590,6 +660,37 @@ it('ABI Events: indexed tuples with unnamed components', () => {
     `0x${abi.evSigHash(event)}`,
     `0x${encoded}`,
   ]);
+});
+it('ABI Events: indexed dynamic composites use Solidity in-place encoding', () => {
+  const stringArray = {
+    type: 'event',
+    name: 'StringArray',
+    inputs: [{ indexed: true, name: 'values', type: 'string[]' }],
+  } as const;
+  const paddedA = new Uint8Array(32);
+  paddedA.set(utf8ToBytes('a'));
+  deepStrictEqual(
+    abi.events([stringArray]).StringArray.topics({ values: ['a'] })[1],
+    '0x294587bf977c4010a60dbad811c63531f90f6ec512975bc6c9a93f8f361cad72'
+  );
+
+  const components = [
+    { name: 'label', type: 'string' },
+    { name: 'amount', type: 'uint256' },
+  ] as const;
+  const tupleArray = {
+    type: 'event',
+    name: 'TupleArray',
+    inputs: [{ indexed: true, name: 'values', type: 'tuple[]', components }],
+  } as const;
+  const value = [{ label: 'a', amount: 7n }];
+  const expected = bytesToHex(
+    keccak_256(concatBytes(paddedA, mapComponent({ type: 'uint256' }).encode(7n)))
+  );
+  deepStrictEqual(
+    abi.events([tupleArray]).TupleArray.topics({ values: value })[1],
+    `0x${expected}`
+  );
 });
 it('ABI Events: indexed arrays of tuples', () => {
   const components = [
@@ -1100,6 +1201,14 @@ describe('simple decoder API', () => {
     deepStrictEqual(decodeData(target, '0x', 0n, { noDefault: true, clearSig: files }), undefined);
     // ClearSig lookup is chain-scoped, but descriptor ABI stays usable for decode.
     deepStrictEqual(decodeData(target, data, 0n, { noDefault: true, clearSig: files }), info);
+    const mainnetFiles = structuredClone(files);
+    mainnetFiles['chain.json'].context.contract.deployments[0].chainId = 1;
+    const implicitMainnet = split(
+      decodeData(target, data, 0n, { noDefault: true, clearSig: mainnetFiles }),
+      'implicit mainnet'
+    );
+    deepStrictEqual(implicitMainnet.rest, info);
+    deepStrictEqual(await implicitMainnet.clearSig, expected);
     const opt = { noDefault: true, clearSig: files, chainId: 5n };
     const matched = split(decodeData(target, data, 0n, opt), 'chain');
     deepStrictEqual(matched.rest, info);
@@ -1107,10 +1216,7 @@ describe('simple decoder API', () => {
     const decoder = new Decoder();
     decoder.add(known, mark);
     deepStrictEqual(decodeData(target, data, 0n, { decoder }), [info]);
-    throws(
-      () => decodeData(target, `${data}11`, 0n, opt),
-      /left after unpack|unread byte ranges/
-    );
+    throws(() => decodeData(target, `${data}11`, 0n, opt), /left after unpack|unread byte ranges/);
     const loose = decodeData(target, `${data}11`, 0n, { ...opt, allowUnreadBytes: true });
     deepStrictEqual(await split(loose, 'unread-byte').clearSig, expected);
   });
@@ -1285,7 +1391,11 @@ describe('simple decoder API', () => {
       throws(() => deployContract([{}], DEPLOY_BYTECODE, 69420n));
       // Arguments to constructor without any
       throws(() =>
-        deployContract([{ type: 'constructor', stateMutability: 'nonpayable' }], DEPLOY_BYTECODE, 69420n)
+        deployContract(
+          [{ type: 'constructor', stateMutability: 'nonpayable' }],
+          DEPLOY_BYTECODE,
+          69420n
+        )
       );
       throws(() =>
         deployContract(
@@ -1329,14 +1439,17 @@ describe('parseAbi', () => {
         ],
       }
     );
-    deepStrictEqual(parseAbiItem('error InsufficientBalance(uint256 available, uint256 required)'), {
-      type: 'error',
-      name: 'InsufficientBalance',
-      inputs: [
-        { type: 'uint256', name: 'available' },
-        { type: 'uint256', name: 'required' },
-      ],
-    });
+    deepStrictEqual(
+      parseAbiItem('error InsufficientBalance(uint256 available, uint256 required)'),
+      {
+        type: 'error',
+        name: 'InsufficientBalance',
+        inputs: [
+          { type: 'uint256', name: 'available' },
+          { type: 'uint256', name: 'required' },
+        ],
+      }
+    );
     deepStrictEqual(parseAbiItem('constructor(address owner) payable'), {
       type: 'constructor',
       stateMutability: 'payable',
@@ -1380,7 +1493,9 @@ describe('parseAbi', () => {
     for (const [sig, selector] of PARSE_ABI_SELECTORS)
       deepStrictEqual(abi.fnSigHash(parseAbiItem(sig)), selector, sig);
     deepStrictEqual(
-      abi.evSigHash(parseAbiItem('event Transfer(address indexed from, address indexed to, uint256 value)')),
+      abi.evSigHash(
+        parseAbiItem('event Transfer(address indexed from, address indexed to, uint256 value)')
+      ),
       'ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef'
     );
   });
@@ -1392,6 +1507,25 @@ describe('parseAbi', () => {
     const args = { to: '0x6B175474E89094C44Da98b954EedeAC495271d0F', value: 123n };
     deepStrictEqual(parsed.transfer.encodeInput(args), json.transfer.encodeInput(args));
     deepStrictEqual(parsed.transfer.decodeOutput(ethHex.decode(`0x${'00'.repeat(31)}01`)), true);
+  });
+  it('bounds human-readable ABI signature length and nesting depth', () => {
+    const base = 'function bounded()';
+    deepStrictEqual(parseAbiItem(base + ' '.repeat(16_384 - base.length)), {
+      type: 'function',
+      name: 'bounded',
+    });
+    throws(
+      () => parseAbiItem(base + ' '.repeat(16_385 - base.length)),
+      /parseAbi: signature too long, limit is 16384 characters/
+    );
+
+    const nested = (depth: number) => {
+      let param = 'uint256 leaf';
+      for (let i = 0; i < depth; i++) param = `(${param}) level${i}`;
+      return `function nested(${param})`;
+    };
+    deepStrictEqual(parseAbiItem(nested(128)).type, 'function');
+    throws(() => parseAbiItem(nested(129)), /parseAbi: schema too deep, limit is 128/);
   });
   it('reject malformed signatures', () => {
     throws(() => parseAbiItem('transfer(address,uint256)')); // no keyword

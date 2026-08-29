@@ -163,13 +163,20 @@ function isDyn<T>(args: P.CoderType<T>[] | Record<string, P.CoderType<T>>) {
 }
 
 // NOTE: we need as const if we want to access string as values inside types :(
+const MAX_COMPONENT_DEPTH = 128;
 export function mapComponent<T extends BaseComponent>(
   c: T
 ): TRet<P.CoderType<MapType<Writable<T>>>> {
+  return mapComponentInner(c, 0) as TRet<P.CoderType<MapType<Writable<T>>>>;
+}
+
+function mapComponentInner(c: any, depth: number): P.CoderType<any> {
+  if (depth > MAX_COMPONENT_DEPTH)
+    throw new RangeError(`mapComponent: schema too deep, limit is ${MAX_COMPONENT_DEPTH}`);
   // Arrays (should be first one, since recursive)
   let m;
   if ((m = ARRAY_RE.exec(c.type))) {
-    const inner = mapComponent({ ...c, type: m[1] });
+    const inner = mapComponentInner({ ...c, type: m[1] }, depth + 1);
     if (inner.size === 0)
       throw new Error('mapComponent: arrays of zero-size elements disabled (possible DoS attack)');
     // Static array
@@ -194,7 +201,7 @@ export function mapComponent<T extends BaseComponent>(
     const args: P.CoderType<any>[] = [];
     for (let comp of components) {
       if (!comp.name) hasNames = false;
-      args.push(mapComponent(comp));
+      args.push(mapComponentInner(comp, depth + 1));
     }
     let out: any;
     // If there is names for all fields -- return struct, otherwise tuple
@@ -202,10 +209,11 @@ export function mapComponent<T extends BaseComponent>(
       // Named tuples expose object-form values keyed by the ABI field names.
       // ABI field names like toString are valid keys; only own properties are duplicates.
       const struct: Record<string, P.CoderType<unknown>> = Object.create(null);
-      for (const arg of components) {
+      for (let i = 0; i < components.length; i++) {
+        const arg = components[i];
         if (Object.hasOwn(struct, arg.name!))
           throw new Error(`mapType: same field name=${arg.name}`);
-        struct[arg.name!] = mapComponent(arg);
+        struct[arg.name!] = args[i];
       }
       out = P.struct(struct);
     } else out = P.tuple(args);
@@ -218,7 +226,7 @@ export function mapComponent<T extends BaseComponent>(
   if (c.type === 'bytes')
     return P.pointer(PTR, P.padRight(32, P.bytes(U256BE_LEN), P.ZeroPad)) as any;
   // ABI external-function values are address || selector and use bytes24 wire encoding.
-  if (c.type === 'function') return mapComponent({ ...c, type: 'bytes24' }) as any;
+  if (c.type === 'function') return mapComponentInner({ ...c, type: 'bytes24' }, depth + 1) as any;
   if (c.type === 'address') return EPad(P.hex(20, { isLE: false, with0x: true })) as any;
   if (c.type === 'bool') return EPad(P.bool) as any;
   if ((m = /^(u?)int([0-9]+)?$/.exec(c.type)))

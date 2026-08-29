@@ -22,6 +22,7 @@ import {
 } from '../net.ts';
 
 const ERC_TRANSFER = /* @__PURE__ */ (() => events(ERC20).Transfer)();
+const dict = <T>(): Record<string, T> => Object.create(null) as Record<string, T>;
 const WETH_DEPOSIT = /* @__PURE__ */ (() => events(WETH).Deposit)();
 const WETH_WITHDRAW = /* @__PURE__ */ (() => events(WETH).Withdrawal)();
 const ERC721_TRANSFER = /* @__PURE__ */ (() => events(ERC721).Transfer)();
@@ -29,10 +30,14 @@ const ERC1155_SINGLE = /* @__PURE__ */ (() => events(ERC1155).TransferSingle)();
 const ERC1155_BATCH = /* @__PURE__ */ (() => events(ERC1155).TransferBatch)();
 const _0n = /* @__PURE__ */ BigInt(0);
 const _1n = /* @__PURE__ */ BigInt(1);
+const MAX_NFT_CONTRACTS = 256;
+const MAX_NFT_IDS = 4096;
+const ERC721_OWNER_CONCURRENCY = 8;
+const ERC1155_BATCH_SIZE = 128;
 // Full ERC-721 enumeration is a wallet convenience, not a bulk-indexing API.
 // The balance is returned by an untrusted contract, so cap it before allocating
 // indexes or issuing tokenOfOwnerByIndex calls.
-const MAX_ERC721_ENUMERABLE_BALANCE = BigInt(4096);
+const MAX_ERC721_ENUMERABLE_BALANCE = BigInt(MAX_NFT_IDS);
 
 const ERC165 = [
   {
@@ -73,7 +78,11 @@ type ERC721Token = {
   metadata?: boolean;
 };
 type ERC1155Token = { abi: 'ERC1155' };
-export type TokenInfo = { contract: string } & (ERC20Token | ERC721Token | ERC1155Token);
+export type TokenInfo = {
+  contract: string;
+  /** On-chain probing is display-grade; only curated callers may omit or set this true. */
+  verified?: boolean;
+} & (ERC20Token | ERC721Token | ERC1155Token);
 export type TokenError = { contract: string; error: string };
 type TokenBalanceSingle = Map<bigint, bigint>;
 
@@ -196,12 +205,17 @@ export async function tokenInfo(
   throwIfAborted(signal, 'tokenInfo');
   if (t.code === '0x') return { contract, error: 'not contract or destructed' };
   if (t.capabilities && t.capabilities.erc1155) {
-    return { contract, abi: 'ERC1155' };
+    return { contract, abi: 'ERC1155', verified: false };
   }
   if (t.capabilities && t.capabilities.erc721) {
-    const res: Partial<ERC721Token> & { contract: string; abi: 'ERC721' } = {
+    const res: Partial<ERC721Token> & {
+      contract: string;
+      abi: 'ERC721';
+      verified: false;
+    } = {
       contract,
       abi: 'ERC721',
+      verified: false,
     };
     if (t.capabilities.erc721_metadata) {
       if (t.name === undefined) return { contract, error: 'ERC721+Metadata without name' };
@@ -219,6 +233,7 @@ export async function tokenInfo(
   return {
     contract,
     abi: 'ERC20',
+    verified: false,
     name: t.name,
     symbol: t.symbol,
     totalSupply: t.totalSupply,
@@ -230,7 +245,8 @@ async function tokenBalanceSingle(
   prov: TokenProvider,
   address: string,
   token: TokenInfo | TokenError,
-  tokenIds?: Set<bigint>
+  tokenIds?: Set<bigint>,
+  opts: { signal?: AbortSignal } = {}
 ): Promise<TokenBalanceSingle | TokenError> {
   if (isTokenError(token)) return token;
   token = validateToken(token, 'tokenBalanceSingle');
@@ -242,6 +258,8 @@ async function tokenBalanceSingle(
     }
     return new Map([[_1n, balance]]);
   } else if (token.abi === 'ERC721') {
+    if (tokenIds && tokenIds.size > MAX_NFT_IDS)
+      throw new RangeError(`tokenBalanceSingle: token id limit is ${MAX_NFT_IDS}`);
     const c = createContract(ERC721, prov, token.contract);
     const balance = await c.balanceOf.call(address);
     if (!token.enumerable) {
@@ -254,12 +272,17 @@ async function tokenBalanceSingle(
       }
       const ids = Array.from(tokenIds);
       // History includes burned ids; their ownerOf revert must not hide other held candidates.
-      const owners = await Promise.all(
-        ids.map((i) =>
+      const owners = await mapPool(
+        ids,
+        (i) =>
           c.ownerOf.call(i).catch((error) => {
             if (!isReverted(error)) throw error;
-          })
-        )
+          }),
+        {
+          concurrency: ERC721_OWNER_CONCURRENCY,
+          signal: opts.signal,
+          name: 'tokenBalanceSingle ownerOf',
+        }
       );
       return new Map(
         ids.map((i, j) => [i, owners[j]?.toLowerCase() === address.toLowerCase() ? _1n : _0n])
@@ -283,13 +306,25 @@ async function tokenBalanceSingle(
   } else if (token.abi === 'ERC1155') {
     if (!tokenIds)
       return { contract: token.contract, error: 'cannot fetch erc1155 without tokenIds' };
+    if (tokenIds.size > MAX_NFT_IDS)
+      throw new RangeError(`tokenBalanceSingle: token id limit is ${MAX_NFT_IDS}`);
     const c = createContract(ERC1155, prov, token.contract);
     const ids = Array.from(tokenIds);
-    const balances = await c.balanceOfBatch.call({ accounts: ids.map((_) => address), ids });
-    // balanceOfBatch must return one balance for every requested account/id pair.
-    if (balances.length !== ids.length)
-      throw new Error(`balanceOfBatch: expected ${ids.length} balances, got ${balances.length}`);
-    const res = new Map(ids.map((i, j) => [i, balances[j]]));
+    const res = new Map<bigint, bigint>();
+    for (let offset = 0; offset < ids.length; offset += ERC1155_BATCH_SIZE) {
+      throwIfAborted(opts.signal, 'tokenBalanceSingle balanceOfBatch');
+      const batch = ids.slice(offset, offset + ERC1155_BATCH_SIZE);
+      const balances = await c.balanceOfBatch.call({
+        accounts: batch.map((_) => address),
+        ids: batch,
+      });
+      // balanceOfBatch must return one balance for every requested account/id pair.
+      if (balances.length !== batch.length)
+        throw new Error(
+          `balanceOfBatch: expected ${batch.length} balances, got ${balances.length}`
+        );
+      for (let i = 0; i < batch.length; i++) res.set(batch[i], balances[i]);
+    }
     return res;
   }
   throw new Error('unknown token type');
@@ -480,8 +515,10 @@ export type TransferTxArgs = {
   to: string;
   /** Amount in base units (wei / token units); parse UI strings with createDecimal. */
   amount: bigint;
-  /** ERC-20 contract address (or a TokenInfo-like object); omitted = plain ETH transfer. */
-  token?: string | { contract: string };
+  /** ERC-20 address or metadata object; objects marked unverified need explicit opt-in. */
+  token?: string | { contract: string; verified?: boolean };
+  /** Permit transaction construction from an object carrying unverified discovered metadata. */
+  allowUnverified?: boolean;
   /** Throw when the node is on another chain; see RpcClient.prepare. */
   expectedChainId?: bigint;
   /** Verify the amount and the worst-case fee (gas is ETH even for tokens) against on-chain balances. Default true. */
@@ -509,6 +546,15 @@ export async function transferTx(
     throw new Error('transferTx: wrong to');
   if (typeof args.amount !== 'bigint' || args.amount <= _0n)
     throw new Error('transferTx: wrong amount');
+  if (args.allowUnverified !== undefined && typeof args.allowUnverified !== 'boolean')
+    throw new Error('transferTx: wrong allowUnverified');
+  if (
+    args.token &&
+    typeof args.token !== 'string' &&
+    args.token.verified === false &&
+    args.allowUnverified !== true
+  )
+    throw new Error('transferTx: unverified token requires allowUnverified');
   const to = addChecksum(args.to);
   const token = tokenContract(args.token, 'transferTx');
   let ethBalance: bigint | undefined;
@@ -861,7 +907,9 @@ export type SpendableAsset = {
  * What the account can actually spend: its native balance plus every ERC-20
  * with a non-zero balance among `opts.tokens` (a curated list) and the tokens
  * its history has touched (`opts.rows` via erc20Candidates). The asset list a
- * wallet's send screen offers — entries feed transferTx/maxSpendable as-is.
+ * wallet's send screen offers. Discovered entries remain visible with
+ * `verified: false`; `transferTx`
+ * requires `allowUnverified: true` before constructing a call from one.
  * Discovered candidates without decimals are skipped (their amounts could not
  * be rendered); probe them with tokenInfos and pass via `opts.tokens` to
  * include them. Pass `opts.ethBalance` when the native balance is already in
@@ -872,7 +920,7 @@ export async function spendableAssets(
   address: string,
   opts: {
     rows?: Iterable<{ tokenTransfers: DecodedTokenTransfer[] }>;
-    tokens?: { contract: string; symbol?: string; decimals: number }[];
+    tokens?: { contract: string; symbol?: string; decimals: number; verified?: boolean }[];
     ethBalance?: bigint;
   } = {}
 ): Promise<SpendableAsset[]> {
@@ -881,11 +929,13 @@ export async function spendableAssets(
   for (const token of opts.tokens ?? []) {
     if (typeof token?.contract !== 'string' || typeof token.decimals !== 'number')
       throw new Error('spendableAssets: wrong token entry');
-    byContract.set(token.contract.toLowerCase(), {
+    const entry: Omit<SpendableAsset, 'balance'> & { contract: string } = {
       contract: token.contract,
       symbol: token.symbol,
       decimals: token.decimals,
-    });
+    };
+    if (token.verified !== undefined) entry.verified = token.verified;
+    byContract.set(token.contract.toLowerCase(), entry);
   }
   for (const candidate of erc20Candidates(opts.rows ?? [])) {
     if (typeof candidate.decimals !== 'number' || byContract.has(candidate.contract)) continue;
@@ -942,19 +992,29 @@ export function nftCandidates(
   rows: Iterable<{ tokenTransfers: DecodedTokenTransfer[] }>
 ): NftCandidate[] {
   const byContract = new Map<string, NftCandidate>();
+  let tokenIds = 0;
   for (const row of rows) {
     if (!Array.isArray(row?.tokenTransfers)) throw new Error('nftCandidates: wrong rows');
     for (const transfer of row.tokenTransfers) {
       if (transfer.abi !== 'ERC721' && transfer.abi !== 'ERC1155') continue;
       const key = transfer.contract.toLowerCase();
       let entry = byContract.get(key);
-      if (!entry)
+      if (!entry) {
+        if (byContract.size >= MAX_NFT_CONTRACTS)
+          throw new RangeError(`nftCandidates: contract limit is ${MAX_NFT_CONTRACTS}`);
         byContract.set(key, (entry = { contract: key, abi: transfer.abi, tokens: new Map() }));
+      }
       if (entry.symbol === undefined && transfer.symbol !== undefined) {
         entry.symbol = transfer.symbol;
         if (transfer.verified !== undefined) entry.verified = transfer.verified;
       }
-      for (const id of transfer.tokens.keys()) if (!entry.tokens.has(id)) entry.tokens.set(id, _1n);
+      for (const id of transfer.tokens.keys()) {
+        if (entry.tokens.has(id)) continue;
+        if (tokenIds >= MAX_NFT_IDS)
+          throw new RangeError(`nftCandidates: token id limit is ${MAX_NFT_IDS}`);
+        entry.tokens.set(id, _1n);
+        tokenIds++;
+      }
     }
   }
   return [...byContract.values()];
@@ -964,7 +1024,8 @@ export function nftCandidates(
  * Current NFT inventory from transfer-derived candidates: history is only
  * discovery, ownership is verified on-chain (ownerOf for ERC-721, balanceOf
  * for ERC-1155). Zero-balance ids are dropped; per-contract failures become
- * TokenError entries. ERC-20 candidates are ignored.
+ * TokenError entries. ERC-20 candidates are ignored. Calls are limited to 256
+ * contracts and 4096 distinct contract/id pairs; paginate larger inventories.
  */
 export async function nftHoldings(
   prov: TokenProvider,
@@ -974,12 +1035,23 @@ export async function nftHoldings(
 ): Promise<TokenBalances> {
   if (typeof address !== 'string') throw new Error('nftHoldings: wrong address');
   const byContract = new Map<string, { abi: 'ERC721' | 'ERC1155'; ids: Set<bigint> }>();
+  let tokenIds = 0;
   for (const candidate of candidates) {
     if (candidate.abi !== 'ERC721' && candidate.abi !== 'ERC1155') continue;
     const key = candidate.contract.toLowerCase();
     let entry = byContract.get(key);
-    if (!entry) byContract.set(key, (entry = { abi: candidate.abi, ids: new Set() }));
-    for (const id of candidate.tokens.keys()) entry.ids.add(id);
+    if (!entry) {
+      if (byContract.size >= MAX_NFT_CONTRACTS)
+        throw new RangeError(`nftHoldings: contract limit is ${MAX_NFT_CONTRACTS}`);
+      byContract.set(key, (entry = { abi: candidate.abi, ids: new Set() }));
+    }
+    for (const id of candidate.tokens.keys()) {
+      if (entry.ids.has(id)) continue;
+      if (tokenIds >= MAX_NFT_IDS)
+        throw new RangeError(`nftHoldings: token id limit is ${MAX_NFT_IDS}`);
+      entry.ids.add(id);
+      tokenIds++;
+    }
   }
   const contracts = [...byContract];
   const out: TokenBalances = {};
@@ -987,7 +1059,10 @@ export async function nftHoldings(
   const balances = await mapPool(
     contracts,
     ([contract, { abi, ids }]) =>
-      withRetry(() => tokenBalanceSingle(prov, address, { contract, abi }, ids), opts.signal).then(
+      withRetry(
+        () => tokenBalanceSingle(prov, address, { contract, abi }, ids, opts),
+        opts.signal
+      ).then(
         (value) => value,
         (error) => ({ contract, error: (error as Error).message })
       ),
@@ -1011,16 +1086,28 @@ export function approvalTopics(address: string): Topics {
 }
 
 export function calcAllowances(logs: Log[], address: string): TxAllowances {
-  if (typeof address !== 'string') throw new Error('calcAllowances: wrong address');
+  try {
+    parseAddress(address);
+  } catch {
+    throw new Error('calcAllowances: wrong address');
+  }
   const approval = events(ERC20).Approval;
-  const res: TxAllowances = {};
+  const res: TxAllowances = dict();
   for (const l of logs) {
     const decoded = approval.decode(l.topics, l.data);
     if (decoded.owner.toLowerCase() !== address.toLowerCase()) continue;
-    if (!res[l.address]) res[l.address] = {};
+    try {
+      parseAddress(l.address);
+      parseAddress(decoded.spender);
+    } catch {
+      throw new Error('calcAllowances: wrong log address');
+    }
+    if (!res[l.address]) res[l.address] = dict();
     res[l.address][decoded.spender] = decoded.value;
   }
-  return res;
+  return Object.fromEntries(
+    Object.entries(res).map(([contract, allowances]) => [contract, { ...allowances }])
+  );
 }
 
 /**

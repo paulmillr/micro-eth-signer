@@ -4,6 +4,7 @@ import { mapComponent, type GetType as AbiGetType } from '../abi/mapper.ts';
 import {
   add0x,
   astring,
+  cloneDeep,
   deepFreeze,
   ethHex,
   initSig,
@@ -112,6 +113,8 @@ const MAX_EIP712_TYPES = 256;
 const MAX_EIP712_SCHEMA_FIELDS = 1024;
 const MAX_EIP712_MESSAGE_DEPTH = 64;
 const MAX_EIP712_MESSAGE_NODES = 4096;
+const MAX_EIP712_IDENTIFIER_LENGTH = 1024;
+const MAX_EIP712_EXPANDED_TYPE_CHARS = 1_048_576;
 
 // This makes 'bytes' -> Uint8Array, 'uint' -> bigint. However, we support 'string' for them (JSON in wallets),
 // but for static types it is actually better to use strict types, since otherwise everything is 'string'. Address is string,
@@ -129,6 +132,12 @@ export type GetType<Types extends EIP712Types, K extends keyof Types & string> =
 type Key<T extends EIP712Types> = keyof T & string;
 
 const isIdentifier = (s: string) => /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(s);
+const assertIdentifierLength = (s: string): void => {
+  if (s.length > MAX_EIP712_IDENTIFIER_LENGTH)
+    throw new RangeError(
+      `EIP712: identifier too long, limit is ${MAX_EIP712_IDENTIFIER_LENGTH} characters`
+    );
+};
 
 // TODO: merge with abi somehow?
 function parseType(s: string): {
@@ -141,6 +150,7 @@ function parseType(s: string): {
   let m = s.match(/^([^\[\]]+)((?:\[[0-9]*\])*)$/);
   if (!m) throw new Error(`parseType: wrong type: ${s}`);
   const base = m[1];
+  assertIdentifierLength(base);
   const arrays = m[2];
   const lastArray = arrays.match(/\[([0-9]*)\]$/);
   const isArray = lastArray !== null;
@@ -179,6 +189,7 @@ function getDependencies(types: EIP712Types): Record<string, Set<string>> {
   const res: Record<string, Set<string>> = {};
   let totalFields = 0;
   for (const [name, fields] of typeEntries) {
+    assertIdentifierLength(name);
     // EIP-712 struct names must be valid identifiers; otherwise malformed
     // tokens like `bytes32]` become observable custom types.
     if (!isIdentifier(name)) throw new Error(`getDependencies: wrong struct type name=${name}`);
@@ -189,7 +200,12 @@ function getDependencies(types: EIP712Types): Record<string, Set<string>> {
       throw new RangeError(`EIP712: too many schema fields, limit is ${MAX_EIP712_SCHEMA_FIELDS}`);
     }
     const cur: Set<string> = new Set(); // type may appear multiple times in struct
-    for (const { type } of fields) {
+    for (const { name: fieldName, type } of fields) {
+      if (typeof fieldName !== 'string')
+        throw new Error(`EIP712: invalid field name=${fieldName} in type ${name}`);
+      assertIdentifierLength(fieldName);
+      if (!isIdentifier(fieldName))
+        throw new Error(`EIP712: invalid field name=${fieldName} in type ${name}`);
       const p = parseType(type);
       if (p.type !== 'struct') continue; // skip basic fields
       if (p.base === name) continue; // self reference
@@ -220,12 +236,27 @@ function getDependencies(types: EIP712Types): Record<string, Set<string>> {
 function getTypes(types: EIP712Types) {
   const deps = getDependencies(types);
   const names: Record<string, string> = {};
+  let expandedTypeChars = 0;
+  const addExpandedTypeChars = (chars: number) => {
+    expandedTypeChars += chars;
+    if (expandedTypeChars > MAX_EIP712_EXPANDED_TYPE_CHARS)
+      throw new RangeError(
+        `EIP712: expanded schema too large, limit is ${MAX_EIP712_EXPANDED_TYPE_CHARS} characters`
+      );
+  };
   // Build names
-  for (const type in types)
-    names[type] = `${type}(${types[type].map(({ name, type }) => `${type} ${name}`).join(',')})`;
+  for (const type in types) {
+    const fields = types[type];
+    let nameChars = type.length + 2 + Math.max(0, fields.length - 1);
+    for (const field of fields) nameChars += field.type.length + 1 + field.name.length;
+    addExpandedTypeChars(nameChars);
+    const name = `${type}(${types[type].map(({ name, type }) => `${type} ${name}`).join(',')})`;
+    names[type] = name;
+  }
   const fullNames: Record<string, string> = {};
   for (const [name, curDeps] of Object.entries(deps)) {
     const n = [name].concat(Array.from(curDeps).sort());
+    addExpandedTypeChars(n.reduce((chars, type) => chars + names[type].length, 0));
     fullNames[name] = n.map((i) => names[i]).join('');
   }
   const hashes = Object.fromEntries(
@@ -256,7 +287,10 @@ export function encodeType(types: EIP712Types, type: string): string {
 export function encoder<T extends EIP712Types>(types: T, domain: TArg<GetType<T, 'EIP712Domain'>>) {
   if (!isObject(domain)) throw Error(`wrong domain=${domain}`);
   if (!isObject(types)) throw Error(`wrong types=${types}`);
-  const info = getTypes(types);
+  // Keep validation and all later encoding on the same immutable schema. Otherwise,
+  // caller mutation could combine cached type hashes with a different field layout.
+  const schema = deepFreeze(cloneDeep(types)) as T;
+  const info = getTypes(schema);
   type EncodeBudget = { nodes: number };
   const encodeField = (
     type: string,
@@ -285,7 +319,7 @@ export function encoder<T extends EIP712Types>(types: T, domain: TArg<GetType<T,
       return hash.digest() as TRet<Uint8Array>;
     }
     if (p.type === 'struct') {
-      const def = types[type];
+      const def = schema[type];
       if (!def) throw new Error(`wrong type: ${type}`);
       const fieldNames = info.fields[type];
       if (!isObject(data)) throw new Error(`encoding non-object as custom type ${type}`);
@@ -302,7 +336,7 @@ export function encoder<T extends EIP712Types>(types: T, domain: TArg<GetType<T,
         // but seems like other project use this.
         // NOTE: this is V4 only stuff. If you need V3 behavior, please open issue.
         let field: Uint8Array;
-        if (types[type] && data[name] === undefined) {
+        if (schema[type] && data[name] === undefined) {
           field = new Uint8Array(32);
         } else field = encodeField(type, data[name], true, depth + 1, budget);
         if (hash) hash.update(field);
@@ -325,7 +359,7 @@ export function encoder<T extends EIP712Types>(types: T, domain: TArg<GetType<T,
   };
   const encodeData = <K extends Key<T>>(type: K, data: TArg<GetType<T, K>>) => {
     astring(type);
-    if (!types[type]) throw new Error(`Unknown type: ${type}`);
+    if (!schema[type]) throw new Error(`Unknown type: ${type}`);
     if (!isObject(data)) throw new Error('wrong data object');
     return encodeField(type, data, false, 0, { nodes: 0 });
   };

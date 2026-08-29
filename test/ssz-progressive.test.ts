@@ -144,6 +144,31 @@ describe('SSZ progressive', () => {
     deepStrictEqual(CompatibleUnionA._isProgressiveCompat(CompatibleUnionABCA), true);
   });
 
+  it('profile commitments only include serialized fields', () => {
+    const Shape = SSZ.progressiveContainer([1, 1, 1], {
+      side: SSZ.uint16,
+      color: SSZ.uint8,
+      radius: SSZ.uint16,
+    });
+    const Circle = SSZ.profile(Shape, ['radius'], ['color']);
+    const a = { color: 1, radius: 2, side: 3 };
+    const b = { color: 1, radius: 2, side: 4 };
+
+    deepStrictEqual(bytesToHex(Circle.encode(a)), '01010200');
+    deepStrictEqual(Circle.encode(a), Circle.encode(b));
+    deepStrictEqual(Circle.merkleRoot(a), Circle.merkleRoot(b));
+    deepStrictEqual(
+      bytesToHex(Circle.merkleRoot({ color: 1, radius: 2 })) ===
+        bytesToHex(Circle.merkleRoot({ color: 1, radius: 3 })),
+      false
+    );
+
+    const decoded = Circle.decode(Circle.encode({ color: 1 }));
+    deepStrictEqual(decoded, { color: 1 });
+    deepStrictEqual(Circle.merkleRoot(decoded), Circle.merkleRoot({ color: 1, side: 3 }));
+    throws(() => Circle.merkleRoot({ radius: 2 } as any), /empty required field color/);
+  });
+
   it('vectors', () => {
     const isSmall = (type) => ['uint8', 'uint16', 'uint32'].includes(type);
     const getCoder = (name) => {

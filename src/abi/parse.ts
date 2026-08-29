@@ -13,6 +13,8 @@ const ARRAY_SUFFIX_RE = /^(?:\[\d*\])*/;
 const SKIPPED_MODIFIERS = new Set(['memory', 'calldata', 'storage', 'payable']);
 const FN_MODIFIERS = new Set(['public', 'external', 'virtual', 'override']);
 const MUTABILITY = new Set(['pure', 'view', 'payable', 'nonpayable']);
+const MAX_ABI_SIGNATURE_LENGTH = 16_384;
+const MAX_ABI_PARAM_DEPTH = 128;
 
 function assertValidType(type: string): void {
   const base = type.replace(/(?:\[\d*\])+$/, '');
@@ -88,13 +90,15 @@ function parseTrailer(
   return { indexed, name };
 }
 
-function parseParam(s: string, allowIndexed: boolean): FnArg {
+function parseParam(s: string, allowIndexed: boolean, depth = 0): FnArg {
+  if (depth > MAX_ABI_PARAM_DEPTH)
+    throw new RangeError(`parseAbi: schema too deep, limit is ${MAX_ABI_PARAM_DEPTH}`);
   s = s.trim();
   // `payable` qualifies the address, while its array suffix is part of the canonical ABI type.
   s = s.replace(/^address\s+payable(?=\[)/, 'address');
   if (s.startsWith('(')) {
     const end = findMatching(s, 0);
-    const components = splitParams(s.slice(1, end)).map((i) => parseParam(i, false));
+    const components = splitParams(s.slice(1, end)).map((i) => parseParam(i, false, depth + 1));
     if (!components.length) throw new Error(`parseAbi: empty tuple in "${s}"`);
     const afterTuple = s.slice(end + 1);
     const suffix = afterTuple.match(ARRAY_SUFFIX_RE)![0];
@@ -142,6 +146,10 @@ function parseModifierTokens(s: string, src: string): { stateMutability?: string
 export function parseAbiItem(signature: string): ParsedABI[number] {
   if (typeof signature !== 'string')
     throw new TypeError('"signature" expected string, got type=' + typeof signature);
+  if (signature.length > MAX_ABI_SIGNATURE_LENGTH)
+    throw new RangeError(
+      `parseAbi: signature too long, limit is ${MAX_ABI_SIGNATURE_LENGTH} characters`
+    );
   const src = signature.trim();
   let m: RegExpMatchArray | null;
   if ((m = src.match(/^(fallback|receive)\s*\(\s*\)\s*(.*)$/))) {

@@ -35,6 +35,7 @@ import {
   type ClearSigOpt,
   type ClearSigRepositoryEntry,
 } from '../clearsig.ts';
+import { parseAddress } from '../core/address.ts';
 
 /*
 There is NO network code in the file. However, a user can pass
@@ -141,6 +142,7 @@ export type ContractType<T extends Array<FnArg>, N, F = ContractTypeFilter<T>> =
       }
     : never;
 
+const INT_ALIAS = /^(u?int)((?:\[\d*\])*)$/;
 function fnSignature(o: FnArg): string {
   if (!o.type) throw new Error('ABI.fnSignature wrong argument');
   if (o.type === 'function' || o.type === 'event' || o.type === 'error')
@@ -149,6 +151,16 @@ function fnSignature(o: FnArg): string {
     // Keep selector generation aligned with the mapper policy: empty tuples are disabled.
     if (!o.components || !o.components.length) throw new Error('ABI.fnSignature wrong tuple');
     return `(${o.components.map((i) => fnSignature(i)).join(',')})${o.type.slice(5)}`;
+  }
+  // Solidity canonical signatures expand bare integer aliases, including array leaves.
+  if (
+    o.type === 'uint' ||
+    o.type === 'int' ||
+    o.type.startsWith('uint[') ||
+    o.type.startsWith('int[')
+  ) {
+    const int = INT_ALIAS.exec(o.type);
+    if (int) return `${int[1]}256${int[2]}`;
   }
   return o.type;
 }
@@ -376,6 +388,46 @@ export type ContractEventType<T extends Array<FnArg>, F = ContractEventTypeFilte
       }
     : never;
 
+function padIndexed(data: TArg<Uint8Array>): TRet<Uint8Array> {
+  const left = data.length % 32;
+  if (!left) return data as TRet<Uint8Array>;
+  const padded = new Uint8Array(data.length + 32 - left);
+  padded.set(data);
+  return padded;
+}
+
+// Solidity indexed-event encoding is recursive and in-place: composite values omit ordinary ABI
+// offsets/lengths, while their string/bytes children are padded to 32-byte boundaries.
+function encodeIndexedInPlace(input: FnArg, value: any, nested = false): TRet<Uint8Array> {
+  let array: RegExpExecArray | null;
+  if ((array = ARRAY_RE.exec(input.type))) {
+    aarray(value, 'indexed array');
+    if (array[3] !== undefined && value.length !== Number.parseInt(array[3]))
+      throw new Error('Wrong topics args');
+    const inner = { ...input, type: array[1] };
+    return concatBytes(...value.map((item: any) => encodeIndexedInPlace(inner, item, true)));
+  }
+  if (input.type === 'tuple') {
+    if (!input.components || !input.components.length) throw new Error('Unknown unsized type');
+    const hasNames = input.components.every((component) => !!component.name);
+    return concatBytes(
+      ...input.components.map((component, index) =>
+        encodeIndexedInPlace(component, hasNames ? value[component.name!] : value[index], true)
+      )
+    );
+  }
+  if (input.type === 'string') {
+    if (typeof value !== 'string') throw new Error('Wrong topics args');
+    const data = utf8ToBytes(value);
+    return nested ? padIndexed(data) : data;
+  }
+  if (input.type === 'bytes') {
+    const data = abytes(value, undefined, 'indexed bytes');
+    return nested ? padIndexed(data) : data;
+  }
+  return mapComponent(input).encode(value as never) as TRet<Uint8Array>;
+}
+
 // TODO: try to simplify further
 export function events(abi: ParsedABI): Record<string, EventMethodUntyped>;
 export function events<T extends ArrLike<FnArg>>(abi: T): TRet<ContractEventType<Writable<T>>>;
@@ -437,27 +489,7 @@ export function events<T extends ArrLike<FnArg>>(abi: T): TRet<ContractEventType
           }
           let topic: string;
           if (packer) topic = bytesToHex(packer.encode(value));
-          else if (['string', 'bytes'].includes(input.type))
-            topic = bytesToHex(keccak_256(typeof value === 'string' ? utf8ToBytes(value) : value));
-          else {
-            let m: any, parts: Uint8Array[];
-            if ((m = ARRAY_RE.exec(input.type))) {
-              // This hashing path bypasses mapComponent's array wrapper, so fixed arrays must still enforce their ABI length here.
-              if (m[3] !== undefined && value.length !== Number.parseInt(m[3]))
-                throw new Error('Wrong topics args');
-              // Tuple arrays need components preserved after peeling the array suffix.
-              const inner = mapComponent({ ...input, type: m[1] } as any);
-              parts = value.map((j: any) => inner.encode(j));
-            } else if (input.type === 'tuple' && input.components) {
-              let tupleHasNames = true;
-              for (const j of input.components) if (!j.name) tupleHasNames = false;
-              // Mixed tuple components use positional values, matching mapComponent's tuple carrier.
-              parts = input.components.map((j, n) =>
-                (mapArgs([j]) as any).encode(tupleHasNames ? value[j.name!] : value[n])
-              );
-            } else throw new Error('Unknown unsized type');
-            topic = bytesToHex(keccak_256(concatBytes(...parts)));
-          }
+          else topic = bytesToHex(keccak_256(encodeIndexedInPlace(input, value)));
           res.push(add0x(topic));
           ii++;
         }
@@ -517,6 +549,8 @@ type EventSignatureDecoder = {
   decoder: (topics: string[], _data: string) => unknown;
   hint?: HintFn;
 };
+const dict = <T>(): Record<string, T> => Object.create(null) as Record<string, T>;
+const parseAddressKey = (address: string): string => parseAddress(address).data.toLowerCase();
 // ERC-7730 clear signing deliberately lives outside this file: the ABI detector
 // answers "which known function shape is this", descriptors answer "how should a
 // wallet display it" - decodeTx in abi.ts composes both, neither gates the other.
@@ -536,21 +570,29 @@ export type SignatureInfo = {
  * ```
  */
 export class Decoder {
-  contracts: Record<string, Record<string, SignaturePacker>> = {};
-  sighashes: Record<string, SignaturePacker[]> = {};
-  evContracts: Record<string, Record<string, EventSignatureDecoder>> = {};
-  evSighashes: Record<string, EventSignatureDecoder[]> = {};
+  contracts: Record<string, Record<string, SignaturePacker>> = dict();
+  sighashes: Record<string, SignaturePacker[]> = dict();
+  evContracts: Record<string, Record<string, EventSignatureDecoder>> = dict();
+  evSighashes: Record<string, EventSignatureDecoder[]> = dict();
   clearSig?: {
     contracts: Record<string, Record<string, ClearSigRepositoryEntry[]>>;
     generic: ClearSigRepositoryEntry[];
   };
   clearSigFactories: ClearSigFactoryEntry[] = [];
-  clearSigResolved: Record<string, boolean> = {};
+  clearSigResolved: Record<string, boolean> = dict();
   // Repository arrays preserve descriptor order; this mirror keeps per-call selector lookup O(1).
   private clearSigSelectors: Record<
     string,
     Record<string, Record<string, ClearSigRepositoryEntry>>
-  > = {};
+  > = dict();
+  private addressKeys = new Set<string>();
+  private addressKey(address: string, remember = false): string {
+    const candidate = strip0x(address, 'contract').toLowerCase();
+    if (this.addressKeys.has(candidate)) return candidate;
+    const key = parseAddressKey(address);
+    if (remember) this.addressKeys.add(key);
+    return key;
+  }
   private addClearSigEntry(
     chain: string,
     address: string,
@@ -559,7 +601,7 @@ export class Decoder {
   ) {
     const entry = entry_ as ClearSigRepositoryEntry;
     if (!entry.fn) return;
-    const contract = strip0x(address, 'contract').toLowerCase();
+    const contract = this.addressKey(address);
     const sh = fnSigHash(entry.fn);
     if (seen) {
       const key = `${chain}:${contract}:${entry.source}:${sh}`;
@@ -567,8 +609,8 @@ export class Decoder {
       seen[key] = true;
     }
     const cur = this.contracts[contract] && this.contracts[contract][sh];
-    const byAddr = this.clearSigSelectors[chain] || (this.clearSigSelectors[chain] = {});
-    const bySel = byAddr[add0x(contract)] || (byAddr[add0x(contract)] = {});
+    const byAddr = this.clearSigSelectors[chain] || (this.clearSigSelectors[chain] = dict());
+    const bySel = byAddr[add0x(contract)] || (byAddr[add0x(contract)] = dict());
     if (!bySel[sh]) bySel[sh] = entry;
     if (cur) return;
     this.add(add0x(contract), [entry.fn]);
@@ -576,11 +618,11 @@ export class Decoder {
   /** Adds ERC-7730 descriptors to this decoder, hashing ABI selectors through the normal ABI path. */
   addClearSig(files: TArg<Record<string, ClearSigDef>>, opt: TArg<ClearSigAddOpt> = {}): this {
     const repo = clearSigRepository(files as Record<string, ClearSigDef>);
-    const local = this.clearSig || (this.clearSig = { contracts: {}, generic: [] });
-    const seen: Record<string, boolean> = {};
+    const local = this.clearSig || (this.clearSig = { contracts: dict(), generic: [] });
+    const seen: Record<string, boolean> = dict();
     for (const chain of Object.keys(repo.contracts)) {
       const byAddr = repo.contracts[chain];
-      const dstChain = local.contracts[chain] || (local.contracts[chain] = {});
+      const dstChain = local.contracts[chain] || (local.contracts[chain] = dict());
       for (const address of Object.keys(byAddr)) {
         const dst = dstChain[address] || (dstChain[address] = []);
         for (const entry of byAddr[address]) {
@@ -594,8 +636,8 @@ export class Decoder {
     if ((opt as ClearSigAddOpt).bind) {
       const bind = (opt as ClearSigAddOpt).bind!;
       const id = clearSigChain(bind.chainId);
-      const address = add0x(strip0x(bind.address, 'address').toLowerCase());
-      const byAddr = local.contracts[`${id}`] || (local.contracts[`${id}`] = {});
+      const address = add0x(this.addressKey(bind.address));
+      const byAddr = local.contracts[`${id}`] || (local.contracts[`${id}`] = dict());
       const dst = byAddr[address] || (byAddr[address] = []);
       for (const entry of local.generic) {
         dst.push(entry);
@@ -609,7 +651,7 @@ export class Decoder {
   async resolve(opt: TArg<ClearSigResolveOpt>): Promise<boolean> {
     const o = opt as ClearSigResolveOpt;
     const id = clearSigChain(o.chainId);
-    const address = strip0x(o.address, 'address').toLowerCase();
+    const address = this.addressKey(o.address);
     const candidates = this.clearSigFactories.filter(
       (i) => !i.deployments.length || i.deployments.some((d) => d.chainId === id)
     );
@@ -649,9 +691,9 @@ export class Decoder {
     for (const idx of Array.isArray(proved) ? proved : proved === undefined ? [] : [proved]) {
       if (typeof idx !== 'number' || !Number.isSafeInteger(idx) || idx < 0 || !candidates[idx])
         throw new Error(`clearSig: wrong factory result index ${idx}`);
-      if (!this.clearSig) this.clearSig = { contracts: {}, generic: [] };
+      if (!this.clearSig) this.clearSig = { contracts: dict(), generic: [] };
       const branch = this.clearSig.contracts;
-      const byAddr = branch[`${id}`] || (branch[`${id}`] = {});
+      const byAddr = branch[`${id}`] || (branch[`${id}`] = dict());
       const entries = byAddr[add0x(address)] || (byAddr[add0x(address)] = []);
       for (const entry of candidates[idx].entries) {
         entries.push(entry);
@@ -670,15 +712,15 @@ export class Decoder {
     data = abytes(data, undefined, 'data');
     if (data.length < 4) return;
     const id = clearSigChain(chainId);
-    const address = add0x(strip0x(contract, 'contract').toLowerCase());
+    const address = add0x(this.addressKey(contract));
     const selector = bytesToHex(data.slice(0, 4));
     return this.clearSigSelectors[`${id}`]?.[address]?.[selector];
   }
   add(contract: string, abi: ContractABI): void {
-    contract = strip0x(contract, 'contract').toLowerCase();
+    contract = this.addressKey(contract, true);
     aarray(abi, 'abi');
-    if (!this.contracts[contract]) this.contracts[contract] = {};
-    if (!this.evContracts[contract]) this.evContracts[contract] = {};
+    if (!this.contracts[contract]) this.contracts[contract] = dict();
+    if (!this.evContracts[contract]) this.evContracts[contract] = dict();
     for (let fn of abi) {
       if (!isObject(fn as unknown) || Array.isArray(fn as unknown))
         throw new TypeError('"abi item" expected object, got type=' + typeof fn);
@@ -711,7 +753,7 @@ export class Decoder {
     }
   }
   method(contract: string, data: Uint8Array): string | undefined {
-    contract = strip0x(contract, 'contract').toLowerCase();
+    contract = this.addressKey(contract);
     data = abytes(data, undefined, 'data');
     const sh = bytesToHex(data.slice(0, 4));
     if (!this.contracts[contract] || !this.contracts[contract][sh]) return;
@@ -725,7 +767,7 @@ export class Decoder {
     _data: Uint8Array,
     opt: HintOpt = {}
   ): SignatureInfo | SignatureInfo[] | undefined {
-    contract = strip0x(contract, 'contract').toLowerCase();
+    contract = this.addressKey(contract);
     _data = abytes(_data, undefined, 'data');
     const sh = bytesToHex(_data.slice(0, 4));
     const data = _data.slice(4);
@@ -758,7 +800,7 @@ export class Decoder {
     data: string,
     _opt: HintOpt
   ): SignatureInfo | SignatureInfo[] | undefined {
-    contract = strip0x(contract, 'contract').toLowerCase();
+    contract = this.addressKey(contract);
     aarray(topics, 'topics');
     if (!topics.length) return;
     const sh = strip0x(topics[0]);

@@ -74,9 +74,20 @@ function validateTraceOpts(opts: Record<string, unknown>) {
 }
 
 function fixAction(action: Action) {
-  action.action.value = BigInt(action.action.value);
-  action.action.gas = BigInt(action.action.gas);
-  action.result.gasUsed = BigInt(action.result.gasUsed);
+  // OpenEthereum trace entries are a runtime union: call/create/reward/suicide,
+  // and failed call/create entries have a null result. Keep the historical
+  // exported Action type stable, but only normalize quantities present on the
+  // actual variant returned by the node.
+  const details = action.action as unknown as {
+    value?: string | bigint;
+    gas?: string | bigint;
+    balance?: string | bigint;
+  };
+  const result = action.result as unknown as { gasUsed?: string | bigint } | null | undefined;
+  if (details.value !== undefined) details.value = BigInt(details.value);
+  if (details.gas !== undefined) details.gas = BigInt(details.gas);
+  if (details.balance !== undefined) details.balance = BigInt(details.balance);
+  if (result?.gasUsed !== undefined) result.gasUsed = BigInt(result.gasUsed);
 }
 
 export async function traceFilterSingle(
@@ -136,7 +147,8 @@ export async function internalTransactions(
       Array.from({ length: Math.min(TRACE_FILTER_CONCURRENCY, chunks) }, () => worker())
     );
     const out: Action[] = [];
-    for (const batch of batches) out.push(...batch);
+    // A valid large trace batch can exceed the engine's function-argument limit.
+    for (const batch of batches) for (const action of batch) out.push(action);
     return out;
   }
   let lastBlock = opts.fromBlock || 0;

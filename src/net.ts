@@ -170,6 +170,18 @@ export type PreparedTx = {
   | { type: 'legacy'; gasPrice: bigint }
 );
 
+/** Transaction request populated by {@link RpcClient.prepare}. */
+export type PrepareArgs = {
+  from: string;
+  to: string;
+  value?: bigint;
+  data?: string;
+  expectedChainId?: bigint;
+};
+
+/** Fixed transaction-population policies supported by {@link RpcClient.prepare}. */
+export type PreparePolicy = 'viem_v3' | 'ethers_v6';
+
 export type WaitReceiptOpts = {
   /** Blocks on top of the inclusion block, default 1 (just included). */
   confirmations?: number;
@@ -365,6 +377,22 @@ export const isMethodNotFound = (e: unknown): boolean => {
   if (!(e instanceof Error)) return false;
   if ((e as { code?: unknown }).code === RPC_METHOD_NOT_FOUND) return true;
   return /method not found|does not exist|is not available|not supported/i.test(e.message);
+};
+
+const isFillUnsupported = (error: unknown): boolean => {
+  let current: unknown = error;
+  while (current && typeof current === 'object') {
+    const e = current as { code?: unknown; message?: unknown; cause?: unknown };
+    if (e.code === RPC_METHOD_NOT_FOUND || e.code === -32004) return true;
+    if (
+      /eth_fillTransaction is not available|does not exist|method .*not (found|supported|available)/i.test(
+        String(e.message)
+      )
+    )
+      return true;
+    current = e.cause;
+  }
+  return false;
 };
 
 export const requireMethod = (e: unknown, method: string, requirement: string): Error => {
@@ -573,6 +601,7 @@ function txInfoRaw(info: TxInfo, receipt: TxReceipt | undefined, verify: boolean
 export class RpcClient implements IWeb3Provider {
   private transport: RpcTransport;
   private capabilitiesPromise?: Promise<NodeCapabilities>;
+  private fillTransactionSupported?: boolean;
 
   constructor(transport: RpcTransport) {
     this.transport = transport;
@@ -694,35 +723,38 @@ export class RpcClient implements IWeb3Provider {
   async height(): Promise<number> {
     return Number.parseInt(await this.call('eth_blockNumber'));
   }
-  async nonce(address: string): Promise<bigint> {
+  async nonce(address: string, tag: 'latest' | 'pending' = 'latest'): Promise<bigint> {
     if (typeof address !== 'string') throw new Error('nonce: wrong address');
-    // Confirmed nonce permits replacing a stuck pending tx; callers can override prepared fields to queue.
-    return BigInt(await this.call('eth_getTransactionCount', address, 'latest'));
+    if (tag !== 'latest' && tag !== 'pending') throw new Error('nonce: wrong tag');
+    return BigInt(await this.call('eth_getTransactionCount', address, tag));
   }
-  /**
-   * Suggested fees for the next block based on eth_feeHistory, with eth_gasPrice fallback.
-   * Assumes the chain has activated London; pre-London nodes can return zero-base-fee history.
-   */
-  async fees(): Promise<FeeEstimate> {
-    try {
-      const hist = await this.call('eth_feeHistory', '0x5', 'latest', [25]);
-      const baseFee = BigInt(hist.baseFeePerGas[hist.baseFeePerGas.length - 1]);
-      const rewards: bigint[] = (hist.reward || [])
-        .map((r: string[]) => BigInt(r[0]))
-        .filter((i: bigint) => i > _0n);
-      const _1gwei = BigInt(1_000_000_000);
-      const maxPriorityFeePerGas = rewards.length
-        ? rewards.reduce((a, b) => a + b, _0n) / BigInt(rewards.length)
-        : _1gwei;
-      return {
-        type: 'eip1559',
-        maxFeePerGas: BigInt(2) * baseFee + maxPriorityFeePerGas,
-        maxPriorityFeePerGas,
-        baseFee,
-      };
-    } catch (e) {
-      return { type: 'legacy', gasPrice: BigInt(await this.call('eth_gasPrice')) };
+  /** Suggested fees using one of the fixed viem v3 (default) or ethers v6 policies. */
+  async fees(policy: PreparePolicy = 'viem_v3'): Promise<FeeEstimate> {
+    if (policy !== 'viem_v3' && policy !== 'ethers_v6') throw new Error('fees: wrong policy');
+    const block = await this.call('eth_getBlockByNumber', 'latest', false);
+    const multiply = (fee: bigint) => (fee * BigInt(12)) / BigInt(10);
+    if (block?.baseFeePerGas === null || block?.baseFeePerGas === undefined) {
+      const gasPrice = ethHexNum.decode(await this.call('eth_gasPrice'));
+      return { type: 'legacy', gasPrice: policy === 'viem_v3' ? multiply(gasPrice) : gasPrice };
     }
+    const baseFee = ethHexNum.decode(block.baseFeePerGas);
+    let maxPriorityFeePerGas: bigint;
+    try {
+      maxPriorityFeePerGas = ethHexNum.decode(await this.call('eth_maxPriorityFeePerGas'));
+    } catch {
+      if (policy === 'ethers_v6') maxPriorityFeePerGas = BigInt(1_000_000_000);
+      else {
+        const gasPrice = ethHexNum.decode(await this.call('eth_gasPrice'));
+        maxPriorityFeePerGas = gasPrice > baseFee ? gasPrice - baseFee : _0n;
+      }
+    }
+    return {
+      type: 'eip1559',
+      maxFeePerGas:
+        (policy === 'viem_v3' ? multiply(baseFee) : BigInt(2) * baseFee) + maxPriorityFeePerGas,
+      maxPriorityFeePerGas,
+      baseFee,
+    };
   }
   /**
    * Broadcasts a signed transaction.
@@ -848,28 +880,76 @@ export class RpcClient implements IWeb3Provider {
     return BigInt(await this.call('eth_chainId'));
   }
   /**
-   * Fetches nonce, fees, gas limit and chain id in one parallel round and returns
-   * the fields `Transaction.prepare` expects.
-   * `expectedChainId` guards against signing for the wrong network (a stale RPC
-   * URL, a UI network switch): prepare throws when the node reports another chain.
+   * Populates the fields `Transaction.prepare` expects. The default viem v3 policy first tries
+   * `eth_fillTransaction`, then falls back to viem's manual population when unsupported.
+   * The ethers v6 policy always uses its manual population rules.
    */
-  async prepare(args: {
-    from: string;
-    to: string;
-    value?: bigint;
-    data?: string;
-    expectedChainId?: bigint;
-  }): Promise<PreparedTx> {
+  async prepare(args: PrepareArgs, policy: PreparePolicy = 'viem_v3'): Promise<PreparedTx> {
     if (typeof args.from !== 'string') throw new Error('prepare: wrong from');
     if (typeof args.to !== 'string') throw new Error('prepare: wrong to');
     if (args.expectedChainId !== undefined && typeof args.expectedChainId !== 'bigint')
       throw new Error('prepare: wrong expectedChainId');
+    if (policy !== 'viem_v3' && policy !== 'ethers_v6') throw new Error('prepare: wrong policy');
     const callArgs: Web3CallArgs = { from: args.from, to: args.to };
     if (args.value !== undefined) callArgs.value = ethNum(args.value);
     if (args.data !== undefined) callArgs.data = args.data;
+    if (policy === 'viem_v3' && this.fillTransactionSupported !== false) {
+      let chainMismatch: Error | undefined;
+      try {
+        const response = await this.call('eth_fillTransaction', callArgs);
+        const tx = response?.tx;
+        if (!isObject(tx)) throw new Error('prepare: malformed eth_fillTransaction response');
+        const chainId = ethHexNum.decode(tx.chainId);
+        if (args.expectedChainId !== undefined && chainId !== args.expectedChainId) {
+          chainMismatch = new Error(
+            `prepare: node reports chain id ${chainId}, expected ${args.expectedChainId}`
+          );
+          throw chainMismatch;
+        }
+        const common = {
+          nonce: ethHexNum.decode(tx.nonce),
+          gasLimit: ethHexNum.decode(tx.gas),
+          chainId,
+          // Intent fields always come from the caller, never from the RPC response.
+          to: args.to,
+          value: args.value === undefined ? _0n : args.value,
+          data: args.data === undefined ? '0x' : args.data,
+        };
+        const multiply = (fee: bigint) => (fee * BigInt(12)) / BigInt(10);
+        if (tx.maxFeePerGas !== undefined && tx.maxPriorityFeePerGas !== undefined) {
+          const filled: PreparedTx = {
+            ...common,
+            type: 'eip1559',
+            maxFeePerGas: multiply(ethHexNum.decode(tx.maxFeePerGas)),
+            maxPriorityFeePerGas: ethHexNum.decode(tx.maxPriorityFeePerGas),
+          };
+          this.fillTransactionSupported = true;
+          return filled;
+        }
+        if (tx.gasPrice !== undefined) {
+          const filled: PreparedTx = {
+            ...common,
+            type: 'legacy',
+            gasPrice: multiply(ethHexNum.decode(tx.gasPrice)),
+          };
+          this.fillTransactionSupported = true;
+          return filled;
+        }
+        throw new Error('prepare: malformed eth_fillTransaction fees');
+      } catch (e) {
+        if (isFillUnsupported(e)) this.fillTransactionSupported = false;
+        if (
+          (e instanceof Error && e.name === 'AbortError') ||
+          (e instanceof Error && isReverted(e))
+        )
+          throw e;
+        if (e === chainMismatch) throw e;
+        // Like viem, other fill errors fall back to manual preparation.
+      }
+    }
     const [nonce, fees, gasLimit, chainId] = await Promise.all([
-      this.nonce(args.from),
-      this.fees(),
+      this.nonce(args.from, 'pending'),
+      this.fees(policy),
       this.estimateGas(callArgs),
       this.call('eth_chainId'),
     ]);
@@ -893,9 +973,10 @@ export class RpcClient implements IWeb3Provider {
       maxPriorityFeePerGas: fees.maxPriorityFeePerGas,
     };
   }
-  /** Clears the cached probe; in-flight callers keep their result and the next call re-probes. */
+  /** Clears cached RPC feature probes; in-flight callers keep their result. */
   clearCapabilities(): void {
     this.capabilitiesPromise = undefined;
+    this.fillTransactionSupported = undefined;
   }
   /**
    * Probes which RPC namespaces the node supports. Probe result is memoized per
@@ -1004,9 +1085,8 @@ export class RpcClient implements IWeb3Provider {
       }
     };
     await Promise.all(
-      Array.from(
-        { length: Math.min(opts.concurrency ?? ETH_LOGS_CONCURRENCY, chunks) },
-        () => worker()
+      Array.from({ length: Math.min(opts.concurrency ?? ETH_LOGS_CONCURRENCY, chunks) }, () =>
+        worker()
       )
     );
     const out = [];
@@ -1039,6 +1119,21 @@ export class RpcClient implements IWeb3Provider {
       this.call('eth_getTransactionReceipt', txHash),
     ]);
     if (info === null || info === undefined) throw new Error('txInfo: not found');
+    const expectedHash = txHash.toLowerCase();
+    if (
+      typeof info.hash !== 'string' ||
+      info.hash.length !== txHash.length ||
+      info.hash.toLowerCase() !== expectedHash
+    )
+      throw new Error('txInfo: wrong transaction hash');
+    if (
+      receipt !== null &&
+      receipt !== undefined &&
+      (typeof receipt.transactionHash !== 'string' ||
+        receipt.transactionHash.length !== txHash.length ||
+        receipt.transactionHash.toLowerCase() !== expectedHash)
+    )
+      throw new Error('txInfo: wrong receipt hash');
     return txInfoRaw(
       fixTxInfo(info),
       receipt === null || receipt === undefined ? undefined : fixTxReceipt(receipt),

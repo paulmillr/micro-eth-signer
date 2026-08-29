@@ -169,7 +169,8 @@ function getToken(token: 'eth' | Token, name: string): Token {
     typeof t.symbol !== 'string' ||
     typeof t.decimals !== 'number' ||
     !Number.isSafeInteger(t.decimals) ||
-    t.decimals < 0
+    t.decimals < 0 ||
+    t.decimals > 255
   ) {
     throw new Error(`uniswap.swap: wrong ${name}`);
   }
@@ -677,7 +678,9 @@ export function txDataV3(
     | 'exactOutputSingle';
   // TODO: remove unknown
   const calldatas = [(ROUTER_CONTRACT_V3[method].encodeInput as (v: unknown) => Uint8Array)(args)];
-  if (input === 'eth' && amountOut) calldatas.push(ROUTER_CONTRACT_V3['refundETH'].encodeInput());
+  const mustRefund =
+    input === 'eth' && (!!amountOut || (opt.sqrtPriceLimitX96 ?? BigInt(0)) !== BigInt(0));
+  if (mustRefund) calldatas.push(ROUTER_CONTRACT_V3['refundETH'].encodeInput());
   // unwrap
   if (routerMustCustody) {
     calldatas.push(

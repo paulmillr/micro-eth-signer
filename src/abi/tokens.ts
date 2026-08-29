@@ -4,7 +4,7 @@ export type TokenDef = {
   symbol: string;
   decimals: number;
   /** Chainlink USD price feed, when one exists. */
-  feed?: { contract: string; decimals: number };
+  feed?: { contract: string; decimals: number; maxAgeSec?: number };
 };
 
 /** Built-in ERC-20 metadata keyed by lowercase token contract address. */
@@ -281,9 +281,11 @@ export function tokensBySymbol<T extends Record<string, TokenDef>>(
     if (res[token.symbol] !== undefined)
       throw new Error(`tokensBySymbol: duplicate token symbol: ${token.symbol}`);
     // Clone the one nested TokenDef field before deep-freezing the derived index.
+    // The address-keyed registry is authoritative: runtime metadata must not
+    // replace its canonical contract field.
     res[token.symbol] = token.feed
-      ? { contract, ...token, feed: { ...token.feed } }
-      : { contract, ...token };
+      ? { ...token, contract, feed: { ...token.feed } }
+      : { ...token, contract };
   }
   return deepFreeze(res);
 }
