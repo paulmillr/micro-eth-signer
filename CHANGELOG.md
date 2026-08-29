@@ -1,6 +1,6 @@
 # Changelog for micro-eth-signer
 
-## Unreleased (2026-08-27)
+## 0.20.1 (2026-08-29)
 
 - Renamed `Transaction#setWholeAmount` to `setMaxAmount`. It no longer bumps
   `maxPriorityFeePerGas` to burn the remainder (`burnRemaining` option removed):
