@@ -85,9 +85,9 @@ console.log('fee', signedTx.fee);
 const tx2 = tx.signBy(random.privateKey, true); // default, same as above
 const tx3 = tx.signBy(random.privateKey, false); // disable
 
-// Send whole account balance. See Security section for caveats
+// Send the maximum amount while reserving the worst-case fee
 const CURRENT_BALANCE = '1.7182050000017'; // in eth
-const txSendingWholeBalance = tx.setWholeAmount(weieth.decode(CURRENT_BALANCE));
+const txSendingMaxAmount = tx.setMaxAmount(weieth.decode(CURRENT_BALANCE));
 ```
 
 We support legacy, EIP2930, EIP1559, EIP4844 and EIP7702 transactions.
@@ -312,7 +312,7 @@ ERC-7730 descriptor maps via `decodeTx`, `decodeData`, and `eip712`.
 
 `CLEARSIG_REPO` is the batteries-included descriptor map: the generic ERC
 interfaces (erc20/erc721/erc4626/...), curated and legacy contracts (uniswap
-v2/v3, kyber, the metamask swap router, weth), and the built-in token registry
+v2/v3, kyber, weth), and the built-in token registry
 already bound to them - including an ERC-2612 permit binding per token.
 
 ```ts
@@ -330,6 +330,9 @@ const mine = addTokens(CLEARSIG_REPO, {
     decimals: 18,
   },
 }); // chainId is optional, defaults to mainnet (1)
+
+// Explorer discovery carries `verified: false`; addTokens deliberately skips
+// those entries until the application explicitly promotes them to trusted data.
 
 // full: every descriptor from the upstream registry on top.
 // CLEARSIG_REPO_FULL is about 500KB of generated source; the normal ABI facade
@@ -395,7 +398,12 @@ const call = decodeData(to, data, value, { customContracts });
 
 // decodeTx with a clear-signing map extended by the same tokens:
 const unsigned = Transaction.prepare({
-  to, value, data, nonce: 0n, maxFeePerGas: 2000000000n, gasLimit: 250000n,
+  to,
+  value,
+  data,
+  nonce: 0n,
+  maxFeePerGas: 2000000000n,
+  gasLimit: 250000n,
 }).toHex({ includeSignature: false });
 const decodedSwap = decodeTx(unsigned, { clearSig: addTokens(CLEARSIG_REPO, customContracts) });
 if (!decodedSwap || Array.isArray(decodedSwap)) throw new Error('expected exact ABI match');
@@ -410,9 +418,10 @@ produces no `clearSig` for them; word those in the wallet itself (e.g.
 #### Network-backed metadata
 
 `discoverTx(prov, tx)` wires `decodeTx` to RPC-backed callbacks. The clear-signing
-renderer stays no-network by default; this path adds trusted token metadata,
-names, NFT metadata, block timestamps, and factory proofs when a client is
-available.
+renderer stays no-network by default. Self-reported token and NFT metadata from
+RPC remains `verified: false`, so it cannot create a generic descriptor binding
+or trusted name. Block timestamps and factory proofs still resolve; applications
+can pass curated `tokens` or their own trust-policy callbacks to opt in.
 
 ```ts
 import { RpcClient } from 'micro-eth-signer/net.js';
@@ -558,6 +567,11 @@ const legacyStore = await privToLegacyKeystore(account.privateKey, 'my_password'
 const recoveredPrivateKey = await privFromLegacyKeystore(legacyStore, 'my_password');
 ```
 
+> `privFromLegacySaleKeystore` is an offline migration API. Its compatibility error messages can
+> distinguish invalid CBC padding from a later address mismatch. Never return those errors from a
+> remote service: catch every failure at the trust boundary, replace it with one generic “invalid
+> sale keystore or passphrase” response, and rate-limit attempts.
+
 ### RLP & SSZ
 
 ```ts
@@ -572,6 +586,11 @@ import * as ssz from 'micro-eth-signer/ssz.js';
 ```
 
 SSZ includes EIP-7688 progressive containers.
+
+> The legacy `ElectraBeaconBlock` and `ElectraSignedBeaconBlock` exports use a progressive block
+> body and do not compute consensus Electra Merkle roots. Use
+> `ETH2_PROFILES.electra.BeaconBlock` and `ETH2_PROFILES.electra.SignedBeaconBlock` for signing or
+> verification. Their legacy behavior is retained for compatibility.
 
 ### KZG & PeerDAS
 
@@ -697,8 +716,12 @@ async function main(privateKey: string) {
 }
 ```
 
-`prepare` runs `nonce()`, `fees()` (EIP-1559 suggestion from `eth_feeHistory`, `eth_gasPrice`
-fallback on legacy chains), `estimateGas()` and `eth_chainId` in one parallel round.
+`prepare` defaults to viem v3-compatible population: it tries `eth_fillTransaction`, caches nodes
+that do not support it, and falls back to a pending nonce, exact `estimateGas()`, and viem-style
+fees (`1.2 * latest base fee + eth_maxPriorityFeePerGas`, with viem's gas-price fallbacks).
+Pass `'ethers_v6'` as the second argument (`prov.prepare(args, 'ethers_v6')`) for ethers v6-compatible
+manual population: no fill call, `2 * latest base fee + priority fee`, a 1 gwei priority fallback,
+and an unscaled legacy gas price. These two fixed policies are the only supported choices.
 `waitForReceipt` accepts `{ confirmations, timeoutMs, pollIntervalMs, signal }`.
 
 Read-only calls can be batched into a single request through
@@ -749,9 +772,10 @@ signatures in each module's JSDoc.
 detail pages or receipts already in hand. Unknown token contracts are discovered and decoded on
 the fly; discovered metadata carries `verified: false` — it is attacker-controlled (symbols can
 be phishing URLs), so render it distinctly from registry tokens. Clear-signing tiers: `'offline'`
-(default) fills `method`/`intent` with zero extra RPC; lazy `row.clearSig()` or
-`clearSig: 'resolve'` runs the full ERC-7730 resolvers. Only resolver-tier intents belong on a
-signing screen.
+(default) fills `method` and curated intents with zero extra RPC; lazy `row.clearSig()` or
+`clearSig: 'resolve'` runs the full ERC-7730 resolvers. Discovered metadata remains visible in
+transfer rows but cannot create an intent. Only bundled/explicit descriptors and verified
+resolver data belong on a signing screen.
 
 ```ts
 import { enrichTx, rowCodec } from 'micro-eth-signer/net/enrich.js';
@@ -767,7 +791,10 @@ async function main() {
   // history() rows can opt into the same enrichment:
   const discovered = [];
   const rows = [];
-  for await (const tx of history(prov, addr, { discover: true, onToken: (t) => discovered.push(t) }))
+  for await (const tx of history(prov, addr, {
+    discover: true,
+    onToken: (t) => discovered.push(t),
+  }))
     rows.push(tx);
   // `discovered` metadata and rows are plain data; persist them across sessions:
   localStorage.rows = rowCodec.encode(rows); // bigint/Map-safe JSON
@@ -776,6 +803,11 @@ async function main() {
 }
 ```
 
+Automatic receipt enrichment probes at most 32 unknown contracts per receipt, two at a time;
+remaining transfer-shaped logs still decode with unverified shape metadata. NFT candidate and
+holdings calls accept at most 256 contracts and 4096 distinct contract/token-ID pairs per call,
+and ERC-1155 balance reads use batches of 128. Paginate larger indexed inventories.
+
 ### Asset price quoting (uniswap, chainlink)
 
 ```ts
@@ -783,7 +815,7 @@ import { DEFAULT_TOKENS } from 'micro-eth-signer/abi.js';
 import { Quoter } from 'micro-eth-signer/net/quoter.js';
 
 async function main() {
-  const quoter = new Quoter(prov);
+  const quoter = new Quoter(prov, { chainlinkMaxAgeSec: 3600 });
   const btc = await quoter.coinPrice('BTC'); // Chainlink is the default provider.
   const bat = await quoter.tokenPrice('BAT');
 
@@ -800,7 +832,11 @@ const quoterWithCustomToken = new Quoter(prov, {
     '0x0000000000000000000000000000000000000001': {
       symbol: 'MYT',
       decimals: 18,
-      feed: { contract: '0x0000000000000000000000000000000000000002', decimals: 8 },
+      feed: {
+        contract: '0x0000000000000000000000000000000000000002',
+        decimals: 8,
+        maxAgeSec: 3600,
+      },
     },
   },
 });
@@ -812,6 +848,12 @@ asset before the first quote. Pass `priceIn` to use another quote token, or use
 addresses, built-in token symbols such as `USDC` or `WBTC`, and the `EUR`/`EURC` aliases for
 mainnet EURC. Uniswap v3 EUR/EURC auto prices route through USDC to avoid thin direct pools.
 Call `quoter.clearRoutes()` to force auto-discovered Uniswap routes to be refreshed.
+V3 auto-discovery deduplicates fee tiers and accepts at most 32 unique tiers per request.
+Chainlink quotes reject future timestamps and stale rounds. Built-in BTC/ETH feeds allow two hours;
+other feeds allow 26 hours. Override this per quoter with `chainlinkMaxAgeSec`, per explicit quote
+with `{ maxAgeSec }`, or per custom token feed as shown above. Numeric historical block tags compare
+freshness against that block's timestamp; `{ nowSec }` provides an explicit reference for offline
+or deterministic replay.
 
 ### Resolve ENS and GNS names
 
@@ -902,9 +944,9 @@ Check out article [ZSTs, ABIs, stolen keys and broken legs](https://github.com/p
 Default priority fee is 1 gwei, which matches what other wallets have.
 However, it's recommended to fetch recommended priority fee from a node.
 
-### Sending whole balance
+### Sending the maximum amount
 
-There is a method `setWholeAmount` which allows to send whole account balance:
+`setMaxAmount` sets the largest transaction value that still covers its worst-case fee:
 
 ```ts
 import { Transaction, weigwei, weieth } from 'micro-eth-signer';
@@ -915,27 +957,17 @@ const tx = Transaction.prepare({
   nonce: 0n,
 });
 const CURRENT_BALANCE = '1.7182050000017'; // in eth
-const txSendingWholeBalance = tx.setWholeAmount(weieth.decode(CURRENT_BALANCE));
+const txSendingMaxAmount = tx.setMaxAmount(weieth.decode(CURRENT_BALANCE));
 ```
 
-It does two things:
-
-1. `amount = accountBalance - maxFeePerGas * gasLimit`
-2. `maxPriorityFeePerGas = maxFeePerGas`
-
-Every eth block sets a fee for all its transactions, called base fee.
-maxFeePerGas indicates how much gas user is able to spend in the worst case.
-If the block's base fee is 5 gwei, while user is able to spend 10 gwei in maxFeePerGas,
-the transaction would only consume 5 gwei. That means, base fee is unknown
-before the transaction is included in a block.
-
-By setting priorityFee to maxFee, we make the process deterministic:
-`maxFee = 10, maxPriority = 10, baseFee = 5` would always spend 10 gwei.
-In the end, the balance would become 0.
+It sets `amount = accountBalance - transaction.fee`, where `transaction.fee` is the maximum fee.
+It does not change `gasPrice`, `maxFeePerGas`, or `maxPriorityFeePerGas`, preserving fee policies
+such as `viem_v3` and `ethers_v6`. When the actual fee is lower than the maximum, the difference
+remains in the account as dust.
 
 > [!WARNING]
 > Using the method would decrease privacy of a transfer, because
-> payments for services have specific amounts, and not _the whole amount_.
+> payments for services have specific amounts, rather than the maximum spendable amount.
 
 ## Speed
 

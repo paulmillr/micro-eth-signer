@@ -15,10 +15,10 @@
     "!_type_test.*"
   ],
   "dependencies": {
-    "@noble/ciphers": "~2.3.0",
-    "@noble/curves": "~2.3.0",
-    "@noble/hashes": "~2.3.0",
-    "micro-packed": "~0.11.0"
+    "@noble/ciphers": "2.4.0",
+    "@noble/curves": "2.4.0",
+    "@noble/hashes": "2.4.0",
+    "micro-packed": "0.11.1"
   },
   "devDependencies": {
     "@paulmillr/jsbt": "0.7.1",

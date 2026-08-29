@@ -23,10 +23,10 @@
     "./ssz.js": "./src/ssz.ts"
   },
   "imports": {
-    "@noble/ciphers": "jsr:@noble/ciphers@~2.3.0",
-    "@noble/curves": "jsr:@noble/curves@~2.3.0",
-    "@noble/hashes": "jsr:@noble/hashes@~2.3.0",
-    "micro-packed": "jsr:@paulmillr/micro-packed@~0.11.0"
+    "@noble/ciphers": "jsr:@noble/ciphers@2.4.0",
+    "@noble/curves": "jsr:@noble/curves@2.4.0",
+    "@noble/hashes": "jsr:@noble/hashes@2.4.0",
+    "micro-packed": "jsr:@paulmillr/micro-packed@0.11.1"
   },
   "publish": {
     "include": ["src", "jsr.json", "LICENSE", "README.md"]
