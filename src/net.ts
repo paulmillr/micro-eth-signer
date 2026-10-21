@@ -1116,7 +1116,10 @@ export class RpcClient implements IWeb3Provider {
    * undefined. Pending txs return `receipt: undefined`.
    * `raw: false` omits rebuilt bytes; combined with `verify: false`, it skips reconstruction.
    */
-  async txInfo(txHash: string, opts: { verify?: boolean; raw?: boolean } = {}): Promise<TxInfoFull> {
+  async txInfo(
+    txHash: string,
+    opts: { verify?: boolean; raw?: boolean } = {}
+  ): Promise<TxInfoFull> {
     if (typeof txHash !== 'string' || !txHashRe.test(txHash))
       throw new Error('txInfo: wrong txHash');
     if (opts.verify !== undefined && typeof opts.verify !== 'boolean')

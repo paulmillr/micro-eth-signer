@@ -1596,9 +1596,15 @@ describe('Network', () => {
       const implicit = await archive.txInfo(hash, { verify });
       const explicit = await archive.txInfo(hash, { verify, raw: true });
       deepStrictEqual(explicit, expected);
-      deepStrictEqual(Object.getOwnPropertyDescriptors(explicit), Object.getOwnPropertyDescriptors(implicit));
+      deepStrictEqual(
+        Object.getOwnPropertyDescriptors(explicit),
+        Object.getOwnPropertyDescriptors(implicit)
+      );
       deepStrictEqual(Object.getOwnPropertyDescriptor(implicit, 'raw'), {
-        value: tx.toHex(), writable: true, enumerable: true, configurable: true,
+        value: tx.toHex(),
+        writable: true,
+        enumerable: true,
+        configurable: true,
       });
     }
     const originalRecover = Transaction.prototype.recoverSender;
@@ -1612,7 +1618,10 @@ describe('Network', () => {
       deepStrictEqual(recoveries, 0);
       deepStrictEqual(omitted, { ...expected, raw: undefined });
       deepStrictEqual(Object.getOwnPropertyDescriptor(omitted, 'raw'), {
-        value: undefined, writable: true, enumerable: true, configurable: true,
+        value: undefined,
+        writable: true,
+        enumerable: true,
+        configurable: true,
       });
       await archive.txInfo(hash, { verify: false });
       deepStrictEqual(recoveries, 1);
@@ -1660,7 +1669,10 @@ describe('Network', () => {
     await rejects(() => archive.txInfo(hash), /txInfo: wrong receipt hash/);
     await rejects(() => archive.txInfo(hash, { verify: false }), /txInfo: wrong receipt hash/);
     for (const verify of [true, false])
-      await rejects(() => archive.txInfo(hash, { verify, raw: false }), /txInfo: wrong receipt hash/);
+      await rejects(
+        () => archive.txInfo(hash, { verify, raw: false }),
+        /txInfo: wrong receipt hash/
+      );
   });
   it('rebuilds zero-gas-price legacy transaction info', async () => {
     const tx = Transaction.prepare(
