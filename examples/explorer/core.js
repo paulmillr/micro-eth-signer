@@ -319,7 +319,7 @@ export function createExplorer(rpcUrl = RPC_URL) {
     // the quick view and slims them for the tables. logsWindow × concurrency
     // bounds peak memory: every in-flight window buffers its full rows
     // (receipts included) until consumed.
-    const scanner = createTokenScanner(prov, address, { logsWindow: 200_000, concurrency: 4 });
+    const scanner = createTokenScanner(prov, address, { logsWindow: 20_000, concurrency: 4 });
     const merged = new Map(initialRows.map((row) => [row.hash.toLowerCase(), row]));
     const sorted = () =>
       [...merged.values()].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
