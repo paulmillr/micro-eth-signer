@@ -5,16 +5,15 @@
 // HARD CONSTRAINT: nothing in this module (or its UIs) ever broadcasts.
 // There is no eth_sendRawTransaction / prov.broadcast call anywhere — the
 // demo only creates a signed transaction and returns its hex.
-import { jsonrpc } from 'micro-ftch';
 import { addr, Transaction, weieth } from '../../index.js';
 import { weigwei } from '../../utils.js';
 import { tokenFromSymbol } from '../../abi/index.js';
-import { RpcClient } from '../../net.js';
 import { txIntent } from '../../net/clearsig.js';
 import { history } from '../../net/history.js';
 import { maxSpendable, spendableAssets, transferTx } from '../../net/tokens.js';
 import {
   checksumAddress,
+  createRpc,
   formatUnits,
   isAddress,
   parseUnits,
@@ -59,7 +58,8 @@ export const balanceLine = (asset) =>
 export function createTxWallet(rpcUrl, networkKey = 'mainnet') {
   const network = NETWORKS[networkKey];
   if (!network) throw new Error(`Unknown network: ${networkKey}`);
-  const prov = new RpcClient(jsonrpc(globalThis.fetch.bind(globalThis), rpcUrl, { batchSize: 10 }));
+  // micro-ftch, pinned to the RPC origin (see explorer/core.js createRpc)
+  const prov = createRpc(rpcUrl);
   // one token-discovery cache for the whole session
   const cache = new Map();
 
@@ -77,8 +77,10 @@ export function createTxWallet(rpcUrl, networkKey = 'mainnet') {
     return rows.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
   }
 
-  async function load(privateKey) {
-    const address = addr.fromPrivateKey(requireKey(privateKey));
+  // Watch-only view of any address: what load() shows for a key, minus the key
+  // (the air-gap demo's hot device only ever has the public side).
+  async function loadAddress(address) {
+    if (typeof address !== 'string' || !isAddress(address)) throw new Error('Invalid address.');
     // the chain check rides the same batched round as the account reads; a
     // mismatch still fails the load before anything is shown
     const [chainId, account, rows] = await Promise.all([
@@ -100,6 +102,7 @@ export function createTxWallet(rpcUrl, networkKey = 'mainnet') {
     });
     return { address, nonce: account.nonce, assets, rows };
   }
+  const load = (privateKey) => loadAddress(addr.fromPrivateKey(requireKey(privateKey)));
 
   // Largest sendable amount as an input string: tokens spend in full; ETH
   // keeps a plain-transfer fee reserve at current worst-case gas price.
@@ -110,14 +113,13 @@ export function createTxWallet(rpcUrl, networkKey = 'mainnet') {
     );
 
   /**
-   * Builds and signs a transfer of `asset` (from `load().assets`) and returns
-   * `{ hex, hash, normal, muted }` — signed raw hex plus label/value pairs for
-   * display. The transaction is simulated (dryRun) and clear-sign previewed,
-   * but NOT broadcast; that's the caller's explicit, out-of-scope decision.
+   * Builds (but does not sign) a transfer of `asset` (from `load().assets`)
+   * from `from`, and returns `{ unsigned, normal, muted }`: the prepared
+   * Transaction plus label/value pairs for display. The transaction is
+   * simulated (dryRun) and clear-sign previewed. No key involved, so a
+   * watch-only device can prepare and hand the result to a signer.
    */
-  async function build({ privateKey, asset, to, amount }) {
-    const key = requireKey(privateKey);
-    const from = addr.fromPrivateKey(key);
+  async function prepare({ from, asset, to, amount }) {
     if (typeof to !== 'string' || !isAddress(to.trim()))
       throw new Error('Invalid recipient address.');
     const recipient = checksumAddress(to.trim());
@@ -165,12 +167,10 @@ export function createTxWallet(rpcUrl, networkKey = 'mainnet') {
             },
           }),
     ]);
-    const signed = unsigned.signBy(key);
     const perGas = fields.type === 'legacy' ? fields.gasPrice : fields.maxFeePerGas;
     const maxFee = fields.gasLimit * perGas;
     return {
-      hex: signed.toHex({ includeSignature: true }),
-      hash: signed.hash,
+      unsigned,
       normal: [
         ['network', network.label],
         ['from', from],
@@ -189,10 +189,34 @@ export function createTxWallet(rpcUrl, networkKey = 'mainnet') {
         ['gas limit', String(fields.gasLimit)],
         [fields.type === 'legacy' ? 'gas price' : 'max fee per gas', `${weigwei.encode(perGas)} gwei`],
         ['max total fee', `${weieth.encode(maxFee)} ETH`],
-        ['txid', signed.hash],
       ],
     };
   }
 
-  return { load, maxAmount, build };
+  /**
+   * Builds and signs a transfer of `asset` (from `load().assets`) and returns
+   * `{ hex, hash, normal, muted }` — signed raw hex plus label/value pairs for
+   * display. The transaction is simulated (dryRun) and clear-sign previewed,
+   * but NOT broadcast; that's the caller's explicit, out-of-scope decision.
+   */
+  async function build({ privateKey, asset, to, amount }) {
+    const key = requireKey(privateKey);
+    const { unsigned, normal, muted } = await prepare({
+      from: addr.fromPrivateKey(key),
+      asset,
+      to,
+      amount,
+    });
+    return signedResult(unsigned.signBy(key), normal, muted);
+  }
+
+  return { load, loadAddress, maxAmount, prepare, build, network };
 }
+
+// The display shape of a signed transfer: prepare()'s pairs plus the txid.
+export const signedResult = (signed, normal, muted) => ({
+  hex: signed.toHex({ includeSignature: true }),
+  hash: signed.hash,
+  normal,
+  muted: [...muted, ['txid', signed.hash]],
+});

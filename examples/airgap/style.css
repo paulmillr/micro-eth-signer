@@ -1,0 +1,265 @@
+/* Shared by hot.html and cold.html (inlined by _build-dist.js); same look as tx/index.html. */
+:root {
+  color-scheme: light dark;
+  --muted: #808080;
+  --line: #80808040;
+  --accent: #2563eb;
+  --ok: #16a34a;
+  --danger: #dc2626;
+}
+[hidden] {
+  display: none !important;
+}
+body {
+  position: relative; /* anchors the absolute top-right button */
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  max-width: 640px;
+  margin: 1.5rem auto;
+  padding: 0 1rem;
+}
+h1 {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 0;
+}
+.subtitle {
+  color: var(--muted);
+  margin-bottom: 1rem;
+}
+h2 {
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin: 1.5rem 0 0.5rem;
+}
+.card > h2:first-child {
+  margin-top: 0.25rem;
+}
+p {
+  margin: 0.25rem 0 0.75rem;
+}
+label {
+  display: block;
+  color: var(--muted);
+  margin: 0.75rem 0 0.25rem;
+}
+input,
+select,
+textarea {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  /* >=16px stops mobile browsers from zooming in on focus */
+  font-size: 16px;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+}
+textarea {
+  resize: vertical;
+  word-break: break-all;
+}
+button {
+  font: inherit;
+  font-size: 16px;
+  padding: 0.5rem 0.9rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+button:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+button:disabled {
+  color: var(--muted);
+  cursor: default;
+}
+.row {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-top: 0.5rem;
+}
+.row > input,
+.row > select {
+  flex: 1 1 12rem;
+}
+.row > button {
+  flex: 0 0 auto;
+}
+@media (max-width: 480px) {
+  .row:not(.pair) > button {
+    flex: 1 1 100%;
+  }
+}
+/* pair: stays one row even in portrait */
+.row.pair > button {
+  flex: 1 1 0;
+}
+.primary {
+  width: 100%;
+  margin-top: 0.75rem;
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.row .primary {
+  margin-top: 0;
+}
+.danger,
+.danger:hover:not(:disabled) {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+/* upper right; the header text yields the corner while it is shown */
+.corner {
+  position: absolute;
+  top: 0;
+  right: 1rem;
+}
+body.cornered h1,
+body.cornered .subtitle {
+  padding-right: 8rem;
+}
+.segment {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.segment button {
+  border: 0;
+  border-radius: 0;
+}
+.segment button.active {
+  background: var(--accent);
+  color: #fff;
+}
+.address-line {
+  word-break: break-all;
+}
+pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+td,
+th {
+  text-align: left;
+  padding: 0.25rem 0.75rem 0.25rem 0;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+tbody td {
+  padding-top: 0.6rem;
+  padding-bottom: 0.6rem;
+}
+td.amount,
+td.time {
+  white-space: pre-line;
+  word-break: break-word;
+}
+th {
+  color: var(--muted);
+  font-weight: 400;
+}
+.muted {
+  color: var(--muted);
+}
+.error {
+  color: var(--danger);
+}
+.card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.75rem 1rem 1rem;
+  margin: 0.75rem 0;
+}
+.banner {
+  border: 1px solid var(--ok);
+  color: var(--ok);
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+  margin-bottom: 0.75rem;
+}
+.warnings {
+  border: 1px solid var(--danger);
+  color: var(--danger);
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem 0.5rem 1.75rem;
+  margin: 0 0 0.75rem;
+}
+/* a grid keeps label and value rows aligned when long descriptor labels wrap */
+dl.fields {
+  display: grid;
+  grid-template-columns: 8rem 1fr;
+  row-gap: 0.15rem;
+}
+dl.fields dt {
+  color: var(--muted);
+  padding-right: 0.5rem;
+}
+dl.fields dd {
+  margin: 0;
+  /* break long addresses anywhere, prose only between words */
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+dl.fields dd.muted {
+  color: var(--muted);
+}
+/* QR codes stay black on white in dark mode too: scanners expect it */
+canvas.qr {
+  display: block;
+  width: min(320px, 100%);
+  aspect-ratio: 1;
+  margin: 0.5rem auto;
+  image-rendering: pixelated;
+  background: #fff;
+  border-radius: 4px;
+}
+.caption {
+  text-align: center;
+  color: var(--muted);
+  word-break: break-all;
+}
+.scanner video {
+  display: block;
+  width: 100%;
+  max-width: 320px;
+  margin: 0.5rem auto;
+  border-radius: 6px;
+}
+.scanner textarea {
+  margin-top: 0.75rem;
+}
+details {
+  margin-top: 0.5rem;
+}
+summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+.hex {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+  margin: 0.5rem 0;
+  max-height: 12rem;
+  overflow-y: auto;
+}
+footer {
+  margin-top: 2rem;
+  color: var(--muted);
+}

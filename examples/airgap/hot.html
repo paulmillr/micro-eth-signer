@@ -1,0 +1,446 @@
+<!doctype html>
+<!--
+  Air-gap demo, hot side: a watch-only wallet. Pairs with cold.html by
+  scanning its public key (ERC-4527 crypto-hdkey), shows the account
+  explorer-style over RPC, prepares ETH / ERC-20 transfers and personal
+  messages as sign-request QRs (eth-sign-request) for the cold signer, and
+  turns the signature QR it answers with (eth-signature) into a signed
+  transaction — which is displayed as raw hex and NEVER broadcast.
+  Requires built artifacts (`npm run build`) and a static server at the repo root:
+    npx serve .   # or: python3 -m http.server
+  Then open http://localhost:8000/examples/airgap/hot.html
+  Override defaults with query params: hot.html?rpc=http://…&network=sepolia
+  The RPC endpoint must allow CORS requests from this page's origin. Camera
+  scanning needs a secure context: https:, localhost, or a file opened locally.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, interactive-widget=resizes-visual"
+    />
+    <title>Air-gap hot wallet</title>
+    <script type="importmap">
+      {
+        "imports": {
+          "micro-ftch": "../../node_modules/micro-ftch/index.js",
+          "micro-packed": "../../node_modules/micro-packed/index.js",
+          "@scure/base": "../../node_modules/@scure/base/index.js",
+          "@noble/hashes/": "../../node_modules/@noble/hashes/",
+          "@noble/curves/": "../../node_modules/@noble/curves/",
+          "micro-eth-signer": "../../index.js",
+          "micro-eth-signer/utils.js": "../../utils.js",
+          "micro-eth-signer/abi.js": "../../abi/index.js",
+          "micro-eth-signer/net.js": "../../net.js",
+          "qr": "../node_modules/qr/index.js",
+          "qr/decode.js": "../node_modules/qr/decode.js",
+          "qr/dom.js": "../node_modules/qr/dom.js"
+        }
+      }
+    </script>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <button type="button" id="close-button" class="corner" hidden>Close</button>
+    <h1>Air-gap hot wallet</h1>
+    <div class="subtitle">Watch-only: holds no key, never broadcasts.</div>
+
+    <div id="connect">
+      <span class="segment" id="network-switch">
+        <button type="button" id="network-mainnet">Mainnet</button>
+        <button type="button" id="network-sepolia">Sepolia</button>
+      </span>
+      <label for="rpc-input">RPC address</label>
+      <input id="rpc-input" placeholder="RPC URL" autocomplete="off" spellcheck="false" />
+      <!-- the module script waits for the whole import graph: fill the field
+           synchronously so it does not flash empty (default mirrors NETWORKS) -->
+      <script>
+        document.getElementById('rpc-input').value =
+          new URLSearchParams(location.search).get('rpc') ||
+          globalThis.BUILD_RPC_URL ||
+          'http://127.0.0.1';
+      </script>
+
+      <div id="unpaired">
+        <h2>Pair with the cold signer</h2>
+        <p class="muted">Unlock the key on the cold signer and scan the pairing QR it shows.</p>
+        <div class="scanner" id="pair-scan">
+          <video data-scan="video" playsinline muted hidden></video>
+          <div class="row pair">
+            <button type="button" data-scan="camera">Scan with camera</button>
+            <button type="button" data-scan="image">Scan image…</button>
+          </div>
+          <input type="file" data-scan="file" accept="image/*" multiple hidden />
+          <textarea
+            data-scan="text"
+            rows="3"
+            placeholder="…or paste ur:crypto-hdkey/… text"
+            spellcheck="false"
+          ></textarea>
+          <button type="button" data-scan="read">Read text</button>
+          <div data-scan="status" class="muted"></div>
+        </div>
+      </div>
+
+      <div id="paired" hidden>
+        <h2>Paired key</h2>
+        <div id="paired-address" class="address-line"></div>
+        <div id="paired-path" class="muted"></div>
+        <div class="row pair">
+          <button type="button" class="primary" id="open-button">Open wallet</button>
+          <button type="button" class="danger" id="unpair-button">Unpair</button>
+        </div>
+      </div>
+    </div>
+    <div id="status" class="muted"></div>
+
+    <div id="account" hidden>
+      <h2>Account</h2>
+      <div id="address-line" class="address-line"></div>
+      <div id="account-path" class="muted"></div>
+      <h2>Balances</h2>
+      <pre id="balances"></pre>
+
+      <div class="card">
+        <h2>Request a signature</h2>
+        <span class="segment" id="mode-switch">
+          <button type="button" id="mode-transfer" class="active">Transfer</button>
+          <button type="button" id="mode-message">Message</button>
+        </span>
+        <form id="tx-form">
+          <label for="asset-select">Asset</label>
+          <select id="asset-select"></select>
+          <label for="to-input">To address</label>
+          <input id="to-input" placeholder="0x…" autocomplete="off" spellcheck="false" />
+          <label for="amount-input">Amount</label>
+          <div class="row">
+            <input id="amount-input" inputmode="decimal" autocomplete="off" spellcheck="false" />
+            <button type="button" id="max-button">Max</button>
+          </div>
+          <button type="submit" class="primary" id="tx-button">Create request</button>
+        </form>
+        <form id="msg-form" hidden>
+          <label for="msg-input">Message (EIP-191 personal_sign)</label>
+          <textarea id="msg-input" rows="4" spellcheck="false"></textarea>
+          <button type="submit" class="primary" id="msg-button">Create request</button>
+        </form>
+        <div id="request-status" class="error"></div>
+      </div>
+
+      <div class="card" id="request" hidden>
+        <h2>Sign on the cold signer</h2>
+        <dl id="request-fields" class="fields"></dl>
+        <canvas id="request-qr" class="qr"></canvas>
+        <div id="request-caption" class="caption"></div>
+        <details>
+          <summary>Request as text</summary>
+          <textarea id="request-text" rows="3" readonly spellcheck="false"></textarea>
+          <button type="button" id="copy-request">Copy</button>
+        </details>
+        <h2>Scan the signature</h2>
+        <div class="scanner" id="sig-scan">
+          <video data-scan="video" playsinline muted hidden></video>
+          <div class="row pair">
+            <button type="button" data-scan="camera">Scan with camera</button>
+            <button type="button" data-scan="image">Scan image…</button>
+          </div>
+          <input type="file" data-scan="file" accept="image/*" multiple hidden />
+          <textarea
+            data-scan="text"
+            rows="3"
+            placeholder="…or paste ur:eth-signature/… text"
+            spellcheck="false"
+          ></textarea>
+          <button type="button" data-scan="read">Read text</button>
+          <div data-scan="status" class="muted"></div>
+        </div>
+        <div class="row">
+          <button type="button" class="danger" id="cancel-request">Cancel request</button>
+        </div>
+      </div>
+
+      <div class="card" id="result" hidden>
+        <h2 id="result-title">Signed</h2>
+        <div class="banner" id="no-broadcast"></div>
+        <dl id="result-fields" class="fields"></dl>
+        <h2 id="result-hex-title">Raw signed hex</h2>
+        <pre id="result-hex" class="hex"></pre>
+        <button type="button" id="copy-result">Copy</button>
+      </div>
+
+      <h2>Transactions</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Time</th>
+            <th>Dir</th>
+            <th>Amount</th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+      <div id="empty" class="muted" hidden>No transactions found.</div>
+    </div>
+
+    <footer>Demo only: this page never sees a private key and never broadcasts.</footer>
+
+    <template id="tx-row-template">
+      <tr>
+        <td></td>
+        <td class="time"></td>
+        <td></td>
+        <td class="amount"></td>
+      </tr>
+    </template>
+
+    <script type="module">
+      import { hexToBytes, bytesToHex } from '@noble/hashes/utils.js';
+      import {
+        applySignature,
+        balanceLine,
+        createHotWallet,
+        formatUnits,
+        NETWORKS,
+        parsePairing,
+        rowSummary,
+        withScheme,
+      } from './hot.js';
+      import { bindScanner, copyText, renderFields, showQR } from './ui.js';
+
+      const $ = (id) => document.getElementById(id);
+      const params = new URLSearchParams(location.search);
+      // public data only: the pairing payload (a public key) survives reloads
+      const PAIRING_KEY = 'airgap-hot-pairing';
+      const rpcFor = Object.fromEntries(
+        Object.entries(NETWORKS).map(([key, network]) => [key, network.rpcUrl])
+      );
+      let networkKey = NETWORKS[params.get('network')] ? params.get('network') : 'mainnet';
+      if (params.get('rpc')) rpcFor[networkKey] = withScheme(params.get('rpc'));
+
+      let pairing; // { address, derivationPath, path, name }
+      let wallet;
+      let walletFor; // "network rpc" the wallet was created for
+      let account; // last successful load
+      let pending; // the sign request on screen
+      let stopRequestQR = () => {};
+      let busy = false;
+
+      // --- network + pairing ---
+      function renderNetwork() {
+        for (const key of Object.keys(NETWORKS))
+          $(`network-${key}`).classList.toggle('active', key === networkKey);
+        $('rpc-input').value = rpcFor[networkKey];
+      }
+      for (const key of Object.keys(NETWORKS))
+        $(`network-${key}`).onclick = () => {
+          if (key === networkKey) return;
+          rpcFor[networkKey] = $('rpc-input').value.trim() || rpcFor[networkKey];
+          networkKey = key;
+          renderNetwork();
+          $('status').textContent = '';
+        };
+
+      function renderPairing() {
+        $('unpaired').hidden = !!pairing;
+        $('paired').hidden = !pairing;
+        if (!pairing) return;
+        $('paired-address').textContent = pairing.address;
+        $('paired-path').textContent =
+          `key ${pairing.path}${pairing.name ? ` · ${pairing.name}` : ''}`;
+      }
+      try {
+        const saved = localStorage.getItem(PAIRING_KEY);
+        if (saved) pairing = parsePairing(hexToBytes(saved));
+      } catch {
+        localStorage.removeItem(PAIRING_KEY);
+      }
+
+      const pairScanner = bindScanner($('pair-scan'), ['crypto-hdkey'], ({ payload }) => {
+        pairing = parsePairing(payload); // throws: shown in the scanner's status
+        localStorage.setItem(PAIRING_KEY, bytesToHex(payload));
+        renderPairing();
+        return openWallet();
+      });
+      $('unpair-button').onclick = () => {
+        pairing = undefined;
+        localStorage.removeItem(PAIRING_KEY);
+        pairScanner.reset();
+        renderPairing();
+        $('status').textContent = '';
+      };
+
+      // --- account ---
+      function renderRows(rows, address) {
+        const body = $('rows');
+        body.textContent = '';
+        rows.forEach((row, index) => {
+          const tr = $('tx-row-template').content.firstElementChild.cloneNode(true);
+          const [num, time, dir, amount] = tr.cells;
+          const summary = rowSummary(row, address);
+          num.textContent = index + 1;
+          time.textContent = summary.time;
+          dir.textContent = summary.direction;
+          amount.textContent = summary.amounts.join('\n');
+          body.append(tr);
+        });
+        $('empty').hidden = rows.length > 0;
+      }
+      function renderAccount() {
+        $('address-line').textContent = account.address;
+        $('account-path').textContent =
+          `watch-only · ${NETWORKS[networkKey].label} · key ${pairing.path}`;
+        $('balances').textContent = account.assets.map(balanceLine).join('\n');
+        const select = $('asset-select');
+        select.textContent = '';
+        account.assets.forEach((asset, index) => {
+          const option = document.createElement('option');
+          option.value = String(index);
+          option.textContent = `${asset.symbol || 'TOKEN'} · ${formatUnits(asset.balance, asset.decimals)}`;
+          select.append(option);
+        });
+        renderRows(account.rows, account.address);
+      }
+
+      async function openWallet() {
+        if (busy || !pairing) return;
+        busy = true;
+        $('open-button').disabled = true;
+        const status = $('status');
+        status.className = 'muted';
+        status.textContent = 'Loading account…';
+        try {
+          // reuse the wallet (RpcClient + discovery cache) unless the endpoint changed
+          const rpc = withScheme($('rpc-input').value.trim() || rpcFor[networkKey]);
+          if (walletFor !== `${networkKey} ${rpc}`) {
+            wallet = createHotWallet(rpc, networkKey);
+            walletFor = `${networkKey} ${rpc}`;
+          }
+          account = await wallet.load(pairing);
+          status.textContent = '';
+          renderAccount();
+          clearRequest();
+          $('result').hidden = true;
+          $('connect').hidden = true;
+          $('account').hidden = false;
+          $('close-button').hidden = false;
+          document.body.classList.add('cornered');
+        } catch (error) {
+          status.textContent = error.message;
+          status.className = 'error';
+        } finally {
+          busy = false;
+          $('open-button').disabled = false;
+        }
+      }
+      $('open-button').onclick = openWallet;
+      $('close-button').onclick = () => {
+        if (busy) return;
+        account = undefined;
+        clearRequest();
+        $('result').hidden = true;
+        $('account').hidden = true;
+        $('close-button').hidden = true;
+        $('connect').hidden = false;
+        document.body.classList.remove('cornered');
+      };
+
+      // --- requests ---
+      function setMode(mode) {
+        $('mode-transfer').classList.toggle('active', mode === 'transfer');
+        $('mode-message').classList.toggle('active', mode === 'message');
+        $('tx-form').hidden = mode !== 'transfer';
+        $('msg-form').hidden = mode !== 'message';
+        $('request-status').textContent = '';
+      }
+      $('mode-transfer').onclick = () => setMode('transfer');
+      $('mode-message').onclick = () => setMode('message');
+
+      const selectedAsset = () => account.assets[Number($('asset-select').value)];
+      $('max-button').onclick = async () => {
+        if (!account || busy) return;
+        try {
+          $('amount-input').value = await wallet.maxAmount(selectedAsset(), account.address);
+        } catch (error) {
+          $('request-status').textContent = error.message;
+        }
+      };
+
+      function clearRequest() {
+        pending = undefined;
+        stopRequestQR();
+        $('request').hidden = true;
+        sigScanner.reset();
+      }
+      function showRequest(request) {
+        clearRequest();
+        pending = request;
+        renderFields($('request-fields'), request.normal, request.muted);
+        const parts = request.encoder.pureParts();
+        $('request-text').value = parts.join('\n');
+        stopRequestQR = showQR($('request-qr'), request.encoder);
+        $('request-caption').textContent =
+          parts.length === 1
+            ? 'Scan this with the cold signer.'
+            : `Animated: ${parts.length} parts. Keep the cold signer's camera on it.`;
+        $('result').hidden = true;
+        $('request').hidden = false;
+        $('request').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      }
+      async function createRequest(button, make) {
+        if (!account || busy) return;
+        busy = true;
+        button.disabled = true;
+        $('request-status').textContent = '';
+        try {
+          showRequest(await make());
+        } catch (error) {
+          clearRequest();
+          $('request-status').textContent = error.message;
+        } finally {
+          busy = false;
+          button.disabled = false;
+        }
+      }
+      $('tx-form').onsubmit = (event) => {
+        event.preventDefault();
+        createRequest($('tx-button'), () =>
+          wallet.requestTransfer(pairing, {
+            asset: selectedAsset(),
+            to: $('to-input').value,
+            amount: $('amount-input').value,
+          })
+        );
+      };
+      $('msg-form').onsubmit = (event) => {
+        event.preventDefault();
+        createRequest($('msg-button'), () => wallet.requestMessage(pairing, $('msg-input').value));
+      };
+      $('cancel-request').onclick = clearRequest;
+      $('copy-request').onclick = () => copyText($('copy-request'), $('request-text'));
+
+      // --- signature ---
+      const sigScanner = bindScanner($('sig-scan'), ['eth-signature'], ({ payload }) => {
+        if (!pending) throw new Error('No request is waiting for a signature.');
+        // throws on a foreign request id or signer: shown in the scanner's status
+        const result = applySignature(pairing, pending, payload);
+        clearRequest();
+        const tx = result.kind === 'transaction';
+        $('result-title').textContent = tx ? 'Signed transaction' : 'Signed message';
+        $('no-broadcast').textContent = tx
+          ? '✓ Signed by the cold signer. This transaction was NOT broadcast.'
+          : '✓ Signed by the cold signer.';
+        renderFields($('result-fields'), result.normal, result.muted);
+        $('result-hex-title').textContent = tx ? 'Raw signed hex' : 'Signature';
+        $('result-hex').textContent = tx ? result.hex : result.signature;
+        $('result').hidden = false;
+        $('result').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      });
+      $('copy-result').onclick = () => copyText($('copy-result'), $('result-hex'));
+
+      renderNetwork();
+      renderPairing();
+    </script>
+  </body>
+</html>

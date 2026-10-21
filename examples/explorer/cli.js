@@ -1,4 +1,8 @@
 #!/usr/bin/env node
+// Terminal version of explorer/index.html. Environment:
+//   ETH_RPC_URL=http://…  node to use (default http://127.0.0.1)
+//   ALL_TOKENS=1          check every token of the built-in registry, not just the curated five
+//   DEMO=1                skip the prompt, open a well-known address
 import { readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -6,6 +10,7 @@ import { stdin, stdout } from 'node:process';
 import { emitKeypressEvents } from 'node:readline';
 import { createInterface } from 'node:readline/promises';
 import {
+  accountText,
   balanceText,
   checksumAddress,
   createExplorer,
@@ -13,16 +18,19 @@ import {
   DEMO_ADDRESS,
   isAddress,
   isName,
+  isTxHash,
   multiRowSummary,
   rowSummary,
   RPC_URL,
   short,
+  tokenLine,
   usdApprox,
   withScheme,
 } from './core.js';
 
 const rpcUrl = withScheme(process.env.ETH_RPC_URL || RPC_URL);
 const explorer = createExplorer(rpcUrl);
+const tokenOpts = { allTokens: process.env.ALL_TOKENS === '1' };
 // favorites persist to a dotfile; the shim adapts it to the localStorage-like
 // store createFavorites expects
 const favoritesFile = join(homedir(), '.eth-explorer-favorites.json');
@@ -54,7 +62,15 @@ function rowText(row, address) {
   return `${summary.time.replace('\n', '/').padEnd(16)}  ${summary.direction.padStart(3)}  ${summary.amount.padEnd(24).slice(0, 24)}  ${summary.hash.slice(0, 10)}`;
 }
 
-function showTransactions(out, rows, address, scan, cursor = -1) {
+// menu items: 0 = scan, 1..n = rows, then 'Load older' (while there is
+// more) and Quit
+const menuItems = (rows, older) => ({
+  older: older ? rows.length + 1 : -1,
+  quit: rows.length + (older ? 2 : 1),
+});
+
+function showTransactions(out, rows, address, scan, older, cursor = -1) {
+  const items = menuItems(rows, older);
   out.push('', 'Transactions');
   out.push(selected(scan.label, cursor === 0));
   if (!rows.length) out.push('  No transactions found.');
@@ -70,20 +86,24 @@ function showTransactions(out, rows, address, scan, cursor = -1) {
   });
   if (start + limit < rows.length)
     out.push(`  … ${rows.length - start - limit} older transactions`);
-  out.push('', selected('Quit', cursor === rows.length + 1));
+  if (older) out.push(selected('Load older transactions', cursor === items.older));
+  out.push('', selected('Quit', cursor === items.quit));
 }
 
-function render(address, ens, fav, balances, rows, scan, cursor, reset = false) {
+function render(page, rows, scan, older, cursor, reset = false) {
   const out = [
     `Ethereum${process.env.DEMO === '1' ? ' · DEMO' : ''}`,
-    fav ? `${address} ★` : address,
-    ...(ens ? [ens] : []),
+    page.fav ? `${page.address} ★` : page.address,
+    ...page.info,
     '',
     'Balances',
-    ...balances,
+    ...page.balances,
   ];
-  showTransactions(out, rows, address, scan, cursor);
-  out.push('', '↑/↓ or Tab select · Return choose · t scan tokens · f favorite · q/Esc quit');
+  showTransactions(out, rows, page.address, scan, older, cursor);
+  out.push(
+    '',
+    '↑/↓ or Tab select · Return choose · o older · t scan tokens · f favorite · q/Esc quit'
+  );
   if (!stdout.isTTY) return console.log(out.join('\n'));
   if (reset) {
     rendered = out;
@@ -97,15 +117,20 @@ function render(address, ens, fav, balances, rows, scan, cursor, reset = false) 
   stdout.write(patch);
 }
 
-async function menu(address, ens, fav, balances, rows, scan, cursor) {
-  render(address, ens, fav, balances, rows, scan, cursor, true);
+async function menu(page, rows, scan, older, cursor) {
+  const items = menuItems(rows, older);
+  render(page, rows, scan, older, cursor, true);
   if (!stdin.isTTY) {
     rl ||= createInterface({ input: stdin, output: stdout });
-    const answer = (await rl.question('Select transaction, [t] tokens, [f] favorite, or [q] quit: '))
+    const olderHint = older ? '[o] older, ' : '';
+    const answer = (
+      await rl.question(`Select transaction, [t] tokens, ${olderHint}[f] favorite, or [q] quit: `)
+    )
       .trim()
       .toLowerCase();
     if (answer === 'q') return { action: 'quit', cursor };
     if (answer === 't') return { action: 'tokens', cursor: 0 };
+    if (answer === 'o' && older) return { action: 'older', cursor };
     if (answer === 'f') return { action: 'favorite', cursor };
     const index = Number(answer);
     return { action: rows[index - 1] ? 'open' : 'none', cursor: index };
@@ -123,7 +148,7 @@ async function menu(address, ens, fav, balances, rows, scan, cursor) {
       resolve({ action, cursor });
     };
     const keypress = (text, key) => {
-      const total = rows.length + 2;
+      const total = items.quit + 1;
       if (
         text?.toLowerCase() === 'q' ||
         key.name === 'q' ||
@@ -133,15 +158,17 @@ async function menu(address, ens, fav, balances, rows, scan, cursor) {
         return finish('quit');
       if ((text?.toLowerCase() === 't' || key.name === 't') && !scan.done) return finish('tokens');
       if (text?.toLowerCase() === 'f' || key.name === 'f') return finish('favorite');
+      if ((text?.toLowerCase() === 'o' || key.name === 'o') && older) return finish('older');
       if (key.name === 'return') {
-        if (cursor === rows.length + 1) return finish('quit');
+        if (cursor === items.quit) return finish('quit');
+        if (cursor === items.older) return finish('older');
         return finish(cursor === 0 ? (scan.done ? 'none' : 'tokens') : 'open');
       }
       if (key.name === 'up' || (key.name === 'tab' && key.shift))
         cursor = (cursor - 1 + total) % total;
       else if (key.name === 'down' || key.name === 'tab') cursor = (cursor + 1) % total;
       else return;
-      render(address, ens, fav, balances, rows, scan, cursor);
+      render(page, rows, scan, older, cursor);
     };
     stdin.on('keypress', keypress);
   });
@@ -169,7 +196,7 @@ async function pause() {
   });
 }
 
-async function scanStep(scanner) {
+async function scanStep(feed) {
   let state = { phase: 'prepare', completed: 0, total: 0, scannedTxs: 0, found: 0 };
   const started = Date.now();
   const draw = () => {
@@ -192,7 +219,7 @@ async function scanStep(scanner) {
   // pipes get at most one progress line per second
   let lastDraw = 0;
   try {
-    const result = await scanner.step((progress) => {
+    const result = await feed.scanStep((progress) => {
       state = progress;
       if (timer || Date.now() - lastDraw < 1000) return;
       lastDraw = Date.now();
@@ -205,22 +232,76 @@ async function scanStep(scanner) {
   }
 }
 
-async function details(row) {
-  const info = await explorer.details(row);
+// a row of a table, or a tx hash typed at the prompt
+async function details(target) {
+  const info = await explorer.details(target);
   console.log();
   const line = (value) => String(value).replace('\n', '/');
-  for (const [label, value] of info.normal) console.log(`${label.padEnd(12)} ${line(value)}`);
+  for (const [label, value] of info.normal) console.log(`${label.padEnd(17)} ${line(value)}`);
   for (const [label, value] of info.muted)
-    console.log(grey(`${label.padEnd(12)} ${line(value)}`));
+    console.log(grey(`${label.padEnd(17)} ${line(value)}`));
+  // big txs (airdrops) carry thousands of these: the first LIST_LIMIT print
+  const LIST_LIMIT = 20;
+  const rest = (items) => {
+    if (items.length > LIST_LIMIT) console.log(grey(`  … ${items.length - LIST_LIMIT} more`));
+  };
+  console.log(`\nToken transfers (${info.transfers.length})`);
+  for (const t of info.transfers.slice(0, LIST_LIMIT))
+    console.log(`  ${t.from ? short(t.from, 6) : '?'} → ${short(t.to, 6)}  ${t.amount}`);
+  rest(info.transfers);
+  console.log(`\nEvent logs (${info.logs.length})`);
+  for (const log of info.logs.slice(0, LIST_LIMIT)) {
+    console.log(`  #${log.index} ${short(log.address, 6)} ${log.event || 'unknown event'}`);
+    if (log.hint) console.log(grey(`    ${log.hint}`));
+    for (const [i, topic] of log.topics.entries()) console.log(grey(`    topic${i} ${topic}`));
+    console.log(grey(`    data   ${log.data}`));
+  }
+  rest(info.logs);
 }
 
-// Returns an address to open, or 'favorites' to show the favorites page.
+async function txPage(hash) {
+  try {
+    await details(hash);
+  } catch (error) {
+    const missing = /not found/.test(error.message);
+    console.log(
+      missing ? 'Transaction not found on this node.' : `Lookup failed: ${error.message}`
+    );
+    return;
+  }
+  console.log();
+}
+
+// One line about the node: chain, client, and what is missing for full history.
+async function showNode() {
+  const host = new URL(rpcUrl).host; // the path can carry an API key
+  try {
+    const info = await explorer.node();
+    const notes = [];
+    if (info.chainId !== 1n) notes.push('prices and token list are mainnet-only');
+    if (info.ots === false) notes.push('no ots_ namespace: history shows token transfers only');
+    const client = info.client ? [info.client.split('/').slice(0, 2).join('/')] : [];
+    console.log(
+      grey(
+        [`Node ${host}`, `${info.name} (chain ${info.chainId})`, ...client, ...notes].join(' · ')
+      )
+    );
+  } catch (error) {
+    console.log(`Node ${host} unreachable: ${error.message} (set ETH_RPC_URL to change).`);
+  }
+}
+
+// Returns an address to open, 'favorites' to show the favorites page, or
+// { tx } for a transaction hash.
 async function promptTarget() {
   rl ||= createInterface({ input: stdin, output: stdout });
   for (;;) {
     const hint = favorites.list().length ? ", or 'f' for favorites" : '';
-    const answer = (await rl.question(`Ethereum address or name (.eth/.gwei)${hint}: `)).trim();
+    const answer = (
+      await rl.question(`Ethereum address, name (.eth/.gwei) or tx hash${hint}: `)
+    ).trim();
     if (answer.toLowerCase() === 'f') return 'favorites';
+    if (isTxHash(answer)) return { tx: answer };
     if (isAddress(answer)) return checksumAddress(answer);
     if (isName(answer)) {
       // resolveName returns undefined for unknown names and throws on
@@ -232,30 +313,45 @@ async function promptTarget() {
       } catch (error) {
         console.log(`Lookup failed: ${error.message} (RPC ${rpcUrl} — set ETH_RPC_URL to change).`);
       }
-    } else console.log('Invalid Ethereum address.');
+    } else console.log('Not an address, .eth/.gwei name or transaction hash.');
   }
 }
 
 // Favorites page: the persisted list (with the ENS names captured when they
-// were favorited), combined balances of the whole set, and a merged history.
+// were favorited) with each member's ETH and account kind, combined balances
+// of the whole set, and a merged history.
 // Returns 'quit', 'back', or a favorite address to open.
 async function favoritesPage() {
   rl ||= createInterface({ input: stdin, output: stdout });
   let balances; // combined across the set, fetched once per page visit
   for (;;) {
     const list = favorites.list();
-    console.log('\nFavorites');
+    if (list.length && !balances) {
+      console.log('\nLoading favorites…');
+      balances = await explorer
+        .favoritesOverview(
+          list.map((favorite) => favorite.address),
+          tokenOpts
+        )
+        .catch((error) => ({ balances: [{ symbol: 'ETH', error }], members: [] }));
+    }
+    console.log(`\nFavorites${list.length ? ` (${list.length})` : ''}`);
     if (!list.length) console.log("  None yet: open an address and press 'f'.");
     list.forEach((favorite, i) => {
       const name = favorite.ens ? `${favorite.ens} · ` : '';
       console.log(`${String(i + 1).padStart(3)}  ${name}${favorite.address}`);
+      const member = balances?.members.find((m) => m.address === favorite.address);
+      if (!member) return;
+      const kind = member.account
+        ? member.account.kind === 'contract'
+          ? 'Contract'
+          : accountText(member.account).replace(/ · EIP-7702 delegated to .*/, ' · EIP-7702')
+        : '';
+      const usd = Number.isFinite(member.usd) ? ` (${usdApprox(member.usd)})` : '';
+      console.log(
+        grey(`     ${[member.eth && member.eth + usd, kind].filter(Boolean).join(' · ')}`)
+      );
     });
-    if (list.length && !balances) {
-      console.log('\nLoading combined balances…');
-      balances = await explorer
-        .combinedBalances(list.map((favorite) => favorite.address))
-        .catch((error) => ({ balances: [{ symbol: 'ETH', error }] }));
-    }
     if (balances) {
       console.log('\nBalances');
       if (balances.totalUsd !== undefined)
@@ -278,19 +374,18 @@ async function favoritesPage() {
 }
 
 // Merged rows carry the participating favorites; shown as a trailing column.
-// 't' deepens the quick view with a token scan over the whole set, same as
-// the per-address one.
+// 'o' pages back (each favorite on its own cursor), 't' deepens the list with
+// a token scan over the whole set, same as the per-address ones.
 async function favoritesTransactions(list) {
-  const addresses = list.map((favorite) => favorite.address);
+  const feed = explorer.feed(list.map((favorite) => favorite.address));
   console.log('\nLoading merged history for all favorites…');
   let rows;
   try {
-    rows = await explorer.favoritesHistory(addresses);
+    rows = await feed.older();
   } catch (error) {
     console.log(`History unavailable: ${error.message}`);
     return;
   }
-  let scanner;
   for (;;) {
     console.log(`\nTransactions (${rows.length})`);
     if (!rows.length) console.log('  No transactions found.');
@@ -301,20 +396,30 @@ async function favoritesTransactions(list) {
         `${String(i + 1).padStart(3)}  ${summary.time.replace('\n', '/').padEnd(16)}  ${summary.direction.padStart(3)}  ${summary.amount.padEnd(24).slice(0, 24)}  ${who}`
       );
     }
-    const scan = !scanner
+    const scan = !feed.scanStarted
       ? '[t] tokens, '
-      : scanner.done
+      : feed.scanDone
         ? ''
-        : `[t] continue scan (${scanner.percent}%), `;
-    const answer = (await rl.question(`\nSelect transaction, ${scan}[b] back, or [q] quit: `))
+        : `[t] continue scan (${feed.scanPercent}%), `;
+    const older = feed.hasOlder ? '[o] older, ' : '';
+    const answer = (
+      await rl.question(`\nSelect transaction, ${scan}${older}[b] back, or [q] quit: `)
+    )
       .trim()
       .toLowerCase();
     if (answer === 'q') return 'quit';
     if (answer === 'b' || answer === '') return;
-    if (answer === 't' && !scanner?.done) {
+    if (answer === 'o' && feed.hasOlder) {
       try {
-        scanner ||= explorer.tokenScanner(addresses, rows);
-        const result = await scanStep(scanner);
+        rows = await feed.older();
+      } catch (error) {
+        console.log(`Older transactions unavailable: ${error.message}`);
+      }
+      continue;
+    }
+    if (answer === 't' && !feed.scanDone) {
+      try {
+        const result = await scanStep(feed);
         rows = result.rows;
       } catch (error) {
         console.log(`Token scan failed: ${error.message}`);
@@ -327,9 +432,14 @@ async function favoritesTransactions(list) {
 }
 
 async function main() {
+  await showNode();
   if (process.env.DEMO === '1') return addressPage(checksumAddress(DEMO_ADDRESS));
   for (;;) {
     const target = await promptTarget();
+    if (target.tx) {
+      await txPage(target.tx);
+      continue;
+    }
     if (target !== 'favorites') return addressPage(target);
     const result = await favoritesPage();
     if (result === 'quit') return;
@@ -344,38 +454,51 @@ async function addressPage(address) {
     rl = undefined;
   }
   console.log(`\n${address}\nLoading balances, Chainlink prices and transactions…`);
-  const overview = await explorer.load(address);
+  const overview = await explorer.load(address, tokenOpts);
   const balances = overview.balances.map((balance) => dimTail(balanceText(balance)));
   if (overview.totalUsd !== undefined)
     balances.unshift(grey(`Total ${usdApprox(overview.totalUsd)}`));
   if (overview.historyError) balances.push(`History unavailable: ${overview.historyError.message}`);
-  let rows = overview.rows;
-  let scanner;
+  const { feed } = overview;
+  const info = [
+    ...(overview.ens ? [overview.ens] : []),
+    ...(overview.account ? [grey(accountText(overview.account))] : []),
+    ...(overview.account && tokenLine(overview.account) ? [grey(tokenLine(overview.account))] : []),
+  ];
+  let rows = feed.rows;
   let cursor = 0;
   // huge addresses scan in ~2-minute steps: the menu offers to continue with
   // the overall percent until the scan reaches block 0
   const scanState = () => {
-    if (!scanner) return { done: false, label: 'Load token transactions' };
-    if (scanner.done) return { done: true, label: '✓ Token transactions loaded' };
+    if (!feed.scanStarted) return { done: false, label: 'Load token transactions' };
+    if (feed.scanDone) return { done: true, label: '✓ Token transactions loaded' };
     return {
       done: false,
-      label: `Continue token scan · ${scanner.percent}% scanned · ${rows.length} txs so far`,
+      label: `Continue token scan · ${feed.scanPercent}% scanned · ${rows.length} txs so far`,
     };
   };
   for (;;) {
     const scan = scanState();
-    const fav = favorites.has(address);
-    const choice = await menu(address, overview.ens, fav, balances, rows, scan, cursor);
+    const page = { address, fav: favorites.has(address), info, balances };
+    const choice = await menu(page, rows, scan, feed.hasOlder, cursor);
     cursor = choice.cursor;
     if (choice.action === 'quit') break;
     if (choice.action === 'favorite') {
       favorites.toggle(address, overview.ens);
       continue;
     }
+    if (choice.action === 'older') {
+      try {
+        rows = await feed.older();
+      } catch (error) {
+        console.log(`Older transactions unavailable: ${error.message}`);
+        if (await pause()) break;
+      }
+      continue;
+    }
     if (choice.action === 'tokens' && !scan.done) {
       try {
-        scanner ||= explorer.tokenScanner(address, rows);
-        const result = await scanStep(scanner);
+        const result = await scanStep(feed);
         rows = result.rows;
         cursor = rows.length ? 1 : 0;
       } catch (error) {

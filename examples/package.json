@@ -5,9 +5,10 @@
   "description": "Demo apps and their UI tests; dev-only deps (headless browser) live here, out of the library's devDependencies",
   "scripts": {
     "build:dist": "node _build-dist.js",
-    "test": "node test/explorer-html.test.ts && node test/tx-html.test.ts && node test/tx-cli.test.ts"
+    "test": "node test/ur.test.ts && node test/airgap.test.ts && node test/nft.test.ts && node test/explorer-html.test.ts && node test/tx-html.test.ts && node test/tx-cli.test.ts && node test/airgap-html.test.ts && node test/nft-html.test.ts"
   },
   "devDependencies": {
-    "playwright-core": "1.62.1"
+    "playwright-core": "1.62.1",
+    "qr": "0.7.2"
   }
 }

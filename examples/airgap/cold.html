@@ -1,0 +1,241 @@
+<!doctype html>
+<!--
+  Air-gap demo, cold side: the offline signer. Holds the private key, shows
+  its public key as a pairing QR (ERC-4527 crypto-hdkey), scans sign requests
+  from hot.html (eth-sign-request), shows what they do and, once approved,
+  answers with a signature QR (eth-signature). The Content-Security-Policy
+  below forbids every network connection: this page cannot leak the key even
+  if asked to, and it never talks to a node.
+  Requires built artifacts (`npm run build`) and a static server at the repo root:
+    npx serve .   # or: python3 -m http.server
+  Then open http://localhost:8000/examples/airgap/cold.html
+  Camera scanning needs a secure context: https:, localhost, or (for the
+  examples/_build-dist.js single-file build) a file opened locally.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!-- first in <head>: covers every script below, the import map included -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; connect-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src data: blob:; media-src blob: mediastream:; manifest-src data:; form-action 'none'; base-uri 'none'"
+    />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, interactive-widget=resizes-visual"
+    />
+    <title>Air-gap cold signer</title>
+    <!-- no micro-ftch: nothing on this page can make RPC calls -->
+    <script type="importmap">
+      {
+        "imports": {
+          "micro-packed": "../../node_modules/micro-packed/index.js",
+          "@scure/base": "../../node_modules/@scure/base/index.js",
+          "@noble/hashes/": "../../node_modules/@noble/hashes/",
+          "@noble/curves/": "../../node_modules/@noble/curves/",
+          "qr": "../node_modules/qr/index.js",
+          "qr/decode.js": "../node_modules/qr/decode.js",
+          "qr/dom.js": "../node_modules/qr/dom.js"
+        }
+      }
+    </script>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <button type="button" id="lock-button" class="danger corner" hidden>Lock</button>
+    <h1>Air-gap cold signer</h1>
+    <div class="subtitle">
+      Offline: holds the key and signs. This page cannot reach the network.
+    </div>
+
+    <form id="key-form">
+      <label for="key-input">Private key</label>
+      <input
+        id="key-input"
+        type="password"
+        placeholder="64 hex characters"
+        autocomplete="off"
+        spellcheck="false"
+      />
+      <div class="row pair">
+        <button type="button" id="show-key">Show</button>
+        <button type="button" id="random-button">Random</button>
+      </div>
+      <button type="submit" class="primary" id="unlock-button">Unlock</button>
+    </form>
+    <div id="status" class="muted"></div>
+
+    <div id="signer" hidden>
+      <h2>Key</h2>
+      <div id="address-line" class="address-line"></div>
+      <div id="key-path" class="muted"></div>
+
+      <div class="card" id="pairing">
+        <h2>Pair the hot wallet</h2>
+        <p class="muted">Scan this with the hot wallet. It carries the public key only.</p>
+        <canvas id="pair-qr" class="qr"></canvas>
+        <details>
+          <summary>Pairing as text</summary>
+          <textarea id="pair-text" rows="3" readonly spellcheck="false"></textarea>
+          <button type="button" id="copy-pair">Copy</button>
+        </details>
+      </div>
+
+      <div class="card">
+        <h2>Sign a request</h2>
+        <p class="muted">Scan the request QR shown by the hot wallet.</p>
+        <div class="scanner" id="request-scan">
+          <video data-scan="video" playsinline muted hidden></video>
+          <div class="row pair">
+            <button type="button" data-scan="camera">Scan with camera</button>
+            <button type="button" data-scan="image">Scan image…</button>
+          </div>
+          <input type="file" data-scan="file" accept="image/*" multiple hidden />
+          <textarea
+            data-scan="text"
+            rows="3"
+            placeholder="…or paste ur:eth-sign-request/… text"
+            spellcheck="false"
+          ></textarea>
+          <button type="button" data-scan="read">Read text</button>
+          <div data-scan="status" class="muted"></div>
+        </div>
+      </div>
+
+      <div class="card" id="review" hidden>
+        <h2 id="review-title">Review</h2>
+        <ul id="warnings" class="warnings" hidden></ul>
+        <dl id="review-fields" class="fields"></dl>
+        <div class="row pair">
+          <button type="button" class="primary" id="approve-button">Approve &amp; sign</button>
+          <button type="button" class="danger" id="reject-button">Reject</button>
+        </div>
+      </div>
+
+      <div class="card" id="signature" hidden>
+        <h2>Signature</h2>
+        <div class="banner">✓ Signed. Show this QR to the hot wallet.</div>
+        <canvas id="sig-qr" class="qr"></canvas>
+        <div id="sig-caption" class="caption"></div>
+        <details>
+          <summary>Signature as text</summary>
+          <textarea id="sig-text" rows="3" readonly spellcheck="false"></textarea>
+          <button type="button" id="copy-sig">Copy</button>
+        </details>
+        <button type="button" class="primary" id="done-button">Done</button>
+      </div>
+    </div>
+
+    <footer>
+      Demo only: the key stays in this page, and its Content-Security-Policy blocks every network
+      request.
+    </footer>
+
+    <script type="module">
+      import { createColdSigner, randomKey } from './cold.js';
+      import { bindScanner, copyText, renderFields, showQR } from './ui.js';
+
+      const $ = (id) => document.getElementById(id);
+      let signer; // the unlocked key; dropped on lock
+      let pending; // reviewed request awaiting approve / reject
+      let stopPairing = () => {};
+      let stopSignature = () => {};
+
+      $('show-key').onclick = () => {
+        const input = $('key-input');
+        const hide = input.type === 'password';
+        input.type = hide ? 'text' : 'password';
+        $('show-key').textContent = hide ? 'Hide' : 'Show';
+      };
+      // fills the field only — a throwaway key the user can inspect first
+      $('random-button').onclick = () => ($('key-input').value = randomKey());
+
+      // a QR (static or animated) plus the same frames as copyable text
+      function showCode(canvas, textarea, encoder) {
+        textarea.value = encoder.pureParts().join('\n');
+        return showQR(canvas, encoder);
+      }
+
+      $('key-form').onsubmit = (event) => {
+        event.preventDefault();
+        try {
+          signer = createColdSigner($('key-input').value);
+        } catch (error) {
+          $('status').textContent = error.message;
+          $('status').className = 'error';
+          return;
+        }
+        // the signer holds the key from here on; the field forgets it
+        $('key-input').value = '';
+        $('status').textContent = '';
+        $('address-line').textContent = signer.address;
+        $('key-path').textContent = `single key · fingerprint ${signer.fingerprint}`;
+        stopPairing = showCode($('pair-qr'), $('pair-text'), signer.pairing());
+        $('key-form').hidden = true;
+        $('signer').hidden = false;
+        $('lock-button').hidden = false;
+        document.body.classList.add('cornered');
+      };
+
+      function clearRequest() {
+        pending = undefined;
+        $('review').hidden = true;
+        stopSignature();
+        $('signature').hidden = true;
+      }
+
+      const scanner = bindScanner($('request-scan'), ['eth-sign-request'], async ({ payload }) => {
+        clearRequest();
+        const review = await signer.review(payload); // throws: shown in the scanner's status
+        pending = review;
+        $('review-title').textContent =
+          review.kind === 'message' ? 'Review message' : 'Review transaction';
+        const warnings = $('warnings');
+        warnings.textContent = '';
+        for (const text of review.warnings) {
+          const li = document.createElement('li');
+          li.textContent = text;
+          warnings.append(li);
+        }
+        warnings.hidden = !review.warnings.length;
+        renderFields($('review-fields'), review.normal, review.muted);
+        $('review').hidden = false;
+        $('review').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      });
+
+      $('approve-button').onclick = () => {
+        if (!pending) return;
+        // signs exactly the reviewed request: approve() closes over it
+        const { encoder, txid } = pending.approve();
+        clearRequest();
+        stopSignature = showCode($('sig-qr'), $('sig-text'), encoder);
+        $('sig-caption').textContent = txid ? `txid ${txid}` : '';
+        $('signature').hidden = false;
+        $('signature').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      };
+      $('reject-button').onclick = () => {
+        clearRequest();
+        scanner.reset();
+      };
+      $('done-button').onclick = () => {
+        clearRequest();
+        scanner.reset();
+      };
+      $('copy-pair').onclick = () => copyText($('copy-pair'), $('pair-text'));
+      $('copy-sig').onclick = () => copyText($('copy-sig'), $('sig-text'));
+
+      $('lock-button').onclick = () => {
+        // forget the key and everything derived from it
+        signer = undefined;
+        clearRequest();
+        scanner.reset();
+        stopPairing();
+        $('pair-text').value = '';
+        $('signer').hidden = true;
+        $('lock-button').hidden = true;
+        $('key-form').hidden = false;
+        document.body.classList.remove('cornered');
+      };
+    </script>
+  </body>
+</html>

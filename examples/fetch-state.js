@@ -34,7 +34,7 @@
  *   costs no wall time beyond the slowest in-flight chunk.
  */
 import { closeSync, createWriteStream, fstatSync, ftruncateSync, openSync, readSync } from 'node:fs';
-import { jsonrpc } from 'micro-ftch';
+import { ftch, jsonrpc } from 'micro-ftch';
 // In your project: import { RpcClient } from 'micro-eth-signer/net.js';
 import { RpcClient } from '../net.js';
 
@@ -84,7 +84,8 @@ function prepareResume(path) {
   }
 }
 
-const base = jsonrpc(fetch, rpcUrl);
+// micro-ftch pinned to the RPC origin: no request can go anywhere else
+const base = jsonrpc(ftch(fetch, { allowedHosts: [new URL(rpcUrl).origin] }), rpcUrl);
 const prov = new RpcClient(base);
 const topics = [topicsArg.split(',')];
 let fromBlock = fromArg ? Number(fromArg) : 0;

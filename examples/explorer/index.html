@@ -4,7 +4,9 @@
   Requires built artifacts (`npm run build`) and a static server at the repo root:
     npx serve .   # or: python3 -m http.server
   Then open http://localhost:8000/examples/explorer/index.html
-  Override defaults with query params: index.html?address=0x…&rpc=http://…
+  Open something directly with query params: index.html?address=0x… or ?tx=0x…
+  The node is set in the page (Change node; Remember keeps it on this device)
+  or with ?rpc=http://…, which wins for that visit.
   The RPC endpoint must allow CORS requests from this page's origin.
 -->
 <html lang="en">
@@ -12,6 +14,9 @@
     <meta charset="utf-8" />
     <!-- resizes-visual: the virtual keyboard overlays instead of reflowing the layout -->
     <meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-visual" />
+    <!-- images come only from blob:/data: URLs: NFT art is downloaded through
+         micro-ftch (core.js imageUrl), so the page itself never hits an image host -->
+    <meta http-equiv="Content-Security-Policy" content="img-src blob: data:" />
     <title>Ethereum explorer</title>
     <script type="importmap">
       {
@@ -58,13 +63,28 @@
         color: var(--muted);
         margin: 1.5rem 0 0.5rem;
       }
+      h3 {
+        font-size: 0.8rem;
+        font-weight: 400;
+        color: var(--muted);
+        margin: 1rem 0 0.25rem;
+      }
+      a {
+        color: var(--accent);
+        text-decoration: none;
+      }
+      a:hover {
+        text-decoration: underline;
+      }
       form {
         display: flex;
+        flex-wrap: wrap;
         gap: 0.5rem;
         margin: 1rem 0;
       }
-      input {
+      input:not([type='checkbox']) {
         flex: 1;
+        min-width: 12rem;
         font: inherit;
         /* >=16px stops mobile browsers from zooming in on focus */
         font-size: 16px;
@@ -90,6 +110,17 @@
       button:disabled {
         color: var(--muted);
         cursor: default;
+      }
+      button.small {
+        padding: 0.1rem 0.5rem;
+      }
+      label.check {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        color: var(--muted);
+        cursor: pointer;
+        margin-bottom: 0.25rem;
       }
       #favorite-button {
         margin-top: 0.5rem;
@@ -125,17 +156,25 @@
         color: var(--muted);
         font-weight: 400;
       }
-      tbody tr {
+      .rows tr {
         cursor: pointer;
       }
-      tbody tr:hover,
-      tbody tr.selected {
+      .rows tr:hover,
+      .rows tr.selected {
         background: #80808020;
       }
       td.favorite-address {
         white-space: normal;
         word-break: break-all;
         width: 100%;
+        cursor: pointer;
+      }
+      td.favorite-eth {
+        text-align: right;
+      }
+      td.favorite-actions div {
+        display: flex;
+        gap: 0.4rem;
       }
       .muted {
         color: var(--muted);
@@ -143,10 +182,31 @@
       .error {
         color: #dc2626;
       }
+      #offline {
+        border: 1px solid #dc262680;
+        border-radius: 4px;
+        padding: 0.4rem 0.6rem;
+        margin-bottom: 1rem;
+      }
+      #node-bar {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.5rem;
+      }
+      #node-text {
+        word-break: break-word;
+      }
       #progress:not(:empty),
       #favorites-progress:not(:empty) {
         margin: 0.5rem 0;
         white-space: pre-line;
+      }
+      #older-button,
+      #favorites-older,
+      #rows-more,
+      #favorites-more {
+        margin-top: 0.5rem;
       }
       .nft-grid {
         display: grid;
@@ -179,23 +239,38 @@
         border: 1px solid var(--line);
         border-radius: 8px;
         padding: 1rem 1.25rem;
-        width: min(640px, calc(100vw - 2rem));
+        width: min(720px, calc(100vw - 2rem));
       }
       dialog::backdrop {
         background: #00000066;
       }
-      #details dt {
+      .details dt {
         float: left;
-        width: 8rem;
+        width: 9.5rem;
         clear: left;
         color: var(--muted);
       }
-      #details dd {
-        margin: 0 0 0.15rem 8rem;
+      .details dd {
+        margin: 0 0 0.15rem 9.5rem;
         word-break: break-all;
         white-space: pre-line;
       }
-      #details dd.muted {
+      .details dd.muted {
+        color: var(--muted);
+      }
+      .transfers td {
+        padding-top: 0.25rem;
+        padding-bottom: 0.25rem;
+      }
+      .transfers td.amount {
+        width: 100%;
+      }
+      .log {
+        border-bottom: 1px solid var(--line);
+        padding: 0.4rem 0;
+        word-break: break-all;
+      }
+      .log pre {
         color: var(--muted);
       }
       .hidden,
@@ -232,10 +307,13 @@
     </style>
   </head>
   <body class="empty">
+    <div id="offline" class="error hidden">
+      Offline: nothing can load until the connection is back.
+    </div>
     <form id="address-form">
       <input
         id="address-input"
-        placeholder="Ethereum address or .eth/.gwei name"
+        placeholder="Address, .eth/.gwei name or tx hash"
         autocomplete="off"
         spellcheck="false"
       />
@@ -243,13 +321,31 @@
       <button type="button" id="favorites-button" class="hidden">★ Favorites</button>
     </form>
     <div id="status" class="muted"></div>
+    <div id="node-bar" class="muted">
+      <span id="node-text"></span>
+      <button type="button" id="node-change" class="small">Change node</button>
+    </div>
+    <form id="node-form" class="hidden">
+      <input
+        id="node-input"
+        placeholder="RPC URL, e.g. http://192.168.1.10:8545"
+        autocomplete="off"
+        spellcheck="false"
+      />
+      <button type="submit">Connect</button>
+      <button type="button" id="node-cancel">Cancel</button>
+      <label class="check"><input type="checkbox" id="node-remember" /> Remember on this device</label>
+    </form>
 
     <div id="overview" class="hidden">
       <h1>Ethereum</h1>
       <div id="address-line" class="address-line"></div>
       <div id="ens-line" class="muted"></div>
+      <div id="account-line" class="muted address-line"></div>
+      <div id="token-line" class="muted"></div>
       <button id="favorite-button">☆ Favorite</button>
       <h2>Balances</h2>
+      <label class="check"><input type="checkbox" class="all-tokens" /> <span></span></label>
       <pre id="balances"></pre>
       <h2>NFTs</h2>
       <button id="nft-button">View NFT balances</button>
@@ -268,52 +364,74 @@
             <th>Amount</th>
           </tr>
         </thead>
-        <tbody id="rows"></tbody>
+        <tbody id="rows" class="rows"></tbody>
       </table>
       <button id="rows-more" class="hidden">Show more</button>
       <div id="empty" class="muted hidden">No transactions found.</div>
+      <button id="older-button" class="hidden">Load older transactions</button>
+      <div id="older-status" class="muted"></div>
     </div>
 
-    <!-- tx details open as a modal over whichever table they came from -->
+    <!-- a looked-up tx (search or link) gets its own page -->
+    <div id="tx-view" class="hidden">
+      <button id="tx-back">← Back</button>
+      <h2>Transaction</h2>
+      <div id="tx-hash" class="address-line"></div>
+      <div id="tx-body"></div>
+    </div>
+
+    <!-- tx details of a table row open as a modal over the table -->
     <dialog id="details-view">
       <button id="back-button">✕ Close</button>
       <h2>Transaction</h2>
-      <dl id="details"></dl>
+      <div id="details-body"></div>
     </dialog>
 
     <div id="favorites-view" class="hidden">
       <button id="favorites-back">← Back</button>
-      <h2>Favorites</h2>
+      <h2 id="favorites-title">Favorites</h2>
+      <form id="favorite-add-form">
+        <input
+          id="favorite-add-input"
+          placeholder="Add an address or .eth/.gwei name"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <button type="submit">Add</button>
+      </form>
+      <div id="favorite-add-status" class="muted"></div>
       <div id="favorites-empty" class="muted hidden">
-        No favorites yet: open an address and press ☆ Favorite.
+        No favorites yet: add one above, or open an address and press ☆ Favorite.
       </div>
       <table>
         <tbody id="favorites-list"></tbody>
       </table>
-      <div id="favorites-balances-block" class="hidden">
+      <div id="favorites-data" class="hidden">
         <h2>Balances</h2>
+        <label class="check"><input type="checkbox" class="all-tokens" /> <span></span></label>
         <pre id="favorites-balances"></pre>
+        <h2>Transactions</h2>
+        <button id="favorites-scan" disabled>Load token transactions</button>
+        <div id="favorites-progress" class="muted"></div>
+        <div id="favorites-status" class="muted"></div>
+        <table id="favorites-tx-table" class="hidden">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Time</th>
+              <th>Address</th>
+              <th>Dir</th>
+              <th>Amount</th>
+            </tr>
+          </thead>
+          <tbody id="favorites-rows" class="rows"></tbody>
+        </table>
+        <button id="favorites-more" class="hidden">Show more</button>
+        <button id="favorites-older" class="hidden">Load older transactions</button>
       </div>
-      <h2>Transactions</h2>
-      <button id="favorites-scan">Load histories</button>
-      <div id="favorites-progress" class="muted"></div>
-      <div id="favorites-status" class="muted"></div>
-      <table id="favorites-tx-table" class="hidden">
-        <thead>
-          <tr>
-            <th>#</th>
-            <th>Time</th>
-            <th>Address</th>
-            <th>Dir</th>
-            <th>Amount</th>
-          </tr>
-        </thead>
-        <tbody id="favorites-rows"></tbody>
-      </table>
-      <button id="favorites-more" class="hidden">Show more</button>
     </div>
 
-    <footer>↑/↓ select · Return open · t scan tokens · Esc back</footer>
+    <footer>↑/↓ select · Return open · o older · t scan tokens · Esc back</footer>
 
     <!-- one tx-row shape for both tables: showRows drops the addresses cell -->
     <template id="tx-row-template">
@@ -330,8 +448,18 @@
         <td class="favorite-address">
           <div class="favorite-ens"></div>
           <div class="favorite-addr"></div>
+          <div class="favorite-kind muted"></div>
         </td>
-        <td><button type="button">✕ Remove</button></td>
+        <td class="favorite-eth">
+          <div class="favorite-amount"></div>
+          <div class="favorite-usd muted"></div>
+        </td>
+        <td class="favorite-actions">
+          <div>
+            <button type="button" class="copy small">Copy</button>
+            <button type="button" class="remove small">✕ Remove</button>
+          </div>
+        </td>
       </tr>
     </template>
     <template id="nft-template">
@@ -346,16 +474,21 @@
 
     <script type="module">
       import {
+        accountText,
         balanceText,
         checksumAddress,
         createExplorer,
         createFavorites,
+        imageUrl,
         isAddress,
         isName,
+        isTxHash,
+        KNOWN_TOKEN_COUNT,
         multiRowSummary,
         rowSummary,
         RPC_URL,
         short,
+        tokenLine,
         usdApprox,
         withScheme,
       } from './core.js';
@@ -363,28 +496,153 @@
       const $ = (id) => document.getElementById(id);
       const clone = (id) => $(id).content.firstElementChild.cloneNode(true);
       const params = new URLSearchParams(location.search);
-      const rpcUrl = withScheme(params.get('rpc') || RPC_URL);
-      const explorer = createExplorer(rpcUrl);
+      const RPC_KEY = 'eth-explorer-rpc';
+      const TOKENS_KEY = 'eth-explorer-all-tokens';
+      // ?rpc= wins for this visit, then a remembered node, then the default
+      let rpcUrl = withScheme(params.get('rpc') || localStorage.getItem(RPC_KEY) || RPC_URL);
+      let explorer;
+      try {
+        explorer = createExplorer(rpcUrl);
+      } catch {
+        rpcUrl = RPC_URL; // a broken remembered URL must not brick the page
+        explorer = createExplorer(rpcUrl);
+      }
       const favorites = createFavorites(localStorage);
+      const allTokens = () => localStorage.getItem(TOKENS_KEY) === '1';
 
       let address;
       let ens; // current address's ENS name, captured into favorites on toggle
+      let feed; // the address's history pager (older pages, token scan)
       let rows = [];
-      let scanner; // token scanner; huge addresses scan in ~2-minute steps
       let cursor = -1;
       let busy = false;
+      let txReturn = null; // view the tx page goes back to
+      let balancesToken = 0; // invalidates stale async balance fills
+      let nftUrls = []; // blob: URLs of shown NFT images, released on the next load
       // favorites page data; reset whenever the favorites set changes
       let favoriteRows = [];
-      let favScanner;
-      let favHistoryLoaded = false;
-      let favBalancesToken = 0; // invalidates stale async balance fills
+      let favFeed;
+      let favBalancesToken = 0;
 
-      const views = ['overview', 'favorites-view'];
+      const views = ['overview', 'favorites-view', 'tx-view'];
       // pass null to hide everything (the empty search state)
       function showView(id) {
         for (const view of views) $(view).classList.toggle('hidden', view !== id);
+        document.body.classList.toggle('empty', !id);
+      }
+      const currentView = () => views.find((view) => !$(view).classList.contains('hidden')) || null;
+
+      function setStatus(text, error = false) {
+        $('status').textContent = text;
+        $('status').className = error ? 'error' : 'muted';
       }
 
+      // Links keep a real href (?address= / ?tx=, so they open in a new tab
+      // too) but navigate in place on a plain click.
+      function link(kind, value, text) {
+        const a = document.createElement('a');
+        const query = new URLSearchParams({ [kind]: value });
+        if (params.get('rpc')) query.set('rpc', params.get('rpc'));
+        a.href = `?${query}`;
+        a.textContent = text ?? value;
+        a.onclick = (event) => {
+          if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey) return;
+          event.preventDefault();
+          closeDetails();
+          if (kind === 'tx') openTx(value);
+          else submit(value);
+        };
+        return a;
+      }
+
+      // --- node ---------------------------------------------------------
+      // the bar shows the host only: paths and userinfo can carry API keys
+      const nodeHost = (url) => {
+        try {
+          return new URL(url).host;
+        } catch {
+          return url;
+        }
+      };
+      function renderNode(info) {
+        const notes = [];
+        if (info.chainId !== 1n) notes.push('prices and token list are mainnet-only');
+        if (info.ots === false) notes.push('no ots_ namespace: history shows token transfers only');
+        $('node-text').className = '';
+        $('node-text').textContent = [
+          `Node ${nodeHost(rpcUrl)}`,
+          `${info.name} (chain ${info.chainId})`,
+          ...(info.client ? [info.client.split('/').slice(0, 2).join('/')] : []),
+          ...notes,
+        ].join(' · ');
+      }
+      let nodeToken = 0;
+      async function probeNode() {
+        const token = ++nodeToken;
+        const text = $('node-text');
+        text.className = '';
+        text.textContent = `Node ${nodeHost(rpcUrl)} · connecting…`;
+        try {
+          const info = await explorer.node();
+          if (token === nodeToken) renderNode(info);
+        } catch (error) {
+          if (token !== nodeToken) return;
+          text.className = 'error';
+          text.textContent = `Node ${nodeHost(rpcUrl)} unreachable: ${error.message}`;
+        }
+      }
+
+      function toggleNodeForm(open) {
+        // the bar stays: it shows what is in use while another node is typed
+        $('node-form').classList.toggle('hidden', !open);
+        $('node-change').classList.toggle('hidden', open);
+        if (!open) return;
+        $('node-input').value = rpcUrl;
+        $('node-remember').checked = !!localStorage.getItem(RPC_KEY);
+        $('node-input').focus();
+      }
+
+      // the old node stays in use until the new one answers
+      async function connectNode(value) {
+        let next;
+        const url = withScheme(value.trim());
+        try {
+          next = createExplorer(url);
+        } catch (error) {
+          return setStatus(error.message, true);
+        }
+        setStatus(`Connecting to ${nodeHost(url)}…`);
+        let info;
+        try {
+          info = await next.node();
+        } catch (error) {
+          return setStatus(`Could not connect to ${nodeHost(url)}: ${error.message}`, true);
+        }
+        ++nodeToken; // a probe of the old node still in flight must not repaint
+        [rpcUrl, explorer] = [url, next];
+        renderNode(info);
+        toggleNodeForm(false);
+        if ($('node-remember').checked) localStorage.setItem(RPC_KEY, url);
+        else localStorage.removeItem(RPC_KEY);
+        setStatus('');
+        // everything shown came from the old node
+        resetFavoritesData();
+        const view = currentView();
+        if (view === 'overview' && address) load(address);
+        if (view === 'favorites-view') openFavorites();
+      }
+
+      // --- offline ------------------------------------------------------
+      function renderOnline() {
+        $('offline').classList.toggle('hidden', navigator.onLine);
+      }
+      window.addEventListener('offline', renderOnline);
+      window.addEventListener('online', () => {
+        renderOnline();
+        probeNode();
+      });
+
+      // --- tables -------------------------------------------------------
       function txRow(summary, index) {
         const tr = clone('tx-row-template');
         const [num, time, addresses, dir, amount] = tr.cells;
@@ -445,9 +703,20 @@
       const favTable = pagedTable('favorites-rows', 'favorites-more', () => favoriteRows,
         (row, index) => txRow(multiRowSummary(row), index));
 
+      // older pages append, the token scan interleaves: keep what was revealed
       function showRows() {
-        mainTable.show(Math.max(PAGE, cursor + 1));
+        mainTable.show(Math.max(PAGE, mainTable.limit, cursor + 1));
         $('empty').classList.toggle('hidden', rows.length > 0);
+        renderOlder();
+      }
+
+      function renderOlder() {
+        const button = $('older-button');
+        button.textContent = 'Load older transactions';
+        button.disabled = false;
+        button.classList.toggle('hidden', !feed?.hasOlder);
+        $('older-status').textContent =
+          feed && !feed.hasOlder && rows.length ? 'No older transactions.' : '';
       }
 
       // secondary info after '·' (usd value, rate) renders dimmed
@@ -471,6 +740,11 @@
           if (i < lines.length - 1) pre.append('\n');
         });
       }
+      function balanceLines(combined) {
+        const lines = combined.balances.map(balanceText);
+        if (combined.totalUsd !== undefined) lines.unshift(`Total ${usdApprox(combined.totalUsd)}`);
+        return lines;
+      }
 
       // cursor moves restyle the two affected rows; rebuilding the whole
       // table (100k rows after a deep scan) per keypress is unusable
@@ -485,28 +759,121 @@
         row.scrollIntoView({ block: 'nearest' });
       }
 
-      async function details(row) {
-        const info = await explorer.details(row);
-        const list = $('details');
-        list.textContent = '';
+      // --- transaction details ------------------------------------------
+      // Big txs (airdrops) carry thousands of transfers/logs: the first
+      // LIST_LIMIT render, a button reveals the rest.
+      const LIST_LIMIT = 50;
+      function limitedList(container, items, render) {
+        const more = document.createElement('button');
+        more.className = 'small';
+        more.textContent = `Show all ${items.length}`;
+        more.onclick = () => {
+          container.append(...items.slice(LIST_LIMIT).map(render));
+          more.remove();
+        };
+        container.append(...items.slice(0, LIST_LIMIT).map(render));
+        return items.length > LIST_LIMIT ? [more] : [];
+      }
+
+      // shared by the row modal and the tx page
+      function renderTx(container, info) {
+        const list = document.createElement('dl');
+        list.className = 'details';
         for (const [kind, pairs] of [
           ['', info.normal],
           ['muted', info.muted],
         ])
-          for (const [label, value] of pairs) {
-            if (label === 'txid') continue; // web app shows no txids
+          for (const [label, value, type] of pairs) {
+            if (label === 'txid') continue; // the tx page heads with it; the modal shows none
             const pair = $('detail-template').content.cloneNode(true);
             pair.querySelector('dt').textContent = label;
             const dd = pair.querySelector('dd');
-            dd.textContent = value;
+            if (type === 'address') dd.append(link('address', value));
+            else dd.textContent = value;
             dd.className = kind;
             list.append(pair);
           }
+        const transfersTitle = document.createElement('h3');
+        transfersTitle.textContent = `Token transfers (${info.transfers.length})`;
+        const transfers = document.createElement('table');
+        transfers.className = 'transfers';
+        const transfersBody = document.createElement('tbody');
+        transfers.append(transfersBody);
+        const moreTransfers = limitedList(transfersBody, info.transfers, (transfer) => {
+          const tr = document.createElement('tr');
+          const cells = [0, 1, 2, 3].map(() => tr.insertCell());
+          if (transfer.from) cells[0].append(link('address', transfer.from, short(transfer.from, 6)));
+          cells[1].textContent = '→';
+          cells[2].append(link('address', transfer.to, short(transfer.to, 6)));
+          cells[3].className = 'amount';
+          cells[3].textContent = transfer.amount;
+          return tr;
+        });
+        const logsTitle = document.createElement('h3');
+        logsTitle.textContent = `Event logs (${info.logs.length})`;
+        const logs = document.createElement('div');
+        const moreLogs = limitedList(logs, info.logs, (log) => {
+          const item = document.createElement('div');
+          item.className = 'log';
+          const head = document.createElement('div');
+          head.append(`#${log.index} `, link('address', log.address, short(log.address, 6)));
+          head.append(` ${log.event || 'unknown event'}`);
+          item.append(head);
+          if (log.hint) {
+            const hint = document.createElement('div');
+            hint.className = 'muted';
+            hint.textContent = log.hint;
+            item.append(hint);
+          }
+          const raw = document.createElement('pre');
+          const topics = log.topics.map((topic, i) => `topic${i} ${topic}`);
+          raw.textContent = [...topics, `data   ${log.data}`].join('\n');
+          item.append(raw);
+          return item;
+        });
+        container.replaceChildren(
+          list,
+          transfersTitle,
+          transfers,
+          ...moreTransfers,
+          logsTitle,
+          logs,
+          ...moreLogs
+        );
+      }
+
+      async function details(row) {
+        const info = await explorer.details(row);
+        renderTx($('details-body'), info);
         $('details-view').showModal();
       }
 
       const closeDetails = () => $('details-view').close();
 
+      // A tx looked up by hash: its own page, back returns where it came from.
+      async function openTx(hash) {
+        if (busy) return;
+        busy = true;
+        if (currentView() !== 'tx-view') txReturn = currentView();
+        setStatus('Loading transaction…');
+        try {
+          const info = await explorer.details(hash);
+          $('tx-hash').textContent = info.hash;
+          renderTx($('tx-body'), info);
+          setStatus('');
+          showView('tx-view');
+          window.scrollTo(0, 0);
+        } catch (error) {
+          const missing = /not found/.test(error.message);
+          const text = missing ? 'Transaction not found on this node.' : `Lookup failed: ${error.message}`;
+          setStatus(text, true);
+        } finally {
+          busy = false;
+        }
+      }
+      const closeTx = () => showView(txReturn);
+
+      // --- favorites ----------------------------------------------------
       function renderFavoriteButton() {
         $('favorite-button').textContent = favorites.has(address) ? '★ Favorited' : '☆ Favorite';
       }
@@ -519,21 +886,25 @@
       // merged history/scan are per favorites-set: any change starts over
       function resetFavoritesData() {
         favoriteRows = [];
-        favScanner = undefined;
-        favHistoryLoaded = false;
+        favFeed = undefined;
         $('favorites-rows').textContent = '';
         $('favorites-tx-table').classList.add('hidden');
         $('favorites-more').classList.add('hidden');
+        $('favorites-older').classList.add('hidden');
         $('favorites-status').textContent = '';
         $('favorites-progress').textContent = '';
-        const button = $('favorites-scan');
-        button.textContent = 'Load histories';
-        button.disabled = !favorites.list().length;
+        $('favorites-scan').textContent = 'Load token transactions';
+        $('favorites-scan').disabled = true;
       }
 
       function favoritesChanged() {
         renderFavoritesNav();
         resetFavoritesData();
+        if (currentView() === 'favorites-view') {
+          renderFavoritesList();
+          loadFavoritesOverview();
+          loadFavoritesHistory();
+        }
       }
 
       function renderFavoritesList() {
@@ -542,40 +913,62 @@
         body.textContent = '';
         for (const favorite of list) {
           const tr = clone('favorite-template');
+          tr.dataset.address = favorite.address.toLowerCase();
           // the ENS name was captured when the favorite was created
           tr.querySelector('.favorite-ens').textContent = favorite.ens || '';
           const addr = tr.querySelector('.favorite-addr');
           addr.textContent = favorite.address;
           if (favorite.ens) addr.classList.add('muted');
-          tr.onclick = () => submit(favorite.address);
-          tr.querySelector('button').onclick = (event) => {
-            event.stopPropagation();
+          tr.querySelector('.favorite-address').onclick = () => submit(favorite.address);
+          tr.querySelector('.copy').onclick = async (event) => {
+            const button = event.currentTarget;
+            try {
+              await navigator.clipboard.writeText(favorite.address);
+              button.textContent = 'Copied';
+            } catch {
+              button.textContent = 'Copy failed';
+            }
+            setTimeout(() => (button.textContent = 'Copy'), 1500);
+          };
+          tr.querySelector('.remove').onclick = () => {
             favorites.toggle(favorite.address);
             favoritesChanged();
-            renderFavoritesList();
-            loadFavoritesBalances();
           };
           body.append(tr);
         }
+        $('favorites-title').textContent = list.length ? `Favorites (${list.length})` : 'Favorites';
         $('favorites-empty').classList.toggle('hidden', list.length > 0);
-        $('favorites-balances-block').classList.toggle('hidden', !list.length);
-        // storage may change outside toggle (another tab): refresh the idle button
-        if (!favHistoryLoaded) $('favorites-scan').disabled = !list.length;
+        $('favorites-data').classList.toggle('hidden', !list.length);
       }
 
-      // combined balances of the whole set, one wallet
-      async function loadFavoritesBalances() {
+      // combined balances of the whole set plus each member's own ETH and kind
+      async function loadFavoritesOverview() {
         const list = favorites.list();
         const pre = $('favorites-balances');
         if (!list.length) return (pre.textContent = '');
         const token = ++favBalancesToken;
         pre.textContent = 'Loading…';
         try {
-          const combined = await explorer.combinedBalances(list.map((f) => f.address));
+          const overview = await explorer.favoritesOverview(
+            list.map((f) => f.address),
+            { allTokens: allTokens() }
+          );
           if (token !== favBalancesToken) return; // superseded by a newer fill
-          const lines = combined.balances.map(balanceText);
-          if (combined.totalUsd !== undefined) lines.unshift(`Total ${usdApprox(combined.totalUsd)}`);
-          renderBalances(pre, lines);
+          renderBalances(pre, balanceLines(overview));
+          for (const member of overview.members) {
+            const key = member.address.toLowerCase();
+            const tr = $('favorites-list').querySelector(`tr[data-address="${key}"]`);
+            if (!tr) continue;
+            tr.querySelector('.favorite-amount').textContent = member.eth || '';
+            tr.querySelector('.favorite-usd').textContent = Number.isFinite(member.usd)
+              ? usdApprox(member.usd)
+              : '';
+            if (member.account)
+              tr.querySelector('.favorite-kind').textContent =
+                member.account.kind === 'contract'
+                  ? 'Contract'
+                  : accountText(member.account).replace(/ · EIP-7702 delegated to .*/, ' · EIP-7702');
+          }
         } catch (error) {
           if (token === favBalancesToken)
             pre.textContent = `Balances unavailable: ${error.message}`;
@@ -584,67 +977,117 @@
 
       function openFavorites() {
         renderFavoritesList();
-        loadFavoritesBalances();
-        document.body.classList.remove('empty');
+        loadFavoritesOverview();
         showView('favorites-view');
         window.scrollTo(0, 0);
+        loadFavoritesHistory();
       }
 
       function closeFavorites() {
-        if (address) return showView('overview');
-        showView(null);
-        document.body.classList.add('empty');
+        showView(address ? 'overview' : null);
       }
 
       function showFavoriteRows() {
-        favTable.show();
-        $('favorites-tx-table').classList.toggle('hidden', !favHistoryLoaded);
+        favTable.show(Math.max(PAGE, favTable.limit));
+        $('favorites-tx-table').classList.toggle('hidden', !favoriteRows.length);
+        const older = $('favorites-older');
+        older.textContent = 'Load older transactions';
+        older.disabled = false;
+        older.classList.toggle('hidden', !favFeed?.hasOlder);
       }
 
-      // One button, two stages: first click loads the merged quick history
-      // (history over the address array), later clicks deepen it with a token scan over the
-      // whole set — same behavior as the per-address button.
-      async function favoritesScan() {
-        if (busy || favScanner?.done) return;
+      // The merged history of the set loads with the page; each favorite
+      // pages back on its own cursor ("Load older"), and the token scan
+      // deepens the whole set.
+      // A set change swaps favFeed: work still running for the old set is
+      // dropped on arrival, and each set's feed carries its own busy flag.
+      async function loadFavoritesHistory(older = false) {
         const list = favorites.list();
-        if (!list.length) return;
-        const addresses = list.map((favorite) => favorite.address);
-        const button = $('favorites-scan');
+        if (!list.length || (older ? !favFeed : favFeed)) return;
+        favFeed ||= explorer.feed(list.map((favorite) => favorite.address));
+        const set = favFeed;
+        if (set.busy) return;
+        set.busy = true;
         const status = $('favorites-status');
-        busy = true;
+        status.textContent = older
+          ? 'Loading older transactions…'
+          : `Loading recent transactions of ${list.length} favorite${list.length > 1 ? 's' : ''}…`;
+        $('favorites-older').disabled = true;
+        try {
+          const loaded = await set.older();
+          if (set !== favFeed) return; // the set changed meanwhile
+          favoriteRows = loaded;
+          status.textContent = favoriteRows.length ? '' : 'No transactions found.';
+          if (!set.scanDone) $('favorites-scan').disabled = false;
+          showFavoriteRows();
+        } catch (error) {
+          if (set !== favFeed) return;
+          status.textContent = `History unavailable: ${error.message}`;
+          if (!older) favFeed = undefined; // reopening the page retries
+          $('favorites-older').disabled = false;
+        } finally {
+          set.busy = false;
+        }
+      }
+
+      async function favoritesScan() {
+        const set = favFeed;
+        if (!set || set.busy || set.scanDone) return;
+        const button = $('favorites-scan');
+        set.busy = true;
         button.disabled = true;
         try {
-          if (!favHistoryLoaded) {
-            status.textContent = `Loading merged history of ${list.length} favorites…`;
-            favoriteRows = await explorer.favoritesHistory(addresses);
-            favHistoryLoaded = true;
-            status.textContent = favoriteRows.length ? '' : 'No transactions found.';
-            button.textContent = 'Load token transactions';
-            button.disabled = false;
-            showFavoriteRows();
-            return;
-          }
-          status.textContent = '';
-          favScanner ||= explorer.tokenScanner(addresses, favoriteRows);
-          const result = await scanStep(favScanner, $('favorites-progress'));
+          const result = await scanStep(set, $('favorites-progress'));
+          if (set !== favFeed) return;
           favoriteRows = result.rows;
-          if (result.done) {
-            button.textContent = '✓ Token transactions loaded';
-          } else {
+          if (result.done) button.textContent = '✓ Token transactions loaded';
+          else {
             button.textContent = `Continue scan · ${result.percent}% of history scanned · ${favoriteRows.length} txs so far`;
             button.disabled = false;
           }
           showFavoriteRows();
         } catch (error) {
-          status.textContent = `${favHistoryLoaded ? 'Token scan failed' : 'History unavailable'}: ${error.message}`;
+          if (set !== favFeed) return;
+          $('favorites-status').textContent = `Token scan failed: ${error.message}`;
           button.disabled = false;
         } finally {
-          busy = false;
+          set.busy = false;
         }
       }
 
+      async function addFavorite(value) {
+        const status = $('favorite-add-status');
+        status.className = 'muted';
+        let target = value;
+        let name;
+        if (!isAddress(value)) {
+          if (!isName(value)) {
+            status.className = 'error';
+            return (status.textContent = 'Invalid Ethereum address.');
+          }
+          status.textContent = `Resolving ${value}…`;
+          try {
+            target = await explorer.resolveName(value);
+          } catch (error) {
+            status.className = 'error';
+            return (status.textContent = `Lookup failed: ${error.message}`);
+          }
+          if (!target) {
+            status.className = 'error';
+            return (status.textContent = `Name ${value} did not resolve.`);
+          }
+          name = value;
+        }
+        if (favorites.has(target)) return (status.textContent = 'Already a favorite.');
+        favorites.toggle(target, name);
+        status.textContent = '';
+        $('favorite-add-input').value = '';
+        favoritesChanged();
+      }
+
+      // --- scans, NFTs ---------------------------------------------------
       // drives one scanner step, drawing spinner/progress into the given element
-      async function scanStep(activeScanner, progress) {
+      async function scanStep(activeFeed, progress) {
         let state = { phase: 'prepare', completed: 0, total: 0, scannedTxs: 0, found: 0 };
         const started = Date.now();
         const draw = () => {
@@ -664,7 +1107,7 @@
         try {
           // record only: the scanner notifies per consumed row, and painting
           // at that rate stalls the page — the 250ms timer repaints instead
-          return await activeScanner.step((update) => {
+          return await activeFeed.scanStep((update) => {
             state = update;
           });
         } finally {
@@ -674,13 +1117,12 @@
       }
 
       async function scanTokens() {
-        if (scanner?.done || busy || !address) return;
+        if (!feed || feed.scanDone || busy) return;
         busy = true;
         const button = $('scan-button');
         button.disabled = true;
         try {
-          scanner ||= explorer.tokenScanner(address, rows);
-          const result = await scanStep(scanner, $('progress'));
+          const result = await scanStep(feed, $('progress'));
           rows = result.rows;
           cursor = rows.length ? 0 : -1;
           if (result.done) {
@@ -694,9 +1136,25 @@
           return true;
         } catch (error) {
           button.disabled = false;
-          $('status').textContent = `Token scan failed: ${error.message}`;
-          $('status').className = 'error';
+          setStatus(`Token scan failed: ${error.message}`, true);
           return false;
+        } finally {
+          busy = false;
+        }
+      }
+
+      async function loadOlder() {
+        if (!feed?.hasOlder || busy) return;
+        busy = true;
+        const button = $('older-button');
+        button.disabled = true;
+        button.textContent = 'Loading older transactions…';
+        try {
+          rows = await feed.older();
+          showRows();
+        } catch (error) {
+          setStatus(`Older transactions unavailable: ${error.message}`, true);
+          renderOlder();
         } finally {
           busy = false;
         }
@@ -711,7 +1169,7 @@
           // scan history first: the quick view alone misses most NFT transfers.
           // A paused deep scan is fine — candidates come from scanned eras and
           // ownership is verified on-chain either way.
-          if (!scanner && !(await scanTokens())) return; // scan error already shown
+          if (!feed.scanStarted && !(await scanTokens())) return; // scan error already shown
           busy = true;
           button.disabled = true;
           status.textContent = 'Verifying ownership on-chain…';
@@ -747,14 +1205,19 @@
             const img = tile.querySelector('img');
             const noImage = tile.querySelector('.no-image');
             if (item.image) {
-              img.src = item.image;
               img.alt = item.name || `#${shortId(item.id)}`;
-              img.classList.remove('hidden');
-              noImage.classList.add('hidden');
-              img.onerror = () => {
-                img.classList.add('hidden');
-                noImage.classList.remove('hidden');
+              img.onload = () => {
+                img.classList.remove('hidden');
+                noImage.classList.add('hidden');
               };
+              // through micro-ftch, not <img src=remote>: the placeholder stays on failure
+              imageUrl(item.image).then(
+                (src) => {
+                  if (src.startsWith('blob:')) nftUrls.push(src);
+                  img.src = src;
+                },
+                () => {}
+              );
             }
             tile.querySelector('.nft-name').textContent =
               item.name || item.symbol || short(item.contract);
@@ -773,32 +1236,69 @@
         }
       }
 
+      // --- address page --------------------------------------------------
+      function renderAccount(account) {
+        const line = $('account-line');
+        line.textContent = '';
+        $('token-line').textContent = (account && tokenLine(account)) || '';
+        if (!account) return;
+        if (account.kind === 'contract') {
+          line.append('Contract');
+          if (account.creator)
+            line.append(
+              ' · created by ',
+              link('address', account.creator, short(account.creator, 6)),
+              ' in ',
+              link('tx', account.creationTx, short(account.creationTx, 6))
+            );
+          return;
+        }
+        // the same words as accountText; the delegate becomes a link
+        const text = accountText(account);
+        if (!account.delegate) return (line.textContent = text);
+        line.append(text.slice(0, text.indexOf(account.delegate)), link('address', account.delegate));
+      }
+
+      async function reloadBalances() {
+        if (!address) return;
+        const token = ++balancesToken;
+        $('balances').textContent = 'Loading…';
+        try {
+          const combined = await explorer.combinedBalances([address], { allTokens: allTokens() });
+          if (token === balancesToken) renderBalances($('balances'), balanceLines(combined));
+        } catch (error) {
+          if (token === balancesToken)
+            $('balances').textContent = `Balances unavailable: ${error.message}`;
+        }
+      }
+
       async function load(value) {
         if (busy) return;
         busy = true;
-        const status = $('status');
-        status.className = 'muted';
-        status.textContent = 'Loading balances…';
+        setStatus('Loading balances…');
         showView(null);
         closeDetails();
         try {
-          const overview = await explorer.load(value);
+          const overview = await explorer.load(value, { allTokens: allTokens() });
           address = overview.address;
-          rows = overview.rows;
-          scanner = undefined;
+          feed = overview.feed;
+          rows = feed.rows;
           cursor = -1;
-          const balances = overview.balances.map(balanceText);
-          if (overview.totalUsd !== undefined) balances.unshift(`Total ${usdApprox(overview.totalUsd)}`);
+          ++balancesToken; // a pending checkbox refill is now stale
+          const balances = balanceLines(overview);
           if (overview.historyError)
             balances.push(`History unavailable: ${overview.historyError.message}`);
           ens = overview.ens || undefined;
           $('address-line').textContent = address;
           $('ens-line').textContent = ens || '';
+          renderAccount(overview.account);
           renderFavoriteButton();
           renderBalances($('balances'), balances);
           $('scan-button').textContent = 'Load token transactions';
           $('scan-button').disabled = false;
           $('progress').textContent = '';
+          for (const url of nftUrls) URL.revokeObjectURL(url);
+          nftUrls = [];
           $('nfts').textContent = '';
           $('nfts').classList.add('hidden');
           $('nft-status').textContent = '';
@@ -806,52 +1306,52 @@
           $('nft-button').disabled = false;
           $('nft-more').classList.add('hidden');
           nftPager = undefined;
+          mainTable.show(0); // fresh table: forget the previous address's reveal
           showRows();
-          status.textContent = '';
+          setStatus('');
           showView('overview');
-          document.body.classList.remove('empty');
         } catch (error) {
-          status.textContent = error.message;
-          status.className = 'error';
+          setStatus(error.message, true);
+          showView(address ? 'overview' : null);
         } finally {
           busy = false;
         }
       }
 
-      // Accepts a raw address or a name: NameResolver routes 'vitalik.eth' to
-      // ENS and 'alice.gwei' to GNS through the same nameToAddress call.
+      // Accepts a raw address, a name or a tx hash: NameResolver routes
+      // 'vitalik.eth' to ENS and 'alice.gwei' to GNS through the same
+      // nameToAddress call.
       async function submit(value) {
+        if (isTxHash(value)) return openTx(value);
         if (!isAddress(value)) {
-          if (!isName(value)) {
-            $('status').textContent = 'Invalid Ethereum address.';
-            $('status').className = 'error';
-            return;
-          }
-          $('status').textContent = `Resolving ${value}…`;
-          $('status').className = 'muted';
+          if (!isName(value))
+            return setStatus('Not an address, .eth/.gwei name or transaction hash.', true);
+          setStatus(`Resolving ${value}…`);
           // resolveName returns undefined for unknown names and throws on
           // transport failures: an unreachable RPC is not the name's fault
           let resolved;
           try {
             resolved = await explorer.resolveName(value);
           } catch (error) {
-            $('status').textContent = `Lookup failed: ${error.message} (RPC ${rpcUrl} — use ?rpc= to change).`;
-            $('status').className = 'error';
-            return;
+            return setStatus(`Lookup failed: ${error.message} (node ${nodeHost(rpcUrl)}).`, true);
           }
-          if (!resolved) {
-            $('status').textContent = `Name ${value} did not resolve.`;
-            $('status').className = 'error';
-            return;
-          }
+          if (!resolved) return setStatus(`Name ${value} did not resolve.`, true);
           value = resolved;
         }
         $('address-input').value = checksumAddress(value);
         load(value);
       }
+
+      // --- wiring --------------------------------------------------------
       $('address-form').onsubmit = (event) => {
         event.preventDefault();
         submit($('address-input').value.trim());
+      };
+      $('node-change').onclick = () => toggleNodeForm(true);
+      $('node-cancel').onclick = () => toggleNodeForm(false);
+      $('node-form').onsubmit = (event) => {
+        event.preventDefault();
+        connectNode($('node-input').value);
       };
       // row clicks are delegated: rows carry no handlers of their own
       $('rows').onclick = (event) => {
@@ -864,10 +1364,13 @@
       };
       $('rows-more').onclick = () => mainTable.reveal(mainTable.limit + PAGE);
       $('favorites-more').onclick = () => favTable.reveal(favTable.limit + PAGE);
+      $('older-button').onclick = loadOlder;
+      $('favorites-older').onclick = () => loadFavoritesHistory(true);
       $('scan-button').onclick = scanTokens;
       $('nft-button').onclick = viewNfts;
       $('nft-more').onclick = showMoreNfts;
       $('back-button').onclick = closeDetails;
+      $('tx-back').onclick = closeTx;
       // clicking the backdrop (the dialog element itself) closes the modal
       $('details-view').onclick = (event) => {
         if (event.target === $('details-view')) closeDetails();
@@ -875,34 +1378,56 @@
       $('favorites-button').onclick = openFavorites;
       $('favorites-back').onclick = closeFavorites;
       $('favorites-scan').onclick = favoritesScan;
+      $('favorite-add-form').onsubmit = (event) => {
+        event.preventDefault();
+        addFavorite($('favorite-add-input').value.trim());
+      };
       $('favorite-button').onclick = () => {
         favorites.toggle(address, ens);
         renderFavoriteButton();
         favoritesChanged();
       };
+      // one setting, a checkbox on each balances section
+      const tokenBoxes = [...document.querySelectorAll('.all-tokens')];
+      for (const box of tokenBoxes) {
+        box.checked = allTokens();
+        box.nextElementSibling.textContent = `Check all ${KNOWN_TOKEN_COUNT} known tokens`;
+        box.onchange = () => {
+          if (box.checked) localStorage.setItem(TOKENS_KEY, '1');
+          else localStorage.removeItem(TOKENS_KEY);
+          for (const other of tokenBoxes) other.checked = box.checked;
+          reloadBalances();
+          if (currentView() === 'favorites-view') loadFavoritesOverview();
+        };
+      }
 
       document.addEventListener('keydown', (event) => {
-        if (event.target === $('address-input')) return;
+        if (event.target.matches('input')) return;
         if ($('details-view').open) return; // modal: Esc closes it natively
+        const view = currentView();
         if (event.key === 'Escape') {
-          if (!$('favorites-view').classList.contains('hidden')) return closeFavorites();
+          if (view === 'favorites-view') return closeFavorites();
+          if (view === 'tx-view') return closeTx();
           return;
         }
-        if ($('overview').classList.contains('hidden')) return;
+        if (view !== 'overview') return;
         if (event.key === 'ArrowUp') moveCursor(-1);
         else if (event.key === 'ArrowDown') moveCursor(1);
         else if (event.key === 'Enter' && rows[cursor]) details(rows[cursor]);
         else if (event.key.toLowerCase() === 't') scanTokens();
+        else if (event.key.toLowerCase() === 'o') loadOlder();
         else return;
         event.preventDefault();
       });
 
+      renderOnline();
       renderFavoritesNav();
       resetFavoritesData();
+      probeNode();
 
       // no demo default on the web: start with just the search input
-      const initial = params.get('address');
-      if (initial && (isAddress(initial) || isName(initial))) {
+      const initial = params.get('tx') || params.get('address');
+      if (initial && (isTxHash(initial) || isAddress(initial) || isName(initial))) {
         $('address-input').value = initial;
         submit(initial);
       }

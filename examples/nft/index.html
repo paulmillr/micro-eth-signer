@@ -1,0 +1,907 @@
+<!doctype html>
+<!--
+  NFT viewer: an address's NFTs (discovered from transfer logs, ownership
+  verified on-chain) and a page per token (owner, metadata, attributes,
+  transfer history).
+  Requires built artifacts (`npm run build`) and a static server at the repo root:
+    npx serve .   # or: python3 -m http.server
+  Then open http://localhost:8000/examples/nft/index.html
+  Open something directly with query params: index.html?address=0x… or
+  ?contract=0x…&id=123, plus ?rpc=http://… for another node.
+  The RPC endpoint must allow CORS requests from this page's origin.
+  Off-chain content is IPFS-only by default (see core.js): ticking
+  "Load non-IPFS hosts" also loads the http(s) hosts token creators name.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <!-- resizes-visual: the virtual keyboard overlays instead of reflowing the layout -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, interactive-widget=resizes-visual"
+    />
+    <!-- images come only from blob:/data: URLs: art is downloaded through
+         micro-ftch under the IPFS policy (core.js), so the page itself never
+         hits an image host; nothing may embed plugins or rebase links -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="img-src blob: data:; media-src 'none'; object-src 'none'; base-uri 'none'"
+    />
+    <meta name="referrer" content="no-referrer" />
+    <title>NFT viewer</title>
+    <script type="importmap">
+      {
+        "imports": {
+          "micro-ftch": "../../node_modules/micro-ftch/index.js",
+          "micro-packed": "../../node_modules/micro-packed/index.js",
+          "@scure/base": "../../node_modules/@scure/base/index.js",
+          "@noble/hashes/": "../../node_modules/@noble/hashes/",
+          "@noble/curves/": "../../node_modules/@noble/curves/"
+        }
+      }
+    </script>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --muted: #808080;
+        --line: #80808040;
+        --accent: #2563eb;
+      }
+      body {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 13px;
+        line-height: 1.5;
+        max-width: 1100px;
+        margin: 2rem auto;
+        padding: 0 1rem;
+      }
+      h1 {
+        font-size: 1rem;
+        font-weight: 600;
+        margin: 1rem 0 0.25rem;
+        word-break: break-word;
+      }
+      h2 {
+        font-size: 0.85rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--muted);
+        margin: 1.5rem 0 0.5rem;
+      }
+      a {
+        color: var(--accent);
+        text-decoration: none;
+      }
+      a:hover {
+        text-decoration: underline;
+      }
+      form {
+        display: flex;
+        gap: 0.5rem;
+        margin: 1rem 0 0.5rem;
+      }
+      input:not([type='checkbox']) {
+        flex: 1;
+        min-width: 0;
+        font: inherit;
+        /* >=16px stops mobile browsers from zooming in on focus */
+        font-size: 16px;
+        padding: 0.4rem 0.6rem;
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        background: transparent;
+        color: inherit;
+      }
+      button {
+        font: inherit;
+        padding: 0.4rem 0.8rem;
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        background: transparent;
+        color: inherit;
+        cursor: pointer;
+      }
+      button:hover:not(:disabled) {
+        border-color: var(--accent);
+        color: var(--accent);
+      }
+      button:disabled {
+        color: var(--muted);
+        cursor: default;
+      }
+      #settings {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.5rem 1.25rem;
+      }
+      #settings label {
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+      }
+      #gateway-label {
+        flex: 1;
+        min-width: 260px;
+      }
+      #gateway {
+        font-size: 13px;
+        padding: 0.2rem 0.4rem;
+      }
+      #policy-note {
+        margin: 0.4rem 0 0;
+      }
+      #policy-note.open {
+        color: #b45309;
+      }
+      .muted {
+        color: var(--muted);
+      }
+      .error {
+        color: #dc2626;
+      }
+      .address-line {
+        word-break: break-all;
+      }
+      #scan-bar {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.5rem 1rem;
+        margin: 0.5rem 0;
+      }
+      #scan-text {
+        white-space: pre-line;
+      }
+      .nft-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+        gap: 12px;
+        margin: 0.75rem 0;
+      }
+      .nft-item {
+        display: block;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 8px;
+        color: inherit;
+        min-width: 0;
+      }
+      .nft-item:hover {
+        border-color: var(--accent);
+        text-decoration: none;
+      }
+      .art {
+        position: relative;
+        width: 100%;
+        aspect-ratio: 1;
+        border-radius: 4px;
+        background: #80808020;
+        overflow: hidden;
+      }
+      .art img {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+      }
+      .art .placeholder {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0.5rem;
+        text-align: center;
+        color: var(--muted);
+        word-break: break-word;
+        font-size: 12px;
+      }
+      .art .badge {
+        position: absolute;
+        top: 4px;
+        left: 4px;
+        font-size: 10px;
+        padding: 0 4px;
+        border-radius: 3px;
+        background: #000000a0;
+        color: #fff;
+      }
+      .nft-name,
+      .nft-sub {
+        margin-top: 4px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      #token-main {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 1.5rem;
+        margin-top: 1rem;
+      }
+      #token-art {
+        flex: 0 1 420px;
+        min-width: 240px;
+      }
+      #token-facts {
+        flex: 1 1 360px;
+        min-width: 0;
+      }
+      dl {
+        display: grid;
+        grid-template-columns: max-content 1fr;
+        gap: 0.35rem 1rem;
+        margin: 0;
+      }
+      dt {
+        color: var(--muted);
+      }
+      dd {
+        margin: 0;
+        word-break: break-all;
+      }
+      #token-description {
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      #token-attributes {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+        gap: 8px;
+      }
+      .trait {
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        padding: 0.3rem 0.5rem;
+        word-break: break-word;
+      }
+      .trait .muted {
+        font-size: 11px;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      td,
+      th {
+        text-align: left;
+        padding: 0.35rem 0.75rem 0.35rem 0;
+        border-bottom: 1px solid var(--line);
+        white-space: nowrap;
+      }
+      th {
+        color: var(--muted);
+        font-weight: 400;
+      }
+      td.addr {
+        white-space: normal;
+        word-break: break-all;
+      }
+      details pre {
+        white-space: pre-wrap;
+        word-break: break-all;
+        max-height: 30rem;
+        overflow: auto;
+      }
+      summary {
+        cursor: pointer;
+        color: var(--muted);
+      }
+      #token-raw-block {
+        margin-top: 1.5rem;
+      }
+      #token-back {
+        margin-top: 1rem;
+      }
+      .hidden {
+        display: none !important;
+      }
+      /* before anything is loaded, the search floats free in the upper third */
+      html:has(body.empty) {
+        overflow: hidden;
+        height: 100%;
+      }
+      body.empty {
+        box-sizing: border-box;
+        height: calc(100svh - 4rem);
+        padding-bottom: 40svh;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+      }
+      body:not(.empty) #try {
+        display: none;
+      }
+    </style>
+  </head>
+  <body class="empty">
+    <form id="address-form">
+      <input
+        id="address-input"
+        placeholder="Ethereum address or .eth/.gwei name"
+        autocomplete="off"
+        spellcheck="false"
+      />
+      <button type="submit">View NFTs</button>
+    </form>
+    <div id="settings">
+      <label><input type="checkbox" id="allow-http" /> Load non-IPFS hosts</label>
+      <label id="gateway-label">
+        <span class="muted">IPFS gateway</span>
+        <input id="gateway" autocomplete="off" spellcheck="false" />
+      </label>
+    </div>
+    <div id="policy-note" class="muted"></div>
+    <div id="try" class="muted">Try <a id="try-link"></a></div>
+    <div id="status" class="muted"></div>
+
+    <div id="gallery-view" class="hidden">
+      <h1>NFTs</h1>
+      <div id="gallery-owner" class="address-line"></div>
+      <div id="scan-bar">
+        <span id="scan-text" class="muted"></span>
+        <button id="scan-stop" type="button" class="hidden">Stop</button>
+        <button id="scan-continue" type="button" class="hidden">Continue scan</button>
+      </div>
+      <div id="grid" class="nft-grid"></div>
+    </div>
+
+    <div id="token-view" class="hidden">
+      <button id="token-back" type="button">← Back</button>
+      <h1 id="token-title"></h1>
+      <div id="token-status" class="muted"></div>
+      <div id="token-main">
+        <div id="token-art"></div>
+        <div id="token-facts"><dl id="token-dl"></dl></div>
+      </div>
+      <div id="token-description-block" class="hidden">
+        <h2>Description</h2>
+        <div id="token-description"></div>
+      </div>
+      <div id="token-attributes-block" class="hidden">
+        <h2>Attributes</h2>
+        <div id="token-attributes"></div>
+      </div>
+      <div id="token-transfers-block" class="hidden">
+        <h2>Transfers</h2>
+        <div id="token-transfers-note" class="muted"></div>
+        <table>
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>From</th>
+              <th>To</th>
+              <th>Tx</th>
+            </tr>
+          </thead>
+          <tbody id="token-transfers"></tbody>
+        </table>
+      </div>
+      <details id="token-raw-block" class="hidden">
+        <summary>Metadata JSON</summary>
+        <pre id="token-raw"></pre>
+      </details>
+    </div>
+
+    <template id="tile-template">
+      <a class="nft-item">
+        <div class="art">
+          <img class="hidden" alt="" />
+          <div class="placeholder"></div>
+          <span class="badge"></span>
+        </div>
+        <div class="nft-name"></div>
+        <div class="nft-sub muted"></div>
+      </a>
+    </template>
+    <template id="art-template">
+      <div class="art">
+        <img class="hidden" alt="" />
+        <div class="placeholder"></div>
+      </div>
+    </template>
+    <template id="trait-template">
+      <div class="trait">
+        <div class="muted"></div>
+        <div></div>
+      </div>
+    </template>
+    <template id="transfer-template">
+      <tr>
+        <td></td>
+        <td class="addr"></td>
+        <td class="addr"></td>
+        <td></td>
+      </tr>
+    </template>
+
+    <script type="module">
+      import {
+        createNftViewer,
+        DEFAULT_GATEWAY,
+        DEMO_ADDRESS,
+        idText,
+        mediaSource,
+        normalizeGateway,
+        RPC_URL,
+        short,
+        sourceText,
+        withScheme,
+      } from './core.js';
+
+      const $ = (id) => document.getElementById(id);
+      const clone = (id) => $(id).content.firstElementChild.cloneNode(true);
+      const ZERO = '0x0000000000000000000000000000000000000000';
+      const SETTINGS_KEY = 'nft-viewer-settings';
+      const rpcParam = new URLSearchParams(location.search).get('rpc');
+
+      // Remembered on this device. Deliberately not a URL parameter: a shared
+      // link must not be able to switch non-IPFS loading on for the visitor.
+      function loadSettings() {
+        try {
+          const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
+          return { allowHttp: saved.allowHttp === true, gateway: normalizeGateway(saved.gateway) };
+        } catch {
+          return { allowHttp: false, gateway: DEFAULT_GATEWAY };
+        }
+      }
+      let settings = loadSettings();
+      const viewer = createNftViewer(withScheme(rpcParam || RPC_URL), settings);
+
+      function showView(id) {
+        for (const view of ['gallery-view', 'token-view'])
+          $(view).classList.toggle('hidden', view !== id);
+        document.body.classList.toggle('empty', !id);
+      }
+      function setStatus(text, error = false) {
+        $('status').textContent = text;
+        $('status').className = error ? 'error' : 'muted';
+      }
+
+      // Links keep a real href (opens in a new tab with the same node);
+      // plain clicks navigate in place through the History API.
+      function href(params) {
+        const query = new URLSearchParams(params);
+        if (rpcParam) query.set('rpc', rpcParam);
+        return `?${query}`;
+      }
+      function link(text, params) {
+        const a = document.createElement('a');
+        a.textContent = text;
+        a.href = href(params);
+        return a;
+      }
+      document.addEventListener('click', (event) => {
+        const a = event.target.closest('a');
+        if (!a || a.target || !a.getAttribute('href')?.startsWith('?')) return;
+        if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)
+          return;
+        event.preventDefault();
+        // the token page's Back returns to the gallery it was opened from
+        history.pushState({ from: location.search }, '', a.getAttribute('href'));
+        route();
+      });
+      window.addEventListener('popstate', route);
+
+      function route() {
+        const params = new URLSearchParams(location.search);
+        if (params.get('contract'))
+          return openToken(params.get('contract'), params.get('id'), params.get('owner'));
+        if (params.get('address')) return openGallery(params.get('address'));
+        showView(null);
+        setStatus('');
+      }
+
+      // ---- media policy UI ----------------------------------------------
+
+      function showPolicy() {
+        $('allow-http').checked = settings.allowHttp;
+        $('gateway').value = settings.gateway;
+        const note = $('policy-note');
+        note.classList.toggle('open', settings.allowHttp);
+        note.textContent = settings.allowHttp
+          ? 'Non-IPFS hosts are loaded: every token creator’s server sees your IP when you look, and can change what it serves.'
+          : 'IPFS only: metadata and art load from IPFS through the gateway, or inline from the chain. Hosts token creators name are not contacted.';
+      }
+      function applyPolicy(next) {
+        settings = viewer.setPolicy(next);
+        localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+        showPolicy();
+        // everything shown was resolved under the old policy
+        if (gallery) for (const entry of gallery.items.values()) resetTile(entry);
+        if (!$('token-view').classList.contains('hidden')) route();
+      }
+      $('allow-http').addEventListener('change', (event) =>
+        applyPolicy({ allowHttp: event.target.checked })
+      );
+      $('gateway').addEventListener('change', (event) => {
+        try {
+          applyPolicy({ gateway: event.target.value });
+          setStatus('');
+        } catch (error) {
+          setStatus(error.message, true);
+          event.target.value = settings.gateway;
+        }
+      });
+
+      // Art for an image source: the image when it loads, otherwise a
+      // placeholder saying why (blocked host, rate limit, broken file).
+      function showArt(art, source, fallback) {
+        const img = art.querySelector('img');
+        const placeholder = art.querySelector('.placeholder');
+        const placeholderText = (text) => {
+          img.classList.add('hidden');
+          placeholder.classList.remove('hidden');
+          placeholder.textContent = text;
+        };
+        if (!source) return (placeholderText(fallback), Promise.resolve());
+        if (source.kind === 'blocked')
+          return (placeholderText(`image on non-IPFS host ${source.host}`), Promise.resolve());
+        if (source.kind === 'unsupported')
+          return (placeholderText('image: unsupported URI'), Promise.resolve());
+        placeholderText('loading…');
+        return viewer.image(source).then(
+          (url) =>
+            new Promise((done) => {
+              img.onload = () => {
+                img.classList.remove('hidden');
+                placeholder.classList.add('hidden');
+                done();
+              };
+              img.onerror = () => done(placeholderText('image could not be decoded'));
+              img.src = url;
+            }),
+          (error) => {
+            placeholderText(error.message);
+            return error;
+          }
+        );
+      }
+
+      // ---- gallery -------------------------------------------------------
+
+      let gallery; // { address, items: Map(key -> entry), controller, next, done }
+      // tiles resolve when they scroll near the viewport: tokenURI, metadata
+      // and art for thousands of NFTs are not fetched up front
+      const observer = new IntersectionObserver(
+        (entries) => {
+          for (const e of entries) {
+            if (!e.isIntersecting) continue;
+            observer.unobserve(e.target);
+            const entry = gallery?.items.get(e.target.dataset.key);
+            if (entry) resolveTile(entry);
+          }
+        },
+        { rootMargin: '400px' }
+      );
+
+      function addTile(item) {
+        const key = `${item.contract}:${item.id}`;
+        if (gallery.items.has(key)) return;
+        const tile = clone('tile-template');
+        tile.dataset.key = key;
+        tile.href = href({
+          contract: item.contract,
+          id: item.id.toString(),
+          owner: gallery.address,
+        });
+        tile.querySelector('.badge').textContent = item.abi === 'ERC1155' ? '1155' : '721';
+        tile.querySelector('.nft-name').textContent = short(item.contract, 6);
+        tile.querySelector('.nft-sub').textContent =
+          `#${idText(item.id)}${item.amount > 1n ? ` ×${item.amount}` : ''}`;
+        tile.querySelector('.placeholder').textContent = 'NFT';
+        const entry = { item, tile, generation: 0 };
+        gallery.items.set(key, entry);
+        $('grid').append(tile);
+        observer.observe(tile);
+      }
+      function resetTile(entry) {
+        entry.generation++;
+        clearTimeout(entry.retry);
+        entry.tile.querySelector('img').classList.add('hidden');
+        const placeholder = entry.tile.querySelector('.placeholder');
+        placeholder.classList.remove('hidden');
+        placeholder.textContent = 'NFT';
+        observer.unobserve(entry.tile);
+        observer.observe(entry.tile);
+      }
+      async function resolveTile(entry) {
+        const generation = ++entry.generation;
+        const { item, tile } = entry;
+        const t = await viewer.tile(item);
+        if (generation !== entry.generation) return; // policy changed meanwhile
+        tile.querySelector('.nft-name').textContent =
+          t.metadata.name || t.collection || short(item.contract, 6);
+        const sub = `${t.collection && t.metadata.name ? `${t.collection} · ` : ''}#${idText(item.id)}`;
+        tile.querySelector('.nft-sub').textContent =
+          `${sub}${item.amount > 1n ? ` ×${item.amount}` : ''}`;
+        tile.title = t.metadata.name || '';
+        const blocked =
+          t.uriSource?.kind === 'blocked'
+            ? `metadata on non-IPFS host ${t.uriSource.host}`
+            : undefined;
+        const failure = await showArt(
+          tile.querySelector('.art'),
+          t.imageSource,
+          blocked || t.error || 'no image'
+        );
+        // a rate-limited gateway: come back once its Retry-After has passed
+        const retryAt = t.retryAt || failure?.retryAt;
+        if (retryAt && generation === entry.generation)
+          entry.retry = setTimeout(
+            () => resetTile(entry),
+            retryAt - Date.now() + Math.random() * 3000
+          );
+      }
+
+      async function openGallery(input) {
+        let target;
+        try {
+          if (!/^0x/i.test(input)) setStatus(`Resolving ${input}…`);
+          target = await viewer.resolveAddress(input);
+        } catch (error) {
+          return setStatus(error.message, true);
+        }
+        setStatus('');
+        showView('gallery-view');
+        $('address-input').value = target.name || target.address;
+        if (gallery?.address === target.address) return; // back from a token page: keep it
+        gallery?.controller?.abort();
+        for (const entry of gallery?.items.values() || []) clearTimeout(entry.retry);
+        observer.disconnect();
+        $('grid').replaceChildren();
+        gallery = { address: target.address, items: new Map(), next: undefined, done: false };
+        $('gallery-owner').textContent = target.name
+          ? `${target.name} · ${target.address}`
+          : target.address;
+        scan();
+      }
+
+      async function scan() {
+        const g = gallery;
+        const controller = (g.controller = new AbortController());
+        const text = $('scan-text');
+        $('scan-stop').classList.remove('hidden');
+        $('scan-continue').classList.add('hidden');
+        text.className = 'muted';
+        let progress;
+        const held = () => `${g.items.size} NFT${g.items.size === 1 ? '' : 's'} held`;
+        const failed = () =>
+          progress?.failed.length
+            ? `\n${progress.failed.length} contract(s) could not be checked`
+            : '';
+        const draw = () => {
+          if (!progress) return void (text.textContent = 'Reading transfer logs…');
+          const done = Math.round((progress.windows / progress.total) * 20);
+          const bar = `[${'#'.repeat(done)}${'.'.repeat(20 - done)}]`;
+          text.textContent = `Scanning transfer logs ${bar} block ${Math.max(progress.next, 0).toLocaleString('en-US')} · ${held()}${failed()}`;
+        };
+        draw();
+        try {
+          const batches = viewer.holdings(g.address, {
+            signal: controller.signal,
+            toBlock: g.next,
+            onProgress: (p) => {
+              progress = p;
+              if (g === gallery) ((g.next = p.next), draw());
+            },
+          });
+          for await (const batch of batches) {
+            if (g !== gallery) return;
+            for (const item of batch) addTile(item);
+            draw();
+          }
+          if (g !== gallery) return;
+          g.done = true;
+          text.textContent = g.items.size ? `${held()}${failed()}` : `No NFTs held.${failed()}`;
+          $('scan-stop').classList.add('hidden');
+        } catch (error) {
+          if (g !== gallery) return;
+          const stopped = controller.signal.aborted;
+          text.textContent = stopped
+            ? `Stopped below block ${(g.next + 1).toLocaleString('en-US')} · ${held()}`
+            : `Scan failed: ${error.message} · ${held()}`;
+          if (!stopped) text.className = 'error';
+          $('scan-stop').classList.add('hidden');
+          $('scan-continue').classList.remove('hidden');
+        }
+      }
+      $('scan-stop').addEventListener('click', () => gallery?.controller?.abort());
+      $('scan-continue').addEventListener('click', () => gallery && !gallery.done && scan());
+
+      // ---- token page ----------------------------------------------------
+
+      let tokenLoad = 0; // invalidates stale renders
+      function fact(dl, term, value) {
+        const dt = document.createElement('dt');
+        dt.textContent = term;
+        const dd = document.createElement('dd');
+        if (typeof value === 'string') dd.textContent = value;
+        else dd.append(...[value].flat());
+        dl.append(dt, dd);
+        return dd;
+      }
+      const muted = (text) =>
+        Object.assign(document.createElement('span'), { className: 'muted', textContent: text });
+      // links out to metadata-named pages: IPFS via the gateway; other hosts
+      // only open when clicked (new tab, no referrer)
+      function outLink(uri) {
+        const source = mediaSource(uri, { ...settings, allowHttp: true });
+        if (source.kind !== 'ipfs' && source.kind !== 'http') return muted(uri);
+        const a = Object.assign(document.createElement('a'), {
+          href: source.url,
+          textContent: uri,
+          target: '_blank',
+          rel: 'noopener noreferrer',
+        });
+        return a;
+      }
+      const addressLink = (address, name) =>
+        address === ZERO
+          ? muted('0x0')
+          : link(name ? `${name} · ${address}` : address, { address });
+
+      function resetToken() {
+        for (const id of [
+          'token-description-block',
+          'token-attributes-block',
+          'token-transfers-block',
+          'token-raw-block',
+        ])
+          $(id).classList.add('hidden');
+        $('token-dl').replaceChildren();
+        $('token-art').replaceChildren();
+        $('token-attributes').replaceChildren();
+        $('token-transfers').replaceChildren();
+      }
+
+      async function openToken(contract, id, owner) {
+        const load = ++tokenLoad;
+        const current = () => load === tokenLoad;
+        showView('token-view');
+        setStatus('');
+        resetToken();
+        $('token-title').textContent = `${short(contract || '', 6)} #${id}`;
+        const status = $('token-status');
+        status.className = 'muted';
+        status.textContent = 'Loading token…';
+        let t;
+        try {
+          t = await viewer.token(contract, id, { owner });
+        } catch (error) {
+          if (!current()) return;
+          status.className = 'error';
+          return void (status.textContent = error.message);
+        }
+        if (!current()) return;
+        // 1. on-chain facts
+        const collection =
+          t.name && t.symbol && t.name !== t.symbol
+            ? `${t.name} (${t.symbol})`
+            : t.name || t.symbol;
+        const fallbackTitle = `${collection || short(t.contract, 6)} #${idText(t.id)}`;
+        $('token-title').textContent = fallbackTitle;
+        status.textContent = 'Loading metadata…';
+        const dl = $('token-dl');
+        if (collection) fact(dl, 'Collection', collection);
+        fact(dl, 'Standard', t.abi === 'ERC1155' ? 'ERC-1155' : 'ERC-721');
+        fact(dl, 'Contract', t.contract);
+        const decimal = t.id.toString();
+        fact(
+          dl,
+          'Token ID',
+          decimal.length > 12 ? [decimal, muted(` (0x${t.id.toString(16)})`)] : decimal
+        );
+        if (t.abi === 'ERC721')
+          fact(dl, 'Owner', t.owner ? addressLink(t.owner, t.ownerName) : muted(t.ownerError));
+        if (t.holder)
+          fact(dl, 'Balance', [
+            t.balance !== undefined
+              ? `${t.balance} held by `
+              : muted(`unavailable (${t.balanceError}) for `),
+            addressLink(t.holder),
+          ]);
+        if (t.totalSupply !== undefined)
+          fact(dl, 'Total supply', t.totalSupply.toLocaleString('en-US'));
+        const art = clone('art-template');
+        art.querySelector('.placeholder').textContent = 'loading…';
+        $('token-art').append(art);
+        // 2. and 3. run side by side: metadata off-chain, history on-chain
+        if (t.abi === 'ERC721') showTransfers(t, current);
+        const meta = await viewer.metadata(t.contract, t.abi, t.id);
+        if (!current()) return;
+        status.textContent = meta.error ? `Metadata: ${meta.error.replace(/^metadata: /, '')}` : '';
+        if (meta.metadata.name) $('token-title').textContent = meta.metadata.name;
+        const blocked =
+          meta.uriSource?.kind === 'blocked'
+            ? `metadata on non-IPFS host ${meta.uriSource.host}`
+            : undefined;
+        showArt(art, meta.imageSource, blocked || meta.error || 'no image');
+        const clip = (s) => (s.length > 140 ? `${s.slice(0, 140)}…` : s);
+        if (meta.uri)
+          fact(dl, 'Metadata', [clip(meta.uri), muted(` · ${sourceText(meta.uriSource)}`)]);
+        if (meta.metadata.image)
+          fact(dl, 'Image', [
+            clip(meta.metadata.image),
+            muted(` · ${sourceText(meta.imageSource)}`),
+          ]);
+        if (meta.metadata.externalUrl) fact(dl, 'Website', outLink(meta.metadata.externalUrl));
+        if (meta.metadata.animationUrl) fact(dl, 'Animation', outLink(meta.metadata.animationUrl));
+        if (meta.metadata.description) {
+          $('token-description').textContent = meta.metadata.description;
+          $('token-description-block').classList.remove('hidden');
+        }
+        if (meta.metadata.attributes) {
+          for (const { trait, value } of meta.metadata.attributes) {
+            const card = clone('trait-template');
+            card.children[0].textContent = trait || '—';
+            card.children[1].textContent = value;
+            $('token-attributes').append(card);
+          }
+          $('token-attributes-block').classList.remove('hidden');
+        }
+        if (meta.raw !== undefined) {
+          const json = JSON.stringify(meta.raw, null, 2) || '';
+          $('token-raw').textContent = json.length > 50_000 ? `${json.slice(0, 50_000)}\n…` : json;
+          $('token-raw-block').classList.remove('hidden');
+        }
+      }
+
+      async function showTransfers(t, current) {
+        $('token-transfers-block').classList.remove('hidden');
+        const note = $('token-transfers-note');
+        note.textContent = 'Reading transfer logs…';
+        let rows;
+        try {
+          rows = await viewer.transfers(t.contract, t.id);
+        } catch (error) {
+          if (current()) note.textContent = `Transfer history unavailable: ${error.message}`;
+          return;
+        }
+        if (!current()) return;
+        const shown = rows.slice(0, 20);
+        note.textContent =
+          rows.length > shown.length
+            ? `Newest ${shown.length} of ${rows.length}`
+            : rows.length
+              ? ''
+              : 'No transfers found.';
+        for (const row of shown) {
+          const tr = clone('transfer-template');
+          const [time, from, to, tx] = tr.children;
+          time.textContent = row.timestamp
+            ? new Date(row.timestamp * 1000).toISOString().slice(0, 16).replace('T', ' ')
+            : `block ${row.block}`;
+          from.append(row.from === ZERO ? muted('mint') : addressLink(row.from));
+          to.append(row.to === ZERO ? muted('burn') : addressLink(row.to));
+          tx.textContent = short(row.hash, 6);
+          tx.title = row.hash;
+          $('token-transfers').append(tr);
+        }
+      }
+      $('token-back').addEventListener('click', () => {
+        if (history.state?.from !== undefined) return history.back();
+        // opened directly: the owner's (or holder's) gallery, else the start
+        const params = new URLSearchParams(location.search);
+        const next = params.get('owner') ? { address: params.get('owner') } : {};
+        history.pushState(null, '', Object.keys(next).length ? href(next) : href({}));
+        route();
+      });
+
+      // ---- start ---------------------------------------------------------
+
+      $('address-form').addEventListener('submit', (event) => {
+        event.preventDefault();
+        const value = $('address-input').value.trim();
+        if (!value) return;
+        history.pushState(null, '', href({ address: value }));
+        route();
+      });
+      $('try-link').textContent = DEMO_ADDRESS;
+      $('try-link').href = href({ address: DEMO_ADDRESS });
+      showPolicy();
+      route();
+    </script>
+  </body>
+</html>
