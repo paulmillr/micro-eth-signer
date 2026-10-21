@@ -1082,6 +1082,7 @@ export function tokenScanner(
       notify();
       let stop = false;
       let paused = false;
+      const seenBeforeStep = seen.size;
       let consumed: number | undefined; // fromBlock of the last window whose rows were fully consumed
       let pending: number | undefined; // fromBlock of the window whose rows are streaming now
       // aborting on pause stops the prefetched windows' leftover requests,
@@ -1113,8 +1114,8 @@ export function tokenScanner(
           },
         });
         for await (const row of stream) {
-          if (stop) {
-            // pause before the next window's rows; the resume range covers them
+          if (stop && consumed !== undefined && (!multi || seen.size > seenBeforeStep)) {
+            // A budget pause must consume a window (or a new multi-address row) to advance.
             paused = true;
             break;
           }
@@ -1132,8 +1133,6 @@ export function tokenScanner(
       if (!paused) state.done = true;
       else {
         aborter.abort();
-        // paused with nothing consumed (one window outran the budget): keep
-        // the same range, the next step retries it with a fresh budget.
         // Multi streams interleave their windows, so no shared resume
         // boundary exists: retry the whole remaining range (dedupe by hash
         // makes the overlap harmless, just slower).
