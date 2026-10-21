@@ -1591,6 +1591,59 @@ describe('Network', () => {
       },
       raw: tx.toHex(),
     });
+    const expected = await archive.txInfo(hash);
+    for (const verify of [true, false]) {
+      const implicit = await archive.txInfo(hash, { verify });
+      const explicit = await archive.txInfo(hash, { verify, raw: true });
+      deepStrictEqual(explicit, expected);
+      deepStrictEqual(
+        Object.getOwnPropertyDescriptors(explicit),
+        Object.getOwnPropertyDescriptors(implicit)
+      );
+      deepStrictEqual(Object.getOwnPropertyDescriptor(implicit, 'raw'), {
+        value: tx.toHex(),
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+    }
+    const originalRecover = Transaction.prototype.recoverSender;
+    let recoveries = 0;
+    Transaction.prototype.recoverSender = function (...args) {
+      recoveries++;
+      return originalRecover.apply(this, args);
+    };
+    try {
+      const omitted = await archive.txInfo(hash, { verify: false, raw: false });
+      deepStrictEqual(recoveries, 0);
+      deepStrictEqual(omitted, { ...expected, raw: undefined });
+      deepStrictEqual(Object.getOwnPropertyDescriptor(omitted, 'raw'), {
+        value: undefined,
+        writable: true,
+        enumerable: true,
+        configurable: true,
+      });
+      await archive.txInfo(hash, { verify: false });
+      deepStrictEqual(recoveries, 1);
+      deepStrictEqual(await archive.txInfo(hash, { raw: false }), { ...expected, raw: undefined });
+      deepStrictEqual(recoveries, 2, 'raw:false must retain default verification');
+      const sender = info.from;
+      info.from = `0x${'22'.repeat(20)}`;
+      try {
+        await rejects(() => archive.txInfo(hash, { raw: false }), /wrong sender/);
+      } finally {
+        info.from = sender;
+      }
+      const value = info.value;
+      info.value = 'invalid';
+      try {
+        await rejects(() => archive.txInfo(hash, { verify: false, raw: false }));
+      } finally {
+        info.value = value;
+      }
+    } finally {
+      Transaction.prototype.recoverSender = originalRecover;
+    }
     // The two RPC responses may agree with each other while still belonging to
     // a different transaction than the one the caller requested.
     const requestedHash = `0x${'22'.repeat(32)}`;
@@ -1607,10 +1660,19 @@ describe('Network', () => {
       () => swapped.txInfo(requestedHash, { verify: false }),
       /txInfo: wrong transaction hash/
     );
+    await rejects(
+      () => swapped.txInfo(requestedHash, { verify: false, raw: false }),
+      /txInfo: wrong transaction hash/
+    );
     // A present receipt must belong to the reconstructed transaction.
     receipt.transactionHash = `0x${'22'.repeat(32)}`;
     await rejects(() => archive.txInfo(hash), /txInfo: wrong receipt hash/);
     await rejects(() => archive.txInfo(hash, { verify: false }), /txInfo: wrong receipt hash/);
+    for (const verify of [true, false])
+      await rejects(
+        () => archive.txInfo(hash, { verify, raw: false }),
+        /txInfo: wrong receipt hash/
+      );
   });
   it('rebuilds zero-gas-price legacy transaction info', async () => {
     const tx = Transaction.prepare(
@@ -1713,6 +1775,18 @@ describe('Network', () => {
     await rejects(
       () => archive.txInfo(`0x${'11'.repeat(32)}`, { verify: 1 as any }),
       /txInfo: wrong verify/
+    );
+    await rejects(
+      () => archive.txInfo(`0x${'11'.repeat(32)}`, { raw: 1 as any }),
+      /txInfo: wrong raw/
+    );
+    await rejects(
+      () => archive.txInfo(`0x${'11'.repeat(32)}`, { verify: 1 as any, raw: 1 as any }),
+      /txInfo: wrong verify/
+    );
+    await rejects(
+      () => archive.txInfo('bad', { verify: 1 as any, raw: 1 as any }),
+      /txInfo: wrong txHash/
     );
     deepStrictEqual(calls, []);
   });

@@ -353,7 +353,7 @@ async function historyLogRows(
     if (!tx) {
       // Sender is intentionally not re-validated for history compatibility.
       // a discovery scan must tolerate txs the library cannot re-serialize
-      tx = withRetry(() => prov.txInfo(hash, { verify: false }), opts.signal);
+      tx = withRetry(() => prov.txInfo(hash, { verify: false, raw: false }), opts.signal);
       txCache.set(key, tx);
     }
     return tx;

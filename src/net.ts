@@ -546,7 +546,12 @@ function blockRangeChunks(fromBlock: number, toBlock: number, step: number, name
   return chunks;
 }
 
-function txInfoRaw(info: TxInfo, receipt: TxReceipt | undefined, verify: boolean): TxInfoFull {
+function txInfoRaw(
+  info: TxInfo,
+  receipt: TxReceipt | undefined,
+  verify: boolean,
+  includeRaw: boolean
+): TxInfoFull {
   const type = Object.keys(TxVersions)[info.type] as keyof typeof TxVersions;
   let raw: string | undefined = undefined;
   const rawData: Record<string, any> = {
@@ -571,6 +576,7 @@ function txInfoRaw(info: TxInfo, receipt: TxReceipt | undefined, verify: boolean
   }
   if (type === 'legacy')
     Object.assign(rawData, legacySig.encode({ v: info.v, r: info.r, s: info.s }));
+  if (!verify && !includeRaw) return { type, info, receipt, raw };
   // Rebuilding re-derives sender and hash from the signature. With
   // `verify: false` a failed rebuild (e.g. a chain-specific tx type) only
   // leaves `raw` undefined instead of making the tx unfetchable.
@@ -586,7 +592,7 @@ function txInfoRaw(info: TxInfo, receipt: TxReceipt | undefined, verify: boolean
         receipt.transactionHash.toLowerCase() !== info.hash.toLowerCase())
     )
       throw new Error('txInfo: wrong receipt hash');
-    raw = tx.toHex();
+    if (includeRaw) raw = tx.toHex();
   } catch (e) {
     if (verify) throw e;
   }
@@ -1108,12 +1114,18 @@ export class RpcClient implements IWeb3Provider {
    * `verify: false` skips the throw for txs that cannot be rebuilt (e.g.
    * chain-specific types such as op-stack deposits) and leaves `raw`
    * undefined. Pending txs return `receipt: undefined`.
+   * `raw: false` omits rebuilt bytes; combined with `verify: false`, it skips reconstruction.
    */
-  async txInfo(txHash: string, opts: { verify?: boolean } = {}): Promise<TxInfoFull> {
+  async txInfo(
+    txHash: string,
+    opts: { verify?: boolean; raw?: boolean } = {}
+  ): Promise<TxInfoFull> {
     if (typeof txHash !== 'string' || !txHashRe.test(txHash))
       throw new Error('txInfo: wrong txHash');
     if (opts.verify !== undefined && typeof opts.verify !== 'boolean')
       throw new Error('txInfo: wrong verify');
+    if (opts.raw !== undefined && typeof opts.raw !== 'boolean')
+      throw new Error('txInfo: wrong raw');
     const [info, receipt] = await Promise.all([
       this.call('eth_getTransactionByHash', txHash),
       this.call('eth_getTransactionReceipt', txHash),
@@ -1137,7 +1149,8 @@ export class RpcClient implements IWeb3Provider {
     return txInfoRaw(
       fixTxInfo(info),
       receipt === null || receipt === undefined ? undefined : fixTxReceipt(receipt),
-      opts.verify ?? true
+      opts.verify ?? true,
+      opts.raw ?? true
     );
   }
 }
