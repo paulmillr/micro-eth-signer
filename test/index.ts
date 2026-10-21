@@ -12,6 +12,7 @@ import './keystore.test.ts';
 import './kzg.test.ts';
 import './message.test.ts';
 import './net.test.ts';
+import './token-progress.test.ts';
 import './peerdas.test.ts';
 import './resolver.test.ts';
 import './ssz-progressive.test.ts';
