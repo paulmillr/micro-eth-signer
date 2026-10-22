@@ -774,8 +774,8 @@ export const formatters: TRet<Formatters> = /* @__PURE__ */ deepFreeze({
     const ETHER = BigInt(10) ** BigInt(ETH_PRECISION);
     wei = BigInt(wei);
     if (wei < BigInt(GWEI) / BigInt(10)) return wei + 'wei';
-    // This branch scales by gwei (nanoether), not by microether.
-    if (wei >= BigInt(GWEI) && wei < ETHER / BigInt(1000))
+    // Scales by gwei (nanoether) from where the wei branch stops, so 0.5 gwei is not shown in eth.
+    if (wei < ETHER / BigInt(1000))
       return formatters.formatBigint(wei, BigInt(GWEI), 9, false) + 'gwei';
     return formatters.formatBigint(wei, ETHER, ETH_PRECISION, false) + 'eth';
   },

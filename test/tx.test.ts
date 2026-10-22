@@ -544,6 +544,12 @@ describe('Transactions', () => {
       deepStrictEqual(formatters.fromWei(1_000_000_000n), '1gwei');
       deepStrictEqual(formatters.fromWei(1_500_000_000n), '1.5gwei');
     });
+    it('utils: fromWei labels sub-gwei values from 0.1 gwei as gwei', () => {
+      deepStrictEqual(formatters.fromWei(99_999_999n), '99999999wei');
+      deepStrictEqual(formatters.fromWei(100_000_000n), '0.1gwei');
+      deepStrictEqual(formatters.fromWei(500_000_000n), '0.5gwei');
+      deepStrictEqual(formatters.fromWei(999_999_999n), '0.999999999gwei');
+    });
     it('utils: deepFreeze', () => {
       const value: any = { a: { b: [1, { c: 2 }] } };
       value.self = value;
